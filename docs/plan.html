@@ -123,7 +123,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
 <div class="page">
 
 <header class="top">
-  <span class="eyebrow">STM32N6570-DK &middot; plan for review &middot; 2026-11-14 &middot; no firmware written yet</span>
+  <span class="eyebrow">STM32N6570-DK &middot; plan and progress &middot; 2026-11-14 &middot; phases 0 to 3 running on hardware</span>
   <h1>N6 Demo Plan</h1>
   <p class="lede">An eight-screen touch demo for the STM32N6570-DK: live dashboards, dense real-time data visualization, and full-screen video with sound, all locked to the panel refresh. Built for people who will look for dropped frames, banding, and fake data. Every number on screen is measured on the board or arrives over its Ethernet link.</p>
   <dl class="specs">
@@ -137,6 +137,24 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
     <div><dt>Probe</dt><dd>ST-LINK V3 on COM17</dd></div>
   </dl>
 </header>
+
+<section>
+  <span class="eyebrow">Progress</span>
+  <h2>Where the build stands</h2>
+  <p>Measured on the board, not estimated. Frame time is all UI-thread work for a frame; the budget is 16.67 ms. Screens were exercised by an automated tour with injected touches; a person has not touched the panel yet.</p>
+  <div class="scroll"><table>
+    <tr><th>Item</th><th>State</th><th>Result</th></tr>
+    <tr><td class="k">P0 Unattended loop</td><td><span class="pill ok">done</span></td><td>Build, flash and start with the board left in development boot. The ST-LINK power-cycles the target, which was the missing step: ST's loader leaves the flash in octal mode and only removing power clears it.</td></tr>
+    <tr><td class="k">P0 Frame buffer placement</td><td><span class="pill ok">decided</span></td><td>Internal SRAM beat PSRAM by 2 to 4 times (copy 361 vs 85 MB/s), so both 32-bit buffers live in internal SRAM and the app runs in the remaining 840 KB. No fallback to 16-bit colour was needed.</td></tr>
+    <tr><td class="k">P0 Hardware JPEG</td><td><span class="pill ok">done</span></td><td>800 x 480 frame: 20 ms decode in polling mode plus 9.5 ms DMA2D conversion; matches a software decode. Needs DMA feeding to leave headroom at 30 fps.</td></tr>
+    <tr><td class="k">P1 Platform</td><td><span class="pill ok">done</span></td><td>Panel retimed from 48.8 to 59.98 Hz off the crystal. LVGL direct mode, swap in the line interrupt, IBM Plex type, shell, performance HUD, remote control and screenshot ports.</td></tr>
+    <tr><td class="k">P2 Home, Flight Deck, Touch Lab</td><td><span class="pill ok">running</span></td><td>4.9, 2.6 and 1.5 ms average frame time, no dropped frames. Spring transitions between screens are not built yet; switching is instant.</td></tr>
+    <tr><td class="k">P3 Signal Lab, Explorer</td><td><span class="pill ok">running</span></td><td>7.5 ms and 2.8 ms average (12.8 ms worst while pinching). Signal Lab runs from a labelled signal generator; the microphone is not wired in yet.</td></tr>
+    <tr><td class="k">P4 Network features</td><td><span class="pill warn">not started</span></td><td>Ethernet and DHCP work; host companion, Host Link, web remote and OTA are still to build.</td></tr>
+    <tr><td class="k">P5 Video and audio</td><td><span class="pill warn">not started</span></td><td>Decode path proven with one frame. Player, audio out and the original demo videos are still to build.</td></tr>
+  </table></div>
+  <p class="muted">Changes from the original plan: demo videos will be original motion-graphics pieces rendered on the host, not third-party films. Bluetooth speakers and the camera are deferred; the audio sink and the screen list are being kept open for them. The board has no radio, and speakers use Bluetooth Classic rather than BLE, so that step needs an add-on module.</p>
+</section>
 
 <section>
   <span class="eyebrow">Survey</span>
