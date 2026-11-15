@@ -141,7 +141,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
 <section>
   <span class="eyebrow">Progress</span>
   <h2>Where the build stands</h2>
-  <p>Measured on the board, not estimated. Frame time is all UI-thread work for a frame; the budget is 16.67 ms. Screens were exercised by an automated tour with injected touches; a person has not touched the panel yet.</p>
+  <p>Measured on the board, not estimated. Frame time is all UI-thread work for a frame; the budget is 16.67 ms. Screens are exercised by an automated tour with injected touches, and were checked by hand on the panel.</p>
   <div class="scroll"><table>
     <tr><th>Item</th><th>State</th><th>Result</th></tr>
     <tr><td class="k">P0 Unattended loop</td><td><span class="pill ok">done</span></td><td>Build, flash and start with the board left in development boot. The ST-LINK power-cycles the target, which was the missing step: ST's loader leaves the flash in octal mode and only removing power clears it.</td></tr>
@@ -153,7 +153,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
     <tr><td class="k">P4 Network features</td><td><span class="pill warn">not started</span></td><td>Ethernet and DHCP work; host companion, Host Link, web remote and OTA are still to build.</td></tr>
     <tr><td class="k">P5 Video and audio</td><td><span class="pill warn">not started</span></td><td>Decode path proven with one frame. Player, audio out and the original demo videos are still to build.</td></tr>
   </table></div>
-  <p class="muted">Changes from the original plan: demo videos will be original motion-graphics pieces rendered on the host, not third-party films. Bluetooth speakers and the camera are deferred; the audio sink and the screen list are being kept open for them. The board has no radio, and speakers use Bluetooth Classic rather than BLE, so that step needs an add-on module.</p>
+  <p class="muted">Changes from the original plan: demo videos will be original motion-graphics pieces rendered on the host, not third-party films. The camera is deferred and the screen list is being kept open for it. Bluetooth speakers were dropped: the board has no radio. Touch, navigation, motion and colour were checked on the panel and signed off.</p>
 </section>
 
 <section>

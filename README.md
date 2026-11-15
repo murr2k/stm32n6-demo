@@ -7,8 +7,8 @@ rules are: lock to the panel refresh, no fake data, and show the measurements.
 
 > **Status: Phases 0 to 3 working on hardware; network features, video
 > playback and audio are not built yet.** Six screens run at the panel's
-> 59.98 Hz with no dropped frames in the automated tour. Touch has only been
-> exercised with injected contacts, not yet by a person. See [Status](#status).
+> 59.98 Hz with no dropped frames in the automated tour, and touch, motion and
+> colour have been checked by hand on the panel. See [Status](#status).
 
 | | |
 |---|---|
@@ -163,7 +163,7 @@ measured.
 | Internal SRAM vs PSRAM (1.5 MB buffer) | fill 945 vs 466 MB/s, copy 361 vs 85 MB/s, read 691 vs 212 MB/s |
 | Ethernet | 1000 Mb full duplex, DHCP |
 | Hardware JPEG decode | Working: matches a software decode to within 0.5 levels per channel on average |
-| Touch | Driver configured for 5 points; only injected contacts tested so far |
+| Touch | 5 points, verified by hand: orientation, multi-touch, pinch and pan |
 | Stand-alone boot (BOOT1 = L) | Not tested, needs a hand on the switch |
 | Microphone as Signal Lab source | Not started (generator only) |
 | Host companion, Host Link screen, web remote, OTA | Not started |
@@ -171,4 +171,4 @@ measured.
 | Screen transitions, attract mode, soak test | Not started |
 ## License
 
-Apache-2.0 for the sources in this repository, matching Zephyr.
+Apache-2.0 for the sources in this repository, matching Zephyr (see [LICENSE](LICENSE)). The IBM Plex fonts under `assets/fonts/src` and the bitmap fonts generated from them are under the SIL Open Font License 1.1 (`assets/fonts/src/OFL.txt`).

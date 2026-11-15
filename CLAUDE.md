@@ -5,8 +5,7 @@
 A multi-screen touch demo for the STM32N6570-DK (dashboards, real-time data
 visualization, full-screen video with sound) on Zephyr 4.4.0 + LVGL 9.5.
 Audience: engineers and UX designers who are hard to impress, so frame pacing,
-honest data and visual polish are the product. Plan: `docs/plan.html`
-(published copy: https://claude.ai/artifact/EqF45WU98B5KAZ99LwZGMk).
+honest data and visual polish are the product. Plan: `docs/plan.html`.
 
 Sibling project `~/projects/STM32N6570-DK` (audio visualiser) is reference
 only: its MDF microphone driver and bring-up notes are reusable, its tree is
@@ -102,9 +101,6 @@ not to be modified from here.
 
 - Stand-alone boot (BOOT1 = L) has not been tested; it needs the user at the
   board.
-- Touch has not been exercised by a person yet: axis orientation and real multi-touch are unverified. Everything so far used `ctl.py` injection.
+- Touch, navigation, motion and colour were checked on the panel by the user on 2026-11-14 (all good). The repository is public: keep host names, serial numbers and personal paths out of committed files.
 - Audio out (SAI + WM8904) is not in the board devicetree; needs an overlay.
-- Bluetooth speakers were requested as a later addition. The DK has no radio,
-  and speakers use Bluetooth Classic A2DP, not BLE, so this needs an external
-  module; keep the audio sink behind an interface.
 - Camera (IMX335) and NPU are a later addition; keep a screen slot for them.
