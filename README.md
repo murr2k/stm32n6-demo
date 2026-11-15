@@ -5,15 +5,17 @@ real-time data visualization, and full-screen video with sound, built on
 Zephyr 4.4.0 and LVGL 9.5. The audience is engineers and UX designers, so the
 rules are: lock to the panel refresh, no fake data, and show the measurements.
 
-> **Status: Phases 0 to 3 working on hardware; network features, video
-> playback and audio are not built yet.** Six screens run at the panel's
-> 59.98 Hz with no dropped frames in the automated tour, and touch, motion and
-> colour have been checked by hand on the panel. See [Status](#status).
+> **Status: seven screens, video playback and audio output work on hardware.**
+> Every screen holds the panel's 59.98 Hz with no dropped frames in the
+> automated run, a 48 s original film plays from flash at 30 fps with stereo
+> sound, and touch, motion, colour and sound have been checked by hand. Not
+> built yet: the host-link screen, microphone input, SD card media library,
+> screen transitions. See [Status](#status).
 
 | | |
 |---|---|
 | ![Home](docs/img/home.png) | ![Signal Lab](docs/img/signal-lab.png) |
-| ![Explorer](docs/img/explorer.png) | ![Flight Deck](docs/img/flight-deck.png) |
+| ![Explorer](docs/img/explorer.png) | ![The film playing in Cinema](docs/img/film.png) |
 
 Screenshots are the board's own frame buffer, read back over Ethernet.
 The plan, with architecture, budgets, phases and risks, is in
@@ -120,15 +122,16 @@ app/                    Zephyr application (also the west manifest repo)
   src/platform/         display (gfx), touch, network, telemetry, PSRAM, remote control
   src/ui/               design tokens, fonts, shell, direct rasteriser
   src/dsp/              signal generator + FFT, Explorer dataset + pyramid
-  src/media/            hardware JPEG decode
+  src/media/            hardware JPEG decode, clip player
   src/screens/          one file per screen
-assets/                 font sources (IBM Plex, OFL), poster image
+assets/                 font sources (IBM Plex, OFL)
+media/film/             the original film, companion clips and soundtrack, as code
 tools/
   n6.py                 build / flash / run / console
   shot.py, ctl.py       screenshot and remote-control clients
   tour.py               automated review
   gen_fonts.py          TTF to LVGL bitmap fonts (needs npm install in tools/fontconv)
-  make_poster.py        renders assets/media/poster.jpg
+  n6v.py                encode, pack and flash video clips
   gdbrun.ps1            scripted ST-LINK gdbserver + GDB session for bring-up
 docs/plan.html          the plan
 captures/               screenshots and logs pulled off the board (not committed)
@@ -143,7 +146,7 @@ captures/               screenshots and logs pulled off the board (not committed
 | Signal Lab | Triggered scope, log-frequency spectrum with peak hold and cursor, waterfall; one 1024-point Helium FFT per frame (about 220 us) | 7.5 / 9.4 ms |
 | Explorer | 2^20 samples x 4 channels with a min/max pyramid in PSRAM; pan, pinch, cursor, auto tour | 2.8 / 12.8 ms |
 | Touch Lab | Five contacts with trails, crosshairs, distance, report rate, touch-to-swap time | 1.5 / 2.1 ms |
-| Cinema | One JPEG decoded by the hardware codec and converted by DMA2D (decode 20 ms, convert 9.5 ms, polling mode) | static |
+| Cinema | Clips from flash, full screen, with overlay controls, scrubbing and a stats panel. Hardware JPEG decode about 9 ms a frame, DMA2D conversion 4.8 ms, video slaved to the audio clock | 30 fps video, no drops |
 | Specimen | Type scale, colour tokens, motion test | 1.8 / 2.7 ms |
 
 Frame time is all UI-thread work for a frame (screen logic, layout, render),
@@ -154,6 +157,41 @@ Signal Lab's source is a built-in signal generator and Explorer's dataset is
 synthetic; both are labelled as such on screen. Everything on Flight Deck is
 measured.
 
+## Video and audio
+
+Clips are Motion JPEG with 48 kHz stereo PCM in a small container (`.n6v`,
+described in `app/src/media/player.h`), stored in a media partition of the
+XSPI flash at `0x7042_0000`.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install skia-python     # once, for the film renderer
+.\.venv\Scripts\python.exe media\film\n6_film.py          # render the 48 s film + soundtrack
+.\.venv\Scripts\python.exe media\film\extras.py           # "Flow" and the A/V sync check
+.\.venv\Scripts\python.exe tools\n6v.py encode any.mp4 -o media\out\clip.n6v --title "My clip"
+.\.venv\Scripts\python.exe tools\n6v.py pack media\out\n6_film.n6v media\out\flow.n6v media\out\sync.n6v -o media\out\media.bin
+.\.venv\Scripts\python.exe tools\n6v.py flash media\out\media.bin   # about 8 minutes for 84 MB over SWD
+```
+
+The three clips are original: motion graphics drawn with Skia in the demo's
+own design language and a soundtrack synthesised with numpy
+(`media/film/`). `n6v.py encode` accepts anything ffmpeg can read.
+
+How playback works:
+
+- A player thread feeds each JPEG to the hardware codec at register level and
+  collects YCbCr MCU blocks (about 9 ms for 800 x 480).
+- The Cinema screen's draw handler has DMA2D convert the newest frame straight
+  into the LVGL frame buffer (4.8 ms); LVGL then draws the controls over it.
+- Audio goes to the WM8904 codec over SAI1 with one circular DMA transfer that
+  never stops. The DAC's sample clock is the master: the video frame shown is
+  whichever one matches the sample now leaving the DAC.
+
+Getting clean audio took three separate fixes, each recorded in `CLAUDE.md`:
+the SAI and DMA clocks have to be enabled for sleep mode as well as run mode;
+the codec has to be told it is the clock target; and the DMA's buffer has to
+live in AHBSRAM1, because CPU write bursts into AXI RAM starve the DMA long
+enough to underrun the 83 us SAI FIFO.
+
 ## Status
 
 | Item | State |
@@ -162,12 +200,13 @@ measured.
 | Panel | 800 x 480 ARGB8888 at 59.98 Hz, double buffer in internal SRAM, swap in the line interrupt |
 | Internal SRAM vs PSRAM (1.5 MB buffer) | fill 945 vs 466 MB/s, copy 361 vs 85 MB/s, read 691 vs 212 MB/s |
 | Ethernet | 1000 Mb full duplex, DHCP |
-| Hardware JPEG decode | Working: matches a software decode to within 0.5 levels per channel on average |
 | Touch | 5 points, verified by hand: orientation, multi-touch, pinch and pan |
+| Video | 800 x 480, 30 fps from flash, no dropped frames in the automated run |
+| Audio out | 48 kHz stereo to the headphone jack, zero underruns in the automated run, checked by ear. The sample clock comes from the HSI-fed PLL2 and measures 47.6 to 47.7 kHz (0.7 % low) |
 | Stand-alone boot (BOOT1 = L) | Not tested, needs a hand on the switch |
 | Microphone as Signal Lab source | Not started (generator only) |
 | Host companion, Host Link screen, web remote, OTA | Not started |
-| Video player, audio out, original demo video | Not started (decode path proven) |
+| SD card media library | Not started (a card is fitted) |
 | Screen transitions, attract mode, soak test | Not started |
 ## License
 

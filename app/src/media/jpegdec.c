@@ -28,10 +28,13 @@ static JPEG_HandleTypeDef hjpeg;
 
 int jpegdec_init(void)
 {
+	/* Sleep enables too: without them these clocks stop whenever the CPU idles. */
 	__HAL_RCC_JPEG_CLK_ENABLE();
+	__HAL_RCC_JPEG_CLK_SLEEP_ENABLE();
 	__HAL_RCC_JPEG_FORCE_RESET();
 	__HAL_RCC_JPEG_RELEASE_RESET();
 	__HAL_RCC_DMA2D_CLK_ENABLE();
+	__HAL_RCC_DMA2D_CLK_SLEEP_ENABLE();
 	__HAL_RCC_DMA2D_FORCE_RESET();
 	__HAL_RCC_DMA2D_RELEASE_RESET();
 

@@ -7,6 +7,7 @@
 #include <zephyr/logging/log.h>
 
 #include "dsp/sig.h"
+#include "platform/audio.h"
 #include "platform/ctl.h"
 #include "platform/gfx.h"
 #include "platform/net.h"
@@ -36,6 +37,9 @@ int main(void)
 		return 0;
 	}
 	touch_init();
+	if (audio_init() != 0) {
+		LOG_WRN("no audio output; video will run on the system clock");
+	}
 	sig_init();
 	net_start();
 	shell_init(screens, ARRAY_SIZE(screens));

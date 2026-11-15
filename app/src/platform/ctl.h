@@ -5,6 +5,11 @@
  *   screen <n>                 switch screen
  *   hud                        toggle the performance HUD
  *   stats                      one line of frame statistics
+ *   video                      one line of player status
+ *   audio                      DAC half-buffer count and underruns
+ *   tone <hz> <ms>             test tone at -12 dBFS
+ *   volume <0..100>            headphone volume
+ *   saiclk, peek <addr>        bring-up register readouts
  *   reset                      clear the worst-case counters
  *   tap <x> <y>                press and release
  *   swipe <x1> <y1> <x2> <y2> <ms>

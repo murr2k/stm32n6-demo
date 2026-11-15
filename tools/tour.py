@@ -42,6 +42,41 @@ def visit(host: str, index: int, name: str, settle: float, run: float) -> None:
           f"dropped {int(s['dropped'] - before['dropped'])}")
 
 
+def kv(host: str, cmd: str) -> dict[str, float]:
+    return {k: float(v) for k, v in re.findall(r"(\w+)=([\d.]+)", send(host, [cmd])[0])}
+
+
+def media_tests(host: str) -> None:
+    """Audio sample clock and video playback rate, measured against the host clock."""
+    a0, t0 = kv(host, "audio"), time.time()
+    time.sleep(4.0)
+    a1, t1 = kv(host, "audio"), time.time()
+    if a1.get("ok"):
+        rate = (a1["blocks"] - a0["blocks"]) * 512 / (t1 - t0)
+        print(f"audio: DAC clock {rate / 1000:.2f} kHz (nominal 48.00), underruns {int(a1['errors'])}")
+    else:
+        print("audio: not running")
+
+    send(host, [f"screen {SCREENS.index('cinema')}"])
+    time.sleep(1.0)
+    send(host, ["tap 140 200"])  # first clip card
+    time.sleep(2.0)
+    send(host, ["reset"])
+    v0, g0, t0 = kv(host, "video"), stats(host), time.time()
+    time.sleep(6.0)
+    v1, g1, t1 = kv(host, "video"), stats(host), time.time()
+    grab(host).save(OUT / "v1-cinema-playing.png")
+    if v1.get("open"):
+        print(f"video: {(v1['frame'] - v0['frame']) / (t1 - t0):.2f} fps over {t1 - t0:.1f} s, "
+              f"decode {v1['decode_us'] / 1000:.1f} ms, convert {v1['convert_us'] / 1000:.1f} ms, "
+              f"{v1['kbps'] / 1000:.1f} Mbit/s, player dropped {int(v1['dropped'] - v0['dropped'])}, "
+              f"UI dropped {int(g1['dropped'] - g0['dropped'])}, clock {'audio' if v1['audio_clock'] else 'system'}")
+    else:
+        print("video: no clip opened (is the media partition flashed?)")
+    send(host, ["tap 400 240", "sleep 0.4", "tap 40 26"])  # show the overlay, then Back
+    time.sleep(0.5)
+
+
 def touch_tests(host: str) -> None:
     # Touch Lab: three contacts held, one of them dragged.
     send(host, [f"screen {SCREENS.index('touchlab')}"])
@@ -87,6 +122,7 @@ def main() -> None:
     ap.add_argument("--host", default=DEFAULT_HOST)
     ap.add_argument("--screens", default=",".join(SCREENS))
     ap.add_argument("--no-touch", action="store_true")
+    ap.add_argument("--no-media", action="store_true")
     ap.add_argument("--run", type=float, default=5.0, help="seconds measured per screen")
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
@@ -94,6 +130,9 @@ def main() -> None:
         visit(a.host, SCREENS.index(name), name, settle=2.0, run=a.run)
     if not a.no_touch:
         touch_tests(a.host)
+    if not a.no_media:
+        media_tests(a.host)
+    send(a.host, ["screen 0"])
 
 
 if __name__ == "__main__":

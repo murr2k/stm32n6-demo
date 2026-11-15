@@ -24,7 +24,7 @@ static int n_screens;
 static int current = -1;
 
 static lv_obj_t *roots[MAX_SCREENS];
-static lv_obj_t *bar_title, *bar_clock, *bar_ip, *bar_fps, *bar_dot;
+static lv_obj_t *bar_obj, *bar_title, *bar_clock, *bar_ip, *bar_fps, *bar_dot;
 static lv_obj_t *dots[MAX_SCREENS];
 static lv_obj_t *hud, *hud_text, *hud_graph;
 static bool hud_on;
@@ -34,6 +34,8 @@ static bool hud_on;
 static void build_bar(lv_obj_t *scr)
 {
 	lv_obj_t *bar = ui_box(scr, 0, 0, GFX_W, UI_BAR_H);
+
+	bar_obj = bar;
 
 	lv_obj_set_style_bg_color(bar, ui_c(C_BG0), 0);
 	lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
@@ -273,6 +275,26 @@ void shell_goto(int index)
 int shell_current(void)
 {
 	return current;
+}
+
+void shell_set_cover(bool covered)
+{
+	/* A full-screen view (the video player) sits on top of everything. LVGL
+	 * cannot tell that it is opaque, so hide what is underneath rather than
+	 * render it every frame for nothing.
+	 */
+	lv_obj_t *const under[] = {bar_obj, current >= 0 ? roots[current] : NULL};
+
+	for (size_t i = 0; i < ARRAY_SIZE(under); i++) {
+		if (under[i] == NULL) {
+			continue;
+		}
+		if (covered) {
+			lv_obj_add_flag(under[i], LV_OBJ_FLAG_HIDDEN);
+		} else {
+			lv_obj_remove_flag(under[i], LV_OBJ_FLAG_HIDDEN);
+		}
+	}
 }
 
 int shell_count(void)

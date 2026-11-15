@@ -12,6 +12,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include "platform/audio.h"
 #include "platform/gfx.h"
 #include "platform/psram.h"
 #include "player.h"
@@ -49,6 +50,12 @@ static const struct n6v_header *cur;
 static volatile bool playing, loop_clip;
 static uint32_t base_frame;     /* clip position at base_us */
 static uint32_t base_us;
+/* Audio: a_pos is the next sample frame to hand to the DAC pipeline. When the
+ * clip has 48 kHz stereo sound and the codec is up, the DAC is the clock.
+ */
+static volatile uint32_t a_pos;
+static bool use_audio;
+static uint32_t spf;            /* audio sample frames per video frame */
 static uint32_t decoded_frame = UINT32_MAX;
 static struct player_status status;
 static K_SEM_DEFINE(wake, 0, 1);
@@ -106,10 +113,57 @@ const struct n6v_header *player_clip(int clip)
 	return (clip >= 0 && clip < n_clips) ? clips[clip] : NULL;
 }
 
+static const uint8_t *chunk_audio(const struct n6v_header *h, uint32_t frame, uint32_t *len)
+{
+	const uint32_t *chunk = chunk_ptr(h, frame);
+
+	*len = chunk[1];
+	return (const uint8_t *)&chunk[2] + ROUND_UP(chunk[0] + JPEG_PAD, 4);
+}
+
+/* Audio thread: supply the next block. a_pos keeps advancing past the end of
+ * the clip (as silence) so the clock still reaches the last frame.
+ */
+static uint32_t audio_source(int16_t *dst, uint32_t frames, void *ctx)
+{
+	const struct n6v_header *h = cur;
+	uint32_t done = 0;
+
+	ARG_UNUSED(ctx);
+	if (h == NULL || !playing || !use_audio) {
+		return 0;
+	}
+	while (done < frames) {
+		uint32_t pos = a_pos + done;
+		uint32_t f = pos / spf, off = pos % spf, len;
+
+		if (f >= h->n_frames) {
+			break;
+		}
+		const uint8_t *pcm = chunk_audio(h, f, &len);
+		uint32_t n = MIN(frames - done, len / 4 - MIN(off, len / 4));
+
+		if (n == 0) {
+			break;
+		}
+		memcpy(dst + done * 2, pcm + off * 4, n * 4);
+		done += n;
+	}
+	a_pos += frames;
+	return done;
+}
+
 static uint32_t clock_frame(void)
 {
 	if (!playing) {
 		return base_frame;
+	}
+	if (use_audio) {
+		/* the sample at the DAC right now: what was handed over minus what is still queued */
+		int32_t heard = (int32_t)a_pos - (int32_t)audio_queued_frames();
+		uint32_t f = heard > 0 ? (uint32_t)heard / spf : 0;
+
+		return MAX(f, base_frame);
 	}
 	uint64_t elapsed = (uint32_t)(gfx_now_us() - base_us);
 
@@ -120,6 +174,7 @@ static void rebase(uint32_t frame)
 {
 	base_frame = frame;
 	base_us = gfx_now_us();
+	a_pos = frame * spf;
 }
 
 int player_open(int clip)
@@ -136,7 +191,14 @@ int player_open(int clip)
 	memset(&status, 0, sizeof(status));
 	status.open = true;
 	status.n_frames = cur->n_frames;
+	spf = cur->audio_rate * cur->fps_den / cur->fps_num;
+	use_audio = audio_ok() && cur->audio_rate == AUDIO_RATE && cur->audio_channels == 2 &&
+		    cur->audio_bits == 16 && spf > 0;
+	if (spf == 0) {
+		spf = 1;
+	}
 	rebase(0);
+	audio_set_source(audio_source, NULL);
 	k_mutex_unlock(&codec);
 	k_sem_give(&wake);
 	return 0;
@@ -155,10 +217,7 @@ void player_close(void)
 void player_play(void)
 {
 	if (cur && !playing) {
-		if (base_frame >= cur->n_frames - 1) {
-			base_frame = 0;
-		}
-		base_us = gfx_now_us();
+		rebase(base_frame >= cur->n_frames - 1 ? 0 : base_frame);
 		playing = true;
 		k_sem_give(&wake);
 	}
@@ -193,6 +252,7 @@ void player_get_status(struct player_status *st)
 
 	*st = status;
 	st->playing = playing;
+	st->audio_clock = use_audio;
 	k_spin_unlock(&lock, key);
 }
 

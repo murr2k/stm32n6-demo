@@ -9,7 +9,7 @@
  * The two 800x480 ARGB8888 frame buffers (1.5 MB each) take the top 3 MB
  * because internal SRAM measured 2 to 4 times faster than the PSRAM:
  *
- *   0x3400_0000  840 KB   application RAM (this node)
+ *   0x3400_0000  840 KB   application RAM (this node): 400 KB of FLEXRAM, then AXISRAM1
  *   0x340D_2000  1.5 MB   frame buffer A   (see src/platform/gfx.c)
  *   0x3424_9000  1.5 MB   frame buffer B
  *   0x343C_0000  end
@@ -68,4 +68,47 @@
 	/delete-property/ nvmem-cells;
 	/delete-property/ nvmem-cell-names;
 	local-mac-address = [02 80 e1 4e 36 01];
+};
+
+/*
+ * Audio out: SAI1 block A is the I2S master into the WM8904 codec, which sits
+ * on I2C2 next to the touch controller. The SAI kernel clock is IC7 = PLL2 /
+ * 125 = 1536 MHz / 125 = 12.288 MHz, exactly 256 x 48 kHz, so MCLK needs no
+ * further division. PLL2 runs from the HSI, so the absolute pitch is only as
+ * good as that oscillator; video is slaved to the audio clock, so this never
+ * shows as drift.
+ *
+ * The SAI and its DMA channel are driven by the application through the ST
+ * HAL (src/platform/audio.c), so &sai1_a and &gpdma1 stay disabled here. The
+ * audio DMA buffer lives in AHBSRAM1 (0x3800_0000), not in the map above.
+ */
+&ic7 {
+	pll-src = <2>;
+	ic-div = <125>;
+	status = "okay";
+};
+
+&i2c2 {
+	wm8904: wm8904@1a {
+		compatible = "wolfson,wm8904";
+		reg = <0x1a>;
+		clock-source = "MCLK";
+		clocks = <&audio_mclk 0>;
+		clock-names = "mclk";
+	};
+};
+
+/ {
+	/* What the WM8904 driver queries for the MCLK rate; the SAI generates it. */
+	audio_mclk: audio-mclk {
+		compatible = "n6demo,audio-mclk";
+		clock-frequency = <12288000>;
+		#clock-cells = <1>;
+	};
+
+	audio_out: audio-out {
+		compatible = "n6demo,audio-out";
+		pinctrl-0 = <&sai1_mclk_a_pg7 &sai1_sck_a_pb6 &sai1_sd_a_pb7 &sai1_fs_a_pb0>;
+		pinctrl-names = "default";
+	};
 };

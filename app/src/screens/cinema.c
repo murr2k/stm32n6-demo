@@ -161,6 +161,7 @@ static void close_player(void)
 	player_close();
 	open_clip = -1;
 	lv_obj_add_flag(pv, LV_OBJ_FLAG_HIDDEN);
+	shell_set_cover(false);
 }
 
 static void open_player(int clip)
@@ -175,6 +176,7 @@ static void open_player(int clip)
 	lv_label_set_text(l_title, h->title);
 	lv_obj_remove_flag(pv, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_move_foreground(pv);
+	shell_set_cover(true);
 	player_set_loop(false);
 	player_play();
 	show_overlay(true);
@@ -408,10 +410,10 @@ static void tick(uint32_t now_ms)
 		lv_label_set_text_fmt(l_time, "%u:%02u / %u:%02u", pos / 60, pos % 60, len / 60, len % 60);
 		lv_label_set_text_fmt(l_stats,
 				      "FRAME    %u / %u\nDECODE   %u.%u ms\nCONVERT  %u.%u ms\n"
-				      "BITRATE  %u.%u Mbit/s\nFRAME    %u KB\nDROPPED  %u",
+				      "BITRATE  %u.%u Mbit/s\nFRAME    %u KB\nDROPPED  %u\nCLOCK    %s",
 				      st.frame + 1, st.n_frames, st.decode_us / 1000, (st.decode_us / 100) % 10,
 				      st.convert_us / 1000, (st.convert_us / 100) % 10, st.kbps / 1000,
-				      (st.kbps / 100) % 10, st.frame_bytes / 1024, st.dropped);
+				      (st.kbps / 100) % 10, st.frame_bytes / 1024, st.dropped, st.audio_clock ? "audio DAC" : "system");
 		/* label changes are small dirty areas; redraw the whole view with them
 		 * so the picture takes the fast path
 		 */

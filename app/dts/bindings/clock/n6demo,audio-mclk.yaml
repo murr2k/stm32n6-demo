@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Fixed-rate audio master clock.
+
+  Zephyr's WM8904 driver asks a clock controller to enable MCLK and report its
+  rate, using a one-cell specifier named "name" (the NXP convention). On this
+  board MCLK comes from the SAI itself, so this node only has to answer with
+  the configured frequency.
+
+compatible: "n6demo,audio-mclk"
+
+include: [clock-controller.yaml, base.yaml]
+
+properties:
+  clock-frequency:
+    type: int
+    required: true
+
+  "#clock-cells":
+    const: 1
+
+clock-cells:
+  - name

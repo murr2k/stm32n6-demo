@@ -39,6 +39,11 @@ int shell_count(void);
 const struct screen *shell_screen(int index);
 void shell_toggle_hud(void);
 
+/* Hide (or show again) the status bar and the current screen while a
+ * full-screen view covers them.
+ */
+void shell_set_cover(bool covered);
+
 /* True while a touch that began at a screen edge is being tracked as a
  * navigation swipe. Screens that read raw touches must ignore it.
  */

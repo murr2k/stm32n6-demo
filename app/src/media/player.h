@@ -48,6 +48,7 @@ struct player_status {
 	uint32_t dropped;        /* frames skipped because decoding fell behind */
 	uint32_t kbps;           /* video bit rate over the last second of clip time */
 	uint32_t frame_bytes;    /* compressed size of the last frame */
+	bool audio_clock;        /* true when the DAC sample clock is driving playback */
 };
 
 /* Scan the media partition. Returns the number of clips found (0 if none). */

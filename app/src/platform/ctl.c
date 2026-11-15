@@ -11,7 +11,12 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/net/socket.h>
 
+#include <soc.h>
+#include <stm32n6xx_hal.h>
+
+#include "audio.h"
 #include "ctl.h"
+#include "media/player.h"
 #include "gfx.h"
 #include "net.h"
 #include "touch.h"
@@ -81,6 +86,70 @@ static int handle(char *line, char *out, size_t out_len)
 		swipe(a[0], a[1], a[2], a[3], a[4]);
 	} else if (!strcmp(cmd, "touch") && n >= 5) {
 		touch_inject(a[0], a[1], a[2], a[3] != 0);
+	} else if (!strcmp(cmd, "peek") && n >= 2) {
+		/* read one 32-bit word: bring-up aid, e.g. "peek 0x56028000" */
+		uint32_t addr = strtoul(strchr(line, ' ') + 1, NULL, 0) & ~3u;
+
+		return snprintf(out, out_len, "%08x: %08x\n", (unsigned int)addr, (unsigned int)*(volatile uint32_t *)addr);
+	} else if (!strcmp(cmd, "saiclk")) {
+		return snprintf(out, out_len,
+				"CCIPR7=%08x IC7CFGR=%08x DIVENR=%08x PLL2CFGR1=%08x PLL2CFGR2=%08x PLL2CFGR3=%08x "
+				"SAI_CR1=%08x SAI_FRCR=%08x hal_freq=%u\n",
+				(unsigned int)RCC->CCIPR7, (unsigned int)RCC->IC7CFGR, (unsigned int)RCC->DIVENR,
+				(unsigned int)RCC->PLL2CFGR1, (unsigned int)RCC->PLL2CFGR2, (unsigned int)RCC->PLL2CFGR3,
+				(unsigned int)SAI1_Block_A->CR1, (unsigned int)SAI1_Block_A->FRCR,
+				(unsigned int)HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_SAI1));
+	} else if (!strcmp(cmd, "tone") && n >= 3) {
+		audio_tone(a[0], a[1]);
+	} else if (!strcmp(cmd, "volume") && n >= 2) {
+		audio_set_volume(a[0]);
+	} else if (!strcmp(cmd, "bus") && n >= 3) {
+		/* synthetic bus load for a[1] ms: 0 PSRAM read, 1 PSRAM write, 2 internal SRAM read,
+		 * 3 flash read. Each pass covers 1 MB, far more than the data cache holds.
+		 */
+		static const uintptr_t base[] = {0x91000000, 0x91000000, 0x34249000, 0x70420000};
+		volatile uint32_t *p = (volatile uint32_t *)base[a[0] & 3];
+		uint32_t end = k_uptime_get_32() + a[1], sum = 0, passes = 0;
+
+		while ((int32_t)(end - k_uptime_get_32()) > 0) {
+			for (uint32_t i = 0; i < (1u << 18); i += 8) { /* one word per 32-byte cache line */
+				if ((a[0] & 3) == 1) {
+					p[i] = i;
+				} else {
+					sum += p[i];
+				}
+			}
+			passes++;
+		}
+		return snprintf(out, out_len, "passes=%u sum=%08x\n", (unsigned int)passes, (unsigned int)sum);
+	} else if (!strcmp(cmd, "arestart")) {
+		audio_restart();
+	} else if (!strcmp(cmd, "spin") && n >= 2) {
+		/* keep the CPU out of idle for a while: tests whether sleep disturbs a peripheral */
+		uint32_t end = k_uptime_get_32() + a[0];
+
+		while ((int32_t)(end - k_uptime_get_32()) > 0) {
+			k_busy_wait(100);
+		}
+	} else if (!strcmp(cmd, "arate")) {
+		return audio_rate_probe(out, out_len);
+	} else if (!strcmp(cmd, "audiodbg")) {
+		return audio_debug(out, out_len);
+	} else if (!strcmp(cmd, "audio")) {
+		uint32_t blocks, errors;
+
+		audio_get_counters(&blocks, &errors);
+		return snprintf(out, out_len, "ok=%d blocks=%u errors=%u uptime_ms=%u\n", audio_ok(), blocks, errors,
+				k_uptime_get_32());
+	} else if (!strcmp(cmd, "video")) {
+		struct player_status st;
+
+		player_get_status(&st);
+		return snprintf(out, out_len,
+				"open=%d playing=%d frame=%u n_frames=%u dropped=%u decode_us=%u convert_us=%u "
+				"kbps=%u audio_clock=%d\n",
+				st.open, st.playing, st.frame, st.n_frames, st.dropped, st.decode_us, st.convert_us,
+				st.kbps, st.audio_clock);
 	} else if (!strcmp(cmd, "stats")) {
 		const struct gfx_stats *g = gfx_stats();
 
@@ -99,7 +168,7 @@ static int handle(char *line, char *out, size_t out_len)
 static void ctl_thread(void *p1, void *p2, void *p3)
 {
 	struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(CTL_PORT)};
-	static char line[96], out[256];
+	static char line[96], out[640];
 	int srv;
 
 	net_wait_ip();

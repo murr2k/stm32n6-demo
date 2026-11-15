@@ -78,8 +78,38 @@ not to be modified from here.
 - **AXISRAM3-6 must be enabled in the overlay before touching 0x3420_0000.**
   **Why:** the banks are powered down and unclocked at reset; a write hangs
   the core with no fault output.
-- **Keep `CONFIG_LOG_MODE_IMMEDIATE=y` during bring-up.** **Why:** with
-  deferred logging an early hang shows nothing at all on the console.
+- **Logging is deferred; use `debug.conf` for an early hang.** Build with
+  `n6.cmd build -- -Dapp_EXTRA_CONF_FILE=debug.conf` to get immediate mode.
+  **Why:** immediate mode masks interrupts for a whole UART line
+  (milliseconds), which wrecks anything timing-sensitive; deferred mode shows
+  nothing if the board hangs before the log thread runs.
+- **A peripheral clock enabled with a HAL macro needs its SLEEP enable too**
+  (`__HAL_RCC_xxx_CLK_ENABLE()` and `__HAL_RCC_xxx_CLK_SLEEP_ENABLE()`).
+  **Why:** on the N6 the sleep-enable bits (RCC_xxxLPENR) reset to 0, and the
+  idle thread executes WFI many times a frame. Zephyr's clock driver sets
+  both; the HAL "enable" macro sets one. SAI1 and GPDMA1 froze on every idle
+  period: underruns, a stream at a fraction of real time, then a stall.
+- **The audio DMA buffer and its linked-list node live in AHBSRAM1
+  (0x3800_0000). Do not move them to FLEXRAM, AXISRAM or PSRAM.** **Why:**
+  when the CPU streams writes into AXISRAM (LVGL filling large areas of the
+  frame buffer) the DMA's reads on the AXI interconnect are held off for
+  longer than the SAI FIFO lasts (8 samples, 83 us). Measured about 60
+  underruns/s on Signal Lab and Cinema with the buffer in AXISRAM1, zero in
+  AHBSRAM1. Reads, PSRAM and flash traffic did not matter (`ctl.py "bus k ms"`
+  generates each kind of load for a regression check).
+- **Audio out is one circular DMA transfer driven through the ST HAL, not
+  Zephyr's I2S driver.** **Why:** that driver restarts the DMA from an ISR at
+  every block boundary, which the 83 us FIFO does not survive. Also: the SAI
+  FIFO threshold is 3/4 ("full" over-delivers and drops samples, "1/4"
+  underruns); the WM8904 must be told it is the clock TARGET (with the
+  default options it also drives BCLK/LRCLK against the SAI); the codec
+  driver needs a clock controller with a cell called `name`, hence the
+  `n6demo,audio-mclk` shim.
+- **After any audio change run `tools/tour.py` and check `underruns 0`.** An
+  underrun is recovered by restarting the stream, so a regression shows up as
+  a counter, not as silence.
+- **`MIN()`/`MAX()` evaluate their arguments twice.** Never pass a call with
+  side effects (it registered every clip twice).
 - **Never create or reposition many LVGL objects per frame.** **Why:** LVGL
   keeps 32 invalid areas per frame; one more and it redraws the whole screen
   (about 10 ms here). Moving 14 axis labels did exactly that. Draw moving text
@@ -102,5 +132,13 @@ not to be modified from here.
 - Stand-alone boot (BOOT1 = L) has not been tested; it needs the user at the
   board.
 - Touch, navigation, motion and colour were checked on the panel by the user on 2026-11-14 (all good). The repository is public: keep host names, serial numbers and personal paths out of committed files.
-- Audio out (SAI + WM8904) is not in the board devicetree; needs an overlay.
+- Audio out works and is underrun-free in the automated checks; the sample
+  clock is PLL2 (HSI-based), measured 47.6 to 47.7 kHz. Video is slaved to it.
+- A formatted 32 GB microSD card is in the slot (2026-11-15). Plan: media
+  library on the card with upload over Ethernet (needs the `fatfs` module and
+  a read-ahead buffer in the player). Writing 84 MB of clips to the XSPI flash
+  over SWD takes 8 minutes.
+- Media: `media/film/*.py` render the original clips (Skia + numpy score),
+  `tools/n6v.py encode|pack|flash` puts them in the media partition at
+  0x7042_0000. Outputs go to `media/out/` (not committed).
 - Camera (IMX335) and NPU are a later addition; keep a screen slot for them.

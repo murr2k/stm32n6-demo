@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: Apache-2.0
+
+description: |
+  Audio output pins. The application drives SAI1 block A through the ST HAL
+  with a circular DMA transfer (src/platform/audio.c), so the SAI node itself
+  stays disabled and this node only carries the pin configuration.
+
+compatible: "n6demo,audio-out"
+
+include: [base.yaml, pinctrl-device.yaml]
