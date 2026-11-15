@@ -17,9 +17,11 @@
 #include "audio.h"
 #include "ctl.h"
 #include "dsp/dataset.h"
+#include "dsp/sig.h"
 #include "media/player.h"
 #include "media/sdcard.h"
 #include "gfx.h"
+#include "mic.h"
 #include "net.h"
 #include "psram.h"
 #include "screens/screens.h"
@@ -109,6 +111,23 @@ static int handle(char *line, char *out, size_t out_len)
 			len += snprintf(out + len, out_len - len, "%08x", (unsigned int)w[i]);
 		}
 		return len + snprintf(out + len, out_len - len, "\n");
+	} else if (!strcmp(cmd, "mic")) {
+		struct mic_status m;
+
+		mic_get_status(&m);
+		return snprintf(out, out_len,
+				"ok=%d total=%u blocks=%u errors=%u last_error=0x%x rate_hz=%u peak=%d rms=%d dc=%d\n", m.ok,
+				m.total, m.blocks, m.errors, m.last_error, m.rate_hz, (int)m.peak, (int)m.rms, (int)m.dc);
+	} else if (!strcmp(cmd, "sigsrc") && n >= 2) {
+		sig_set_source(a[0] ? SIG_SRC_MIC : SIG_SRC_GENERATOR);
+		return snprintf(out, out_len, "source=%d\n", sig_source());
+	} else if (!strcmp(cmd, "mictune")) {
+		int v[10], k = sscanf(line, "%*s %d %d %d %d %d %d %d %d %d %d", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5],
+				      &v[6], &v[7], &v[8], &v[9]);
+
+		return mic_tune(v, MAX(k, 0), out, out_len);
+	} else if (!strcmp(cmd, "mcap")) {
+		return mic_capture(n >= 2 ? a[0] : 0, out, out_len);
 	} else if (!strcmp(cmd, "acap")) {
 		return audio_capture(n >= 2 ? a[0] : 0, out, out_len);
 	} else if (!strcmp(cmd, "saiclk")) {

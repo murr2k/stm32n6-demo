@@ -25,6 +25,7 @@ not to be modified from here.
 .\.venv\Scripts\python.exe tools\fuzz_player.py --secs 120   # random abuse of the video player
 .\.venv\Scripts\python.exe tools\acap.py --secs 2 -o captures\x.wav --clicks "tap 40 444"   # record the DAC feed while commands run, count discontinuities
 .\.venv\Scripts\python.exe tools\n6v.py upload media\out\n6_film.n6v   # clip to the microSD card over Ethernet (4 MB/s); also ls, rm, df
+.\.venv\Scripts\python.exe tools\acap.py --mic --secs 3 -o captures\mic.wav   # record the microphone (24 bit), print its level
 .\.venv\Scripts\python.exe tools\dataset.py info   # Explorer's data set: must say "source flash"; pull + flash put it there
 .\run.cmd                   # host companion: live data for Host Link and Core Map
 ```
@@ -91,6 +92,18 @@ not to be modified from here.
   network services (`sd_service` on tcp/5558 takes uploads). The window is
   moved by `player_io` only; the others copy out of it and wait when their
   data is not there (the clock is held, nothing is skipped).
+- Microphone (platform/mic.c): MDF1 filter 0 through the ST HAL, PDM clock
+  out on PE2 (CCK0), data in on PE8 (SDI0), kernel clock IC7 (12.288 MHz, the
+  SAI's, so one microphone sample is one DAC frame), CCK 3.072 MHz, Sinc5 / 16,
+  reshape / 4: 48 kHz, 24 bit, read as 32-bit words by a circular GPDMA1
+  channel 6 transfer into AHBSRAM1 (buffer at +0x2000, list node at +0x3000,
+  beside the audio output's). A cooperative thread copies each 512-sample
+  half into a 16384-sample ring in PSRAM; readers use `mic_total()` and
+  `mic_copy()`. Signal Lab takes it as its second source (`sig_set_source`,
+  a tap on the SOURCE label, `ctl.py "sigsrc 1"`); the generator is the
+  default. `ctl.py mic` shows rate, errors and level, `acap.py --mic`
+  records a WAV, `ctl.py "mictune ..."` restarts the capture with other
+  settings (mic.h lists the ten values).
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
   Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
   explorer, touchlab, hostlink, coremap, cinema, specimen. Home shows two
@@ -316,6 +329,37 @@ not to be modified from here.
   `stm32_sdmmc: Failed to configure pins for sleep (-2)`: the driver asks for
   a pinctrl sleep state, which Zephyr compiles out without
   `CONFIG_PM_DEVICE` (adding the state to the overlay changes nothing).
+- **The microphone's DMA list node and buffer are in AHBSRAM1 and the node
+  is flushed from the data cache before the transfer starts, as for the
+  audio output.** **Why:** the DMA engine reloads the node from memory on
+  every lap of a circular transfer; a node the cache has not written back
+  is a corrupt descriptor some seconds later (seen by the user in another
+  project as "corrupted after 1 to 17 s", and the reason that project fell
+  back to re-arming a one-shot transfer). Here: 0 errors over the tour.
+  MDF1 needs its sleep clock enabled like every HAL-enabled peripheral, and
+  its clock source is chosen with `LL_RCC_SetMDFClockSource` (a plain
+  CCIPR5 write), not `HAL_RCCEx_PeriphCLKConfig`, which reprograms the IC
+  divider behind the Zephyr clock driver's back.
+- **The onboard microphone U13 delivers noise on this board; do not tune
+  the firmware against it.** Measured 2026-11-15: Gaussian noise at
+  -60 dBFS (about 50 dB above the MP23DB01HP's own noise, a slope of 2 dB
+  an octave, no tones), unchanged by the clock edge, the serial interface
+  mode, the kernel clock source (RC PLL, crystal bus clock, RC), a PDM clock
+  of 1.5 to 3.2 MHz, the clock pin's drive strength, or a pull-up or
+  pull-down on the data pin (so the line is driven); it scales exactly with
+  the filter gain (so it is in the bit stream) and the stream goes to
+  digital silence below 1 MHz (so the part reacts to its clock). A 1 kHz
+  tone from the PC that the user heard is not in a 1.6 s coherent
+  measurement on either edge (below -92 dBFS, under 50 dB SPL by the
+  datasheet sensitivity of -41 dBFS at 94 dB SPL). Wiring per the
+  schematic (MB1939 sheet 16): U13 on PE2/PE8 through analog switch U14,
+  which hands PE8 to connector CN5 when a board there pulls MIC_DET low;
+  VDD_MIC from 3.3 V through SB19; LR high, so data is valid while the
+  clock is high (falling edge). The user's own good captures on this board
+  were made with an external PUI DMM-2726-B on those pins (1.536 MHz,
+  Sinc5 / 8), not with U13. ST's unmodified MDF_AudioRecorder gave "weak
+  audio with hiss" here. Verify the path with a known good microphone on
+  CN5 before anything else.
 - **Touch coordinates are panel coordinates**, not content-area coordinates:
   subtract `UI_CONTENT_Y` only when positioning objects inside a screen root.
 - **Label the origin of data on screen.** Generated or synthetic sources say
@@ -386,5 +430,9 @@ not to be modified from here.
   has not been tried with a real insertion), fast seeks in
   very large files (FatFs walks the cluster chain: a backward seek in a
   1 GB clip on FAT32 may take a few hundred ms; untested), FAT timestamps.
+- Microphone: the capture path runs (48 kHz, 0 errors) and Signal Lab can
+  show it, but it has not shown a real sound yet: U13 gives noise only (see
+  the invariant). Open: a known good microphone on CN5 (the PUI part needs
+  `mictune 0 1 1 8 5 8 1`: 1.536 MHz, Sinc5 / 8), or a tap test on U13.
 - Camera (IMX335) and NPU are a later addition. Home has room now; memory is
   the question (see the budget under Architecture).

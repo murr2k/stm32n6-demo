@@ -10,6 +10,7 @@
 #include "platform/audio.h"
 #include "platform/ctl.h"
 #include "platform/gfx.h"
+#include "platform/mic.h"
 #include "platform/net.h"
 #include "platform/tele.h"
 #include "platform/touch.h"
@@ -41,6 +42,9 @@ int main(void)
 	touch_init();
 	if (audio_init() != 0) {
 		LOG_WRN("no audio output; video will run on the system clock");
+	}
+	if (mic_init() != 0) {
+		LOG_WRN("no microphone; Signal Lab has its generator only");
 	}
 	sig_init();
 	net_start();

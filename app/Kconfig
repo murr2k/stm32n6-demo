@@ -1,8 +1,8 @@
 # Application Kconfig.
 # SPDX-License-Identifier: Apache-2.0
 
-# The media path drives the JPEG codec, DMA2D and the SAI (audio out, with a
-# circular GPDMA transfer) through the ST HAL directly:
+# The media path drives the JPEG codec, DMA2D, the SAI (audio out, with a
+# circular GPDMA transfer) and the MDF (microphone in) through the ST HAL directly:
 # Zephyr 4.4.0's JPEG driver only encodes. These HAL modules are hidden
 # symbols that drivers normally select, so select them here.
 config APP_MEDIA
@@ -11,6 +11,7 @@ config APP_MEDIA
 	select USE_STM32_HAL_JPEG
 	select USE_STM32_HAL_DMA2D
 	select USE_STM32_HAL_SAI
+	select USE_STM32_HAL_MDF
 	select USE_STM32_HAL_DMA
 	select USE_STM32_HAL_DMA_EX
 

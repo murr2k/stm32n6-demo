@@ -188,7 +188,7 @@ tools/
   shot.py, ctl.py       screenshot and remote-control clients
   tour.py               automated review
   fuzz_player.py        random abuse of the video player through injected touches
-  acap.py               record the DAC feed as a WAV file, count discontinuities
+  acap.py               record the DAC feed or the microphone as a WAV file, count discontinuities
   dataset.py            move Explorer's data set from PSRAM into the flash
   gen_fonts.py          TTF to LVGL bitmap fonts (needs npm install in tools/fontconv)
   n6v.py                encode video clips; upload them to the card, or pack and flash them
@@ -224,8 +224,9 @@ position maths was a library call (2 to 5 ms a frame). `app/Kconfig` selects
 the double-precision FPU; the sample markers also stopped taking a square
 root per pixel.
 
-Signal Lab's source is a built-in signal generator and Explorer's dataset is
-synthetic; both are labelled as such on screen. Everything on Flight Deck is
+Signal Lab's default source is a built-in signal generator (its other one is
+the microphone) and Explorer's dataset is synthetic; the screen says which
+source is on, and labels both as what they are. Everything on Flight Deck is
 measured.
 
 Explorer's 14 MB (the samples and their pyramid) used to be generated into
@@ -372,7 +373,7 @@ and look for isolated steps in both.
 | Video | 800 x 480, 30 fps from flash and from the microSD card, no dropped frames in the automated run |
 | Audio out | 48 kHz stereo to the headphone jack, zero underruns in the automated run, checked by ear. The sample clock comes from the HSI-fed PLL2 and measures 47.6 to 47.7 kHz (0.7 % low) |
 | Stand-alone boot (BOOT1 = L) | Working: with the switch at L the demo starts by itself after a reset (the console shows the boot ROM loading MCUboot from flash, then the application) |
-| Microphone as Signal Lab source | Not started (generator only) |
+| Microphone as Signal Lab source | Capture path working, sound not yet: MDF1 turns the PDM stream into 48 kHz, 24 bit PCM on the DAC's own clock, a circular DMA delivers it with no errors, and a tap on Signal Lab's SOURCE label puts it on the scope, spectrum and waterfall. On this board the onboard microphone (U13) delivers only noise, 50 dB above its datasheet floor and unaffected by every capture setting, and a tone played beside it does not appear; a known good PDM microphone on connector CN5 is the next step. The generator stays the default source |
 | Host Link | Working: 340 of 340 datagrams answered in the test run, 1.4 to 2.9 ms round trip as timed by the host |
 | Web remote, firmware update over the network | Not started |
 | microSD media library | Working: FAT32/exFAT, upload over Ethernet at 2 to 4 MB/s with CRC, streamed playback with 0 stalls in the automated run. Checked by measurement and screenshots, not yet by eye and ear on the panel. Not built: noticing a card put in after boot without `n6v.py mount` (untested with a real insertion), fast seeks in files of a gigabyte or more |

@@ -17,6 +17,10 @@
  *   audio                      DAC half-buffer count and underruns
  *   tone <hz> <ms>             test tone at -12 dBFS
  *   volume <0..100>            headphone volume
+ *   mic                        microphone: samples, errors, measured rate, level of the last block
+ *   mictune [8 values]         microphone bring-up: restart with other settings (mic.h)
+ *   sigsrc <0|1>               Signal Lab's source: generator or microphone
+ *   mcap [ms]                  record the next ms of microphone samples (3 s at most), like acap
  *   acap [ms]                  record the next ms of DAC output (3 s at most);
  *                              without ms: where it is and how far it has got
  *   dump <addr> <words>        up to 64 words in hex (tools/acap.py reads the

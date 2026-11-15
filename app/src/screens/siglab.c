@@ -22,7 +22,7 @@
 #define WF_Y    262
 
 static lv_obj_t *scope_pane, *spec_pane, *wf_pane;
-static lv_obj_t *l_peak, *l_level, *l_fft, *l_hold, *l_cursor;
+static lv_obj_t *l_peak, *l_level, *l_fft, *l_hold, *l_cursor, *l_source;
 static uint32_t lut[256];
 static int cursor_col = -1;
 static uint32_t cursor_until;
@@ -166,6 +166,12 @@ static void wf_click(lv_event_t *e)
 	lv_obj_set_style_text_color(l_hold, ui_c(sig_held() ? C_AMBER : C_MINT), 0);
 }
 
+static void source_click(lv_event_t *e)
+{
+	ARG_UNUSED(e);
+	sig_set_source(sig_source() == SIG_SRC_MIC ? SIG_SRC_GENERATOR : SIG_SRC_MIC);
+}
+
 static lv_obj_t *pane(lv_obj_t *root, int y, int h, lv_event_cb_t draw)
 {
 	lv_obj_t *p = ui_box(root, PX, y, SIG_COLS, h);
@@ -178,8 +184,14 @@ static void create(lv_obj_t *root)
 {
 	build_lut();
 
-	lv_obj_set_pos(ui_caption(root, "SOURCE"), PX, 8);
-	lv_obj_set_pos(ui_label(root, &font_mono_14, C_TEXT, sig_view()->source), PX, 22);
+	lv_obj_set_pos(ui_caption(root, "SOURCE  TAP TO SWITCH"), PX, 8);
+	l_source = ui_label(root, &font_mono_14, C_TEXT, sig_view()->source);
+	lv_obj_set_pos(l_source, PX, 22);
+	/* the two lines above are the button */
+	lv_obj_t *src_btn = ui_box(root, 0, 0, 212, 42);
+
+	lv_obj_add_flag(src_btn, LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_add_event_cb(src_btn, source_click, LV_EVENT_SHORT_CLICKED, NULL);
 
 	lv_obj_set_pos(ui_caption(root, "PEAK"), 220, 8);
 	l_peak = ui_label(root, &font_mono_14, C_AZURE, "-");
@@ -277,6 +289,10 @@ static void tick(uint32_t now_ms)
 		return;
 	}
 	last_text = now_ms;
+	if (lv_label_get_text(l_source) != v->source) {
+		lv_label_set_text_static(l_source, v->source);
+		lv_obj_set_style_text_color(l_source, ui_c(sig_source() == SIG_SRC_MIC ? C_MINT : C_TEXT), 0);
+	}
 	fmt_hz(hz, sizeof(hz), v->peak_hz);
 	lv_label_set_text(l_peak, hz);
 	snprintf(buf, sizeof(buf), "%.1f dBFS", (double)v->rms_db);

@@ -2,9 +2,9 @@
  * Signal path for the Signal Lab: a 48 kHz source, a 1024-point Helium FFT
  * per display frame, a log-frequency spectrum and a waterfall history.
  *
- * The source is currently a built-in signal generator and is labelled as such
- * on screen. The analysis side does not care where the samples come from, so
- * the MEMS microphone slots in as a second source.
+ * There are two sources, and the screen says which one is on: a built-in
+ * signal generator, and the board's MEMS microphone (platform/mic.h), whose
+ * 48 kHz come from the same clock as the audio output's.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -35,7 +35,12 @@ struct sig_view {
 	const char *source;
 };
 
+enum { SIG_SRC_GENERATOR, SIG_SRC_MIC };
+
 void sig_init(void);
+/* Choose the source; the microphone only if it is running. */
+void sig_set_source(int src);
+int sig_source(void);
 /* Advance the source to now and analyse one frame. Call once per frame slot. */
 void sig_service(uint32_t now_ms);
 const struct sig_view *sig_view(void);

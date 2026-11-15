@@ -11,6 +11,7 @@
 #include <arm_math.h>
 
 #include "platform/gfx.h"
+#include "platform/mic.h"
 #include "platform/psram.h"
 #include "sig.h"
 
@@ -33,6 +34,8 @@ static uint8_t *waterfall;
 static arm_rfft_fast_instance_f32 rfft;
 static struct sig_view view;
 static uint32_t last_ms;
+static int source = SIG_SRC_GENERATOR;
+static uint32_t mic_at;                /* next microphone sample to take */
 
 /* ---- generator ----------------------------------------------------------
  * A deliberately busy test signal: a steady tone with harmonics and tremolo,
@@ -127,6 +130,57 @@ void sig_init(void)
 	view.scope = scope;
 	view.waterfall = waterfall;
 	view.source = "SIGNAL GENERATOR";
+}
+
+/* ---- microphone ---------------------------------------------------------
+ * The samples are 24 bit; the ring here is 16. This microphone is a quiet one
+ * (94 dB SPL is 41 dB under its full scale, which it reaches at 135 dB SPL),
+ * so the top bits are empty in a room: take bits 18..3, which is +30 dB and
+ * puts full scale at about 105 dB SPL.
+ */
+#define MIC_SHIFT 3
+
+static bool take_microphone(void)
+{
+	static int32_t tmp[256];
+	uint32_t end = mic_total();
+	bool any = false;
+
+	if (end - mic_at > RING / 2) {
+		mic_at = end - RING / 2; /* after a pause: only the latest */
+	}
+	while (mic_at != end) {
+		uint32_t n = mic_copy(mic_at, tmp, MIN(end - mic_at, (uint32_t)ARRAY_SIZE(tmp)));
+
+		if (n == 0) {
+			mic_at = end;
+			break;
+		}
+		for (uint32_t i = 0; i < n; i++) {
+			ring[ring_w++ & (RING - 1)] = (int16_t)CLAMP(tmp[i] >> MIC_SHIFT, -32768, 32767);
+		}
+		mic_at += n;
+		any = true;
+	}
+	return any;
+}
+
+void sig_set_source(int src)
+{
+	if (src == SIG_SRC_MIC && !mic_ok()) {
+		src = SIG_SRC_GENERATOR;
+	}
+	source = src;
+	mic_at = mic_total();
+	view.source = src == SIG_SRC_MIC ? "MICROPHONE  +30 dB" : "SIGNAL GENERATOR";
+	for (int c = 0; c < SIG_COLS; c++) {
+		col_peak[c] = SIG_DB_MIN; /* the other source's peaks mean nothing here */
+	}
+}
+
+int sig_source(void)
+{
+	return source;
 }
 
 static void analyse(void)
@@ -251,7 +305,13 @@ void sig_service(uint32_t now_ms)
 	if (n <= 0) {
 		return;
 	}
-	generate(n);
+	if (source == SIG_SRC_MIC) {
+		if (!take_microphone()) {
+			return;
+		}
+	} else {
+		generate(n);
+	}
 	if (ring_w >= RING) {
 		analyse();
 	}
