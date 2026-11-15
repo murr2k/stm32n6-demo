@@ -1,0 +1,57 @@
+/*
+ * Display platform: frame buffers, LVGL display, vsync presentation, frame
+ * timing.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+#ifndef PLATFORM_GFX_H
+#define PLATFORM_GFX_H
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <lvgl.h>
+
+#define GFX_W        800
+#define GFX_H        480
+#define GFX_FB_BYTES (GFX_W * GFX_H * 4)
+
+/* Frame history kept for the HUD and the Flight Deck. */
+#define GFX_HISTORY 256
+
+struct gfx_stats {
+	uint32_t frames;        /* frames presented since boot */
+	uint32_t dropped;       /* vsync intervals missed while animating */
+	uint32_t refresh_uhz;   /* measured panel refresh, micro-hertz */
+	uint32_t period_us;     /* nominal refresh period */
+	uint32_t last_render_us;
+	uint32_t last_period_us;
+	uint32_t worst_render_us; /* since the last gfx_stats_reset_worst() */
+	uint32_t worst_period_us;
+	uint32_t fps_x10;       /* presented frames per second, 1 s window */
+	uint32_t avg_render_us; /* 1 s window */
+	uint16_t head;          /* next write index in the rings below */
+	uint16_t render_us[GFX_HISTORY]; /* saturated at 65535 */
+	uint16_t period_us_ring[GFX_HISTORY];
+};
+
+int gfx_init(void);
+
+/* Run LVGL once: timers, animations, render, present. Blocks until the swap
+ * when something was drawn, otherwise sleeps to the next frame slot.
+ */
+void gfx_run_frame(void);
+
+const struct gfx_stats *gfx_stats(void);
+void gfx_stats_reset_worst(void);
+lv_display_t *gfx_display(void);
+
+/* Copy the frame currently on the panel into a stable buffer at the next frame
+ * boundary and return it (ARGB8888, GFX_FB_BYTES). Called from other threads.
+ */
+const uint8_t *gfx_snapshot(void);
+
+/* Microseconds since boot, from the 800 MHz cycle counter. */
+uint32_t gfx_now_us(void);
+
+#endif

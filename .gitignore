@@ -37,3 +37,6 @@ Thumbs.db
 # Secrets
 .env
 *.secret.*
+
+# Node tooling for font generation
+/tools/fontconv/node_modules/
