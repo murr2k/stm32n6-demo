@@ -11,6 +11,8 @@
  *   clip <n>                   clip n: its file on the card, frames, title
  *   card <0|1>                 list the card's clips or only the flash ones
  *   play <n>                   go to Cinema and open clip n
+ *   hometiles <n>              Home: n placeholder tiles after the real ones
+ *   home                       Home: tiles, pan position and range
  *   audio                      DAC half-buffer count and underruns
  *   tone <hz> <ms>             test tone at -12 dBFS
  *   volume <0..100>            headphone volume
@@ -37,6 +39,7 @@ enum ctl_cmd {
 	CTL_HUD,
 	CTL_ATTRACT,
 	CTL_PLAY,
+	CTL_HOME_TILES,
 };
 
 /* UI thread: fetch the next pending UI command, if any. */

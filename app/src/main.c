@@ -70,6 +70,9 @@ int main(void)
 			}
 			cinema_play(arg);
 			break;
+		case CTL_HOME_TILES:
+			home_test_tiles(arg);
+			break;
 		default:
 			break;
 		}

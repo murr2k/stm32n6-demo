@@ -21,6 +21,7 @@
 #include "gfx.h"
 #include "net.h"
 #include "psram.h"
+#include "screens/screens.h"
 #include "touch.h"
 #include "ui/shell.h"
 
@@ -199,6 +200,13 @@ static int handle(char *line, char *out, size_t out_len)
 				h->n_frames, h->title);
 	} else if (!strcmp(cmd, "play") && n >= 2) {
 		post(CTL_PLAY, a[0]);
+	} else if (!strcmp(cmd, "hometiles") && n >= 2) {
+		post(CTL_HOME_TILES, a[0]);
+	} else if (!strcmp(cmd, "home")) {
+		int tiles, scroll, max;
+
+		home_get_status(&tiles, &scroll, &max);
+		return snprintf(out, out_len, "tiles=%d scroll=%d max=%d\n", tiles, scroll, max);
 	} else if (!strcmp(cmd, "where")) {
 		/* which screen is up, and whether the demo is running itself */
 		return snprintf(out, out_len, "screen=%d attract=%d\n", shell_current(), shell_in_attract());

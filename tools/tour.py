@@ -288,7 +288,52 @@ def attract_test(host: str, secs: float) -> None:
           f"audio underruns {int(a1.get('errors', 0) - a0.get('errors', 0))}")
 
 
+def home_pan_test(host: str) -> None:
+    """Home with more tiles than fit on the screen (five placeholders after the
+    real ones): the field pans under a finger, rests on a column, a tile that
+    has moved still opens its own screen, and a drag from the screen edge is
+    still a change of screen."""
+    def home() -> dict[str, int]:
+        return {k: int(v) for k, v in re.findall(r"(\w+)=(-?\d+)", send(host, ["home"])[0])}
+
+    col = 195  # one tile and its gap
+    try:
+        send(host, ["screen 0", "sleep 0.8", "hometiles 5", "sleep 0.6", "reset"])
+        g0, h0 = stats(host), home()
+        send(host, ["swipe 560 240 300 240 400"])  # a slow drag of 260 px
+        time.sleep(1.2)
+        h1 = home()
+        send(host, ["swipe 600 240 250 240 120"])  # a flick: carries on to the end
+        time.sleep(1.5)
+        h2, g1 = home(), stats(host)
+        grab(host).save(OUT / "h1-home-panned.png")
+        first = h2["scroll"] // col                # the column now at the left edge
+        expect = SCREENS[first + 1] if first < 4 else "home"  # its top tile; a placeholder opens nothing
+        send(host, ["tap 100 112"])
+        time.sleep(1.0)
+        tapped = where(host)[0]
+        send(host, ["screen 0", "sleep 0.8"])
+        h3 = home()
+        send(host, ["swipe 795 240 560 240 160"])  # from the edge
+        time.sleep(0.8)
+        edge = where(host)[0]
+        send(host, ["screen 0", "sleep 0.8"])
+        h4 = home()
+    finally:
+        send(host, ["hometiles 0", "sleep 0.5"])
+    h5 = home()
+    rests = "on a column" if h1["scroll"] % col == 0 and h2["scroll"] % col == 0 else "NOT on a column"
+    print(f"home panning: {h0['tiles']} tiles, range {h0['max']} px; a 260 px drag rests at {h1['scroll']}, "
+          f"a flick at {h2['scroll']} ({rests}); the tile now at the left opens {tapped} (expected {expect}); "
+          f"back on Home the field is at {h3['scroll']}; a drag from the edge goes to {edge} "
+          f"(expected {SCREENS[1]}) and leaves the field at {h4['scroll']}; frame worst "
+          f"{g1['render_worst_us'] / 1000:.2f} ms, dropped {int(g1['dropped'] - g0['dropped'])}; "
+          f"without placeholders: {h5['tiles']} tiles, range {h5['max']} px")
+
+
 def touch_tests(host: str) -> None:
+    home_pan_test(host)
+
     # Touch Lab: three contacts held, one of them dragged.
     send(host, [f"screen {SCREENS.index('touchlab')}"])
     time.sleep(1.0)

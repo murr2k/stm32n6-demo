@@ -141,7 +141,9 @@ The firmware listens on these ports (trusted LAN only, no authentication):
 
 `tour.py` is the regression check: it starts the companion, visits each
 screen, measures frame time and dropped frames over five seconds, saves
-screenshots to `captures/tour/`, then drives Touch Lab, Explorer and Core Map
+screenshots to `captures/tour/`, pans Home with five placeholder tiles added
+(rest position, a tap on a tile that has moved, an edge swipe), then drives
+Touch Lab, Explorer and Core Map
 with injected multi-touch (three contacts, pinches, a flick, an orbit, an
 edge swipe), checks that 80 touch releases never change the screen, makes
 ten screen changes, plays the film from flash and from the card, opens and
@@ -198,7 +200,7 @@ captures/               screenshots and logs pulled off the board (not committed
 
 | Screen | What it shows | Frame time, avg / worst |
 |---|---|---|
-| Home | A tile per screen; each thumbnail is drawn live by that screen's code | 5.4 / 6.4 ms |
+| Home | A tile per screen; each thumbnail is drawn live by that screen's code. Two rows of four; more screens go into further columns that pan in under the finger and come to rest on a column | 5.4 / 6.4 ms |
 | Flight Deck | Frame time, CPU share per thread, heaps, Ethernet rates: the board measuring itself | 2.9 / 7.9 ms |
 | Signal Lab | Triggered scope, log-frequency spectrum with peak hold and cursor, waterfall; one 1024-point Helium FFT per frame (about 220 us) | 7.8 / 10.2 ms |
 | Explorer | 2^20 samples x 4 channels with a min/max pyramid in PSRAM; pan, pinch, cursor, auto tour | 11.1 / 14.5 ms while it zooms, 3 ms at rest |

@@ -67,7 +67,14 @@ not to be modified from here.
   (no LV_USE_OS).
 - Memory: app RAM is 840 KB at 0x3400_0000; frame buffers A/B at 0x340D_2000
   and 0x3424_9000 (internal SRAM); PSRAM is a bump allocator (`psram_alloc`),
-  first 2 MB reserved for the screenshot copy.
+  first 2 MB reserved for the screenshot copy. Budget, measured 2026-11-15:
+  internal RAM 771 of 840 KB (LVGL pool 256 KB, heap 64 KB, the card's two
+  32 KB I/O buffers, stacks), all screens' LVGL objects are built at boot and
+  kept; PSRAM 25.3 of 32 MB and never freed: Explorer's data set and pyramid
+  13.6 MB, the player 7.0 MB (4 MB read-ahead window, three 576 KB decode
+  buffers, 1 MB index), Cinema 2.4 MB, screenshot 2 MB; code 0.89 MB in a
+  1.5 MB slot of a 128 MB flash. A new demo with buffers needs a place in
+  this before it is written.
 - Media: a clip is either in the flash media partition (read in place) or a
   file in `/SD:/clips` on the microSD card (FAT32 or exFAT, SDMMC2 with its
   internal DMA). A card clip with the same title as a flash clip takes its
@@ -80,8 +87,11 @@ not to be modified from here.
   data is not there (the clock is held, nothing is skipped).
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
   Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
-  explorer, touchlab, hostlink, coremap, cinema, specimen. Home shows eight
-  tiles, its current maximum; a tenth screen needs a 3 x 3 Home.
+  explorer, touchlab, hostlink, coremap, cinema, specimen. Home shows two
+  rows of four tiles; a ninth and later ones go into further columns on the
+  right (same tile size) and the field pans sideways. `ctl.py "hometiles 5"`
+  adds placeholder tiles to try that with (`hometiles 0` removes them). The
+  shell holds 12 screens (`MAX_SCREENS` in shell.c), Home 24 tiles.
 
 ## Invariants & "do not regress"
 
@@ -276,6 +286,19 @@ not to be modified from here.
   1000 `Event dropped, queue full` in 10 s of real touches) and in the touch
   table afterwards (slots 2 and 3 down with nobody at the panel). Injected
   touches (`ctl.py touch`, tour, fuzz) bypass the driver and cannot show it.
+- **Home does not use LVGL's scroll snapping; it rests on a column in its own
+  `LV_EVENT_SCROLL_END` handler.** **Why:** `LV_SCROLL_SNAP_START` lets the
+  last child snap to the left edge, so a flick ended three columns past the
+  tiles on an almost empty screen. The edge guards (as in Cinema) keep a
+  drag from the shell's edge zone from panning the field as well; with eight
+  tiles or fewer neither the scrolling nor the guards exist.
+- **Ask before `fs_unlink` and `fs_mkdir` (`exists()` in sdcard.c).** **Why:**
+  Zephyr's fs layer logs an error for every failing call, also where failing
+  is the normal case; every upload and every boot put `<err>` lines into the
+  log that fault hunting relies on. One warning is left at boot,
+  `stm32_sdmmc: Failed to configure pins for sleep (-2)`: the driver asks for
+  a pinctrl sleep state, which Zephyr compiles out without
+  `CONFIG_PM_DEVICE` (adding the state to the overlay changes nothing).
 - **Touch coordinates are panel coordinates**, not content-area coordinates:
   subtract `UI_CONTENT_Y` only when positioning objects inside a screen root.
 - **Label the origin of data on screen.** Generated or synthetic sources say
@@ -342,4 +365,5 @@ not to be modified from here.
   has not been tried with a real insertion), fast seeks in
   very large files (FatFs walks the cluster chain: a backward seek in a
   1 GB clip on FAT32 may take a few hundred ms; untested), FAT timestamps.
-- Camera (IMX335) and NPU are a later addition; keep a screen slot for them.
+- Camera (IMX335) and NPU are a later addition. Home has room now; memory is
+  the question (see the budget under Architecture).

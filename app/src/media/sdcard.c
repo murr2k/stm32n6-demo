@@ -54,6 +54,24 @@ static void rif_open(void)
 					      RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
 }
 
+/* Zephyr's fs layer logs an error for every call that fails, also where failing
+ * is the normal case (a temporary file that is not there, a directory that
+ * is): ask first. fs_stat() is quiet about a missing entry.
+ */
+static bool exists(const char *path)
+{
+	struct fs_dirent e;
+
+	return fs_stat(path, &e) == 0;
+}
+
+static void remove_if_there(const char *path)
+{
+	if (exists(path)) {
+		fs_unlink(path);
+	}
+}
+
 void sdcard_note_change(const char *name)
 {
 	k_spinlock_key_t key = k_spin_lock(&st_lock);
@@ -74,9 +92,9 @@ int sdcard_mount(void)
 		rif_open(); /* without it: "fs mount error (-19)", the DMA's writes do not land */
 		ret = fs_mount(&mnt);
 		if (ret == 0) {
-			int mk = fs_mkdir(SD_CLIPS_DIR);
+			int mk = exists(SD_CLIPS_DIR) ? 0 : fs_mkdir(SD_CLIPS_DIR);
 
-			if (mk != 0 && mk != -EEXIST) {
+			if (mk != 0) {
 				LOG_WRN("cannot create %s (%d)", SD_CLIPS_DIR, mk);
 			}
 			mounted = true;
@@ -228,7 +246,7 @@ static int cmd_put(int s, const char *name, uint32_t size, uint32_t crc_want, ch
 	if (player_using_file(name)) {
 		return snprintf(out, out_len, "err busy: that clip is playing\n");
 	}
-	fs_unlink(TMP_PATH);
+	remove_if_there(TMP_PATH);
 	fs_file_t_init(&f);
 	ret = fs_open(&f, TMP_PATH, FS_O_CREATE | FS_O_WRITE);
 	if (ret != 0) {
@@ -295,13 +313,13 @@ static int cmd_put(int s, const char *name, uint32_t size, uint32_t crc_want, ch
 		if (player_using_file(name)) {
 			ret = -EBUSY;
 		} else {
-			fs_unlink(path);
+			remove_if_there(path);
 			ret = fs_rename(TMP_PATH, path);
 		}
 		sdcard_library_unlock();
 	}
 	if (ret != 0) {
-		fs_unlink(TMP_PATH);
+		remove_if_there(TMP_PATH);
 	}
 	sdcard_note_change(name);
 	refresh_space();
