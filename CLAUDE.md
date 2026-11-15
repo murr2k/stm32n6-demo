@@ -103,7 +103,9 @@ not to be modified from here.
   a tap on the SOURCE label, `ctl.py "sigsrc 1"`); the generator is the
   default. `ctl.py mic` shows rate, errors and level, `acap.py --mic`
   records a WAV, `ctl.py "mictune ..."` restarts the capture with other
-  settings (mic.h lists the ten values).
+  settings (mic.h lists the ten values), `micprobe` and `micbits` look at
+  the data pin without the MDF (`micbits` stops interrupts for its
+  duration: sound and picture pause, the underrun counter moves).
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
   Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
   explorer, touchlab, hostlink, coremap, cinema, specimen. Home shows two
@@ -351,7 +353,18 @@ not to be modified from here.
   digital silence below 1 MHz (so the part reacts to its clock). A 1 kHz
   tone from the PC that the user heard is not in a 1.6 s coherent
   measurement on either edge (below -92 dBFS, under 50 dB SPL by the
-  datasheet sensitivity of -41 dBFS at 94 dB SPL). Wiring per the
+  datasheet sensitivity of -41 dBFS at 94 dB SPL), and the user saw no
+  response to sounds or to tapping the board. It is not an edge or an
+  oversampling problem either (fast processing clocks, 40 to 280 ns after
+  the rising edge: the same noise), and the raw stream, clocked by hand and
+  read at the pin (`ctl.py "micbits ..."`), is a proper noise-shaped
+  sigma-delta stream: the bit changes about 100 ns after the rising clock
+  edge and holds for the whole cycle, identical on both edges, shaped noise
+  above 50 kHz, and in the audio band a floor some 40 dB above the
+  datasheet's. With the clock stopped the line is free and unclamped
+  (`micprobe`), so the part has its supply and sleeps as it should. That
+  is a microphone whose electronics run and whose transducer delivers
+  nothing. Wiring per the
   schematic (MB1939 sheet 16): U13 on PE2/PE8 through analog switch U14,
   which hands PE8 to connector CN5 when a board there pulls MIC_DET low;
   VDD_MIC from 3.3 V through SB19; LR high, so data is valid while the

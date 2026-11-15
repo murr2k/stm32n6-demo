@@ -121,6 +121,10 @@ static int handle(char *line, char *out, size_t out_len)
 	} else if (!strcmp(cmd, "sigsrc") && n >= 2) {
 		sig_set_source(a[0] ? SIG_SRC_MIC : SIG_SRC_GENERATOR);
 		return snprintf(out, out_len, "source=%d\n", sig_source());
+	} else if (!strcmp(cmd, "micbits") && n >= 4) {
+		return mic_bitbang(a[0], a[1], a[2], a[3], out, out_len);
+	} else if (!strcmp(cmd, "micprobe")) {
+		return mic_probe(out, out_len);
 	} else if (!strcmp(cmd, "mictune")) {
 		int v[10], k = sscanf(line, "%*s %d %d %d %d %d %d %d %d %d %d", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5],
 				      &v[6], &v[7], &v[8], &v[9]);

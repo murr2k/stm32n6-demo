@@ -18,7 +18,9 @@
  *   tone <hz> <ms>             test tone at -12 dBFS
  *   volume <0..100>            headphone volume
  *   mic                        microphone: samples, errors, measured rate, level of the last block
- *   mictune [8 values]         microphone bring-up: restart with other settings (mic.h)
+ *   mictune [values]           microphone bring-up: restart with other settings (mic.h)
+ *   micbits <kbits> <delay_ns> <khz> <pull>  raw bit stream, clocked by hand (mic.h)
+ *   micprobe                   microphone bring-up: is the data line free and unclamped with the clock stopped
  *   sigsrc <0|1>               Signal Lab's source: generator or microphone
  *   mcap [ms]                  record the next ms of microphone samples (3 s at most), like acap
  *   acap [ms]                  record the next ms of DAC output (3 s at most);

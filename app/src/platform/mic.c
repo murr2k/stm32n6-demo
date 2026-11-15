@@ -362,6 +362,112 @@ int mic_tune(const int *v, int n, char *buf, size_t len)
 			(unsigned int)MDF1_Filter0->DFLTCR, (unsigned int)MDF1_Filter0->DFLTCICR,
 			(unsigned int)MDF1_Filter0->DFLTRSFR, (unsigned int)MDF1_Filter0->DFLTISR);
 }
+/* Is the data line free when the microphone is not clocked, and does anything
+ * clamp it? With the clock pin held still the microphone sleeps and lets go
+ * of its output, so the line should follow a pull-up to 1 and a pull-down to
+ * 0. A line that stays low against the pull-up is clamped by a part without
+ * supply (its protection diode to a dead rail); one that ignores both pulls
+ * is being driven.
+ */
+int mic_probe(char *buf, size_t len)
+{
+	int r[4];
+
+	ok = false;
+	HAL_MDF_AcqStop_DMA(&hmdf);
+	HAL_MDF_DeInit(&hmdf);
+	LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_2, LL_GPIO_MODE_OUTPUT);
+	LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_8, LL_GPIO_MODE_INPUT);
+	for (int clk = 0; clk < 2; clk++) {
+		if (clk) {
+			LL_GPIO_SetOutputPin(GPIOE, LL_GPIO_PIN_2);
+		} else {
+			LL_GPIO_ResetOutputPin(GPIOE, LL_GPIO_PIN_2);
+		}
+		k_msleep(clk ? 300 : 1500); /* low first, long enough for a rail fed through the clock pin to drain */
+		LL_GPIO_SetPinPull(GPIOE, LL_GPIO_PIN_8, LL_GPIO_PULL_UP);
+		k_msleep(50);
+		r[clk * 2] = LL_GPIO_IsInputPinSet(GPIOE, LL_GPIO_PIN_8);
+		LL_GPIO_SetPinPull(GPIOE, LL_GPIO_PIN_8, LL_GPIO_PULL_DOWN);
+		k_msleep(50);
+		r[clk * 2 + 1] = LL_GPIO_IsInputPinSet(GPIOE, LL_GPIO_PIN_8);
+	}
+	LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_2, LL_GPIO_MODE_ALTERNATE);
+	LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_8, LL_GPIO_MODE_ALTERNATE);
+	n_errors = 0;
+	last_error = 0;
+	ok = start() == 0;
+	return snprintf(buf, len, "clock_low: pullup=%d pulldown=%d  clock_high: pullup=%d pulldown=%d  restarted=%d\n",
+			r[0], r[1], r[2], r[3], ok);
+}
+
+/* The bit stream without the MDF: clock the microphone from the pin as a GPIO
+ * and read the data pin `delay_ns` after each edge. Word 2k of the capture
+ * buffer holds 32 bits taken after rising edges, word 2k + 1 the 32 taken after
+ * the falling edges that followed, first bit in bit 0. Interrupts are off for
+ * the whole capture (bits / khz ms): sound and picture stop for that long.
+ */
+int mic_bitbang(uint32_t kbits, uint32_t delay_ns, uint32_t khz, int pull, char *buf, size_t len)
+{
+	uint32_t words = MIN(kbits * 1000 / 32, (uint32_t)CAP_SAMPLES / 2);
+	uint32_t half = SystemCoreClock / (2 * MAX(khz, 100u) * 1000);
+	uint32_t delay = (uint32_t)((uint64_t)delay_ns * SystemCoreClock / 1000000000u);
+
+	if (cap_buf == NULL) {
+		cap_buf = psram_alloc(CAP_SAMPLES * sizeof(int32_t), 32);
+	}
+	if (cap_buf == NULL || delay + 8 >= half) {
+		return snprintf(buf, len, "err no memory, or the delay does not fit in half a period\n");
+	}
+	ok = false;
+	cap_left = 0;
+	HAL_MDF_AcqStop_DMA(&hmdf);
+	HAL_MDF_DeInit(&hmdf);
+	LL_GPIO_ResetOutputPin(GPIOE, LL_GPIO_PIN_2);
+	LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_2, LL_GPIO_MODE_OUTPUT);
+	LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_8, LL_GPIO_MODE_INPUT);
+	LL_GPIO_SetPinPull(GPIOE, LL_GPIO_PIN_8, pull == 1 ? LL_GPIO_PULL_UP : pull == 2 ? LL_GPIO_PULL_DOWN : LL_GPIO_PULL_NO);
+	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
+	unsigned int key = irq_lock();
+	uint32_t t = DWT->CYCCNT;
+
+	for (uint32_t w = 0; w < words; w++) {
+		uint32_t hi = 0, lo = 0;
+
+		for (uint32_t b = 0; b < 32; b++) {
+			GPIOE->BSRR = LL_GPIO_PIN_2;
+			while (DWT->CYCCNT - t < delay) {
+			}
+			hi |= ((GPIOE->IDR >> 8) & 1u) << b;
+			t += half;
+			while ((int32_t)(DWT->CYCCNT - t) < 0) {
+			}
+			GPIOE->BRR = LL_GPIO_PIN_2;
+			while (DWT->CYCCNT - t < delay) {
+			}
+			lo |= ((GPIOE->IDR >> 8) & 1u) << b;
+			t += half;
+			while ((int32_t)(DWT->CYCCNT - t) < 0) {
+			}
+		}
+		cap_buf[2 * w] = (int32_t)hi;
+		cap_buf[2 * w + 1] = (int32_t)lo;
+	}
+	irq_unlock(key);
+
+	LL_GPIO_SetPinPull(GPIOE, LL_GPIO_PIN_8, LL_GPIO_PULL_NO);
+	LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_2, LL_GPIO_MODE_ALTERNATE);
+	LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_8, LL_GPIO_MODE_ALTERNATE);
+	n_errors = 0;
+	last_error = 0;
+	ok = start() == 0;
+	return snprintf(buf, len, "addr=0x%08x pairs=%u core_hz=%u half_cycles=%u delay_cycles=%u restarted=%d\n",
+			(unsigned int)(uintptr_t)cap_buf, (unsigned int)words, (unsigned int)SystemCoreClock,
+			(unsigned int)half, (unsigned int)delay, ok);
+}
+
 bool mic_ok(void)
 {
 	return ok;
