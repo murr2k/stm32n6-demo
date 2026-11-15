@@ -9,7 +9,7 @@ rules are: lock to the panel refresh, no fake data, and show the measurements.
 > Every screen holds the panel's 59.98 Hz with no dropped frames in the
 > automated run, a 48 s original film plays at 30 fps with stereo sound from
 > flash or from a microSD card, clips upload to the card over Ethernet at
-> 3 to 4 MB/s while the demo runs, and touch, motion, colour and sound have been
+> 2 to 4 MB/s while the demo runs, and touch, motion, colour and sound have been
 > checked by hand (the card path by measurement only, so far). Left alone
 > for 90 seconds it tours itself. Not built yet: microphone input. See
 > [Status](#status).
@@ -292,7 +292,7 @@ Measured by `tour.py` and `fuzz_player.py` on this board and card:
 
 | | |
 |---|---|
-| Upload over Ethernet, CRC-32 verified | 2.8 to 4 MB/s (the film's 48.7 MB in 12 s); the card itself takes 9 to 12 MB/s |
+| Upload over Ethernet, CRC-32 verified | 2 to 4 MB/s (the film's 48.7 MB in 12 s); the card itself takes 9 to 12 MB/s |
 | UI frames dropped during an upload and the gallery update after it | 0, with Signal Lab running |
 | Playback from the card, 6.6 and 14 Mbit/s clips | 30 fps, 0 dropped, 0 stalls, 0 audio underruns |
 | Read-ahead in steady state | 3.3 to 3.4 MB (3.4 s of the film, 1.7 s of the 14 Mbit/s clip) |
@@ -348,9 +348,9 @@ and look for isolated steps in both.
 | Microphone as Signal Lab source | Not started (generator only) |
 | Host Link | Working: 340 of 340 datagrams answered in the test run, 1.4 to 2.9 ms round trip as timed by the host |
 | Web remote, firmware update over the network | Not started |
-| microSD media library | Working: FAT32/exFAT, upload over Ethernet at 2.8 to 4 MB/s with CRC, streamed playback with 0 stalls in the automated run. Checked by measurement and screenshots, not yet by eye and ear on the panel. Not built: noticing a card put in after boot without `n6v.py mount` (untested with a real insertion), fast seeks in files of a gigabyte or more |
+| microSD media library | Working: FAT32/exFAT, upload over Ethernet at 2 to 4 MB/s with CRC, streamed playback with 0 stalls in the automated run. Checked by measurement and screenshots, not yet by eye and ear on the panel. Not built: noticing a card put in after boot without `n6v.py mount` (untested with a real insertion), fast seeks in files of a gigabyte or more |
 | Core Map | Working: 22 logical processors of the test PC, no dropped frame while orbiting and zooming under full load |
-| Cinema slider | A firmware halt while scrubbing was reported once and has not been reproduced: 450 fuzzed actions on the player as it was, about 2000 on the reworked one, console logged, no fault. Defects found on the way are fixed: a drag starting near a screen edge closed the film, seeks were counted as dropped frames and as stalls, Back could cost the UI a frame, the touch target was 44 px |
+| Cinema slider | A crash while scrubbing (picture frozen, a repeating noise) was reported once. Probable cause, found in a console log of real touches: Zephyr's input queue (16 events, drained by a thread at the lowest priority) dropped events, a lost release left the slider pressed, and the player then seeks to the same frame 60 times a second. Touch callbacks now run in the driver's context with no queue. Not yet confirmed with a finger; injected touches bypass the driver, which is why 2400 fuzzed actions never showed it. Other defects found on the way are fixed: a drag starting near a screen edge closed the film, seeks were counted as dropped frames and as stalls, Back could cost the UI a frame, the touch target was 44 px |
 | Screen transitions | Working: hardware fade, no frame dropped in the automated run |
 | Attract mode | Working: starts after 90 s idle, one lap is about 95 s |
 | Soak test | Not started |

@@ -239,6 +239,16 @@ not to be modified from here.
   **Why:** the HAL feeds the codec word by word; with a length that is not a
   multiple of four the end marker is never sent and the decode times out a
   few MCUs short (HAL error 0x8). `jpegdec.c` copies and pads.
+- **`CONFIG_INPUT_MODE_SYNCHRONOUS=y`: touch callbacks run in the GT911 work
+  item. Do not go back to Zephyr's input thread.** **Why:** the default is a
+  16-event queue drained by a thread at the lowest priority, the driver sends
+  4 events per contact in one burst from the cooperative system work queue
+  and what does not fit is dropped: five contacts never fit, fewer do not
+  when the UI and the player keep the thread waiting. A dropped release
+  leaves the contact down for good. Seen 2026-11-15 in the console log (over
+  1000 `Event dropped, queue full` in 10 s of real touches) and in the touch
+  table afterwards (slots 2 and 3 down with nobody at the panel). Injected
+  touches (`ctl.py touch`, tour, fuzz) bypass the driver and cannot show it.
 - **Touch coordinates are panel coordinates**, not content-area coordinates:
   subtract `UI_CONTENT_Y` only when positioning objects inside a screen root.
 - **Label the origin of data on screen.** Generated or synthetic sources say
@@ -257,10 +267,19 @@ not to be modified from here.
 - The film's crackle (same place every run) was the soundtrack's note-end
   clicks; fixed and confirmed by ear by the user on 2026-11-15, along with
   transitions and attract mode ("sound is excellent, graphics smooth and crisp").
-- **Open bug (2026-11-15, reported by the user): operating the Cinema slider
-  halted the firmware once.** Symptom: the board stopped answering and the
-  audio looped the last 21 ms (the circular DMA keeps running while nothing
-  refills it). The fault state was lost to a reset. Not reproduced since, on
+- **Cinema slider "crash" (2026-11-15, reported by the user: the movie
+  crashed while operating the slider, "playing a repeating noise"): probable
+  cause found and fixed the same day, not yet confirmed with a finger.** A
+  touch release lost in Zephyr's input queue (see the invariant on
+  `CONFIG_INPUT_MODE_SYNCHRONOUS`) leaves the slider pressed: Cinema seeks to
+  the same frame on every UI frame, so the picture freezes and the audio
+  restarts there 60 times a second, until the same slot is touched and
+  released again. Reproduced with an injected contact that is never lifted
+  (frame held for 8 s with `playing=1`). What does not fit: `ctl.py` timed
+  out right after the report, which a stuck press does not explain (the
+  tools then opened a connection per command, see the control-port
+  invariant). So a real halt is not excluded. History of the search, before
+  this was found: the fault state was lost to a reset. Not reproduced since, on
   the old player (450 random actions) or on the reworked one (about 2000,
   console logged): `tools/fuzz_player.py` scrubs, plays, pauses, goes back
   and re-opens (edge starts, a second contact; flash and card clips) without
