@@ -299,7 +299,8 @@ not to be modified from here.
   cause found and fixed the same day.** Five fingers on Touch Lab checked by
   the user afterwards (all five slots reported and released, no event
   dropped in the console log), and the slider: "no longer hangs the cinema".
-  The new scrub sound (see the invariant) is measured, not yet heard. A
+  The new scrub sound (see the invariant) was confirmed by ear by the user
+  the same day ("works great, sounds great"). A
   touch release lost in Zephyr's input queue (see the invariant on
   `CONFIG_INPUT_MODE_SYNCHRONOUS`) leaves the slider pressed: Cinema seeks to
   the same frame on every UI frame, so the picture freezes and the audio
