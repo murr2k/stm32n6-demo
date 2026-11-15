@@ -92,6 +92,13 @@ void player_close(void);
 void player_play(void);
 void player_pause(void);
 void player_seek(uint32_t frame);
+/* A finger is on the slider (true) or has left it (false). While it is on,
+ * the picture stays on the frame of the last player_seek() instead of running
+ * on, and the sound is short cross-faded pieces of the clip from that frame,
+ * silent while the frame does not change. Leaving resumes from that frame.
+ * Call it after the first player_seek().
+ */
+void player_scrub(bool on);
 void player_set_loop(bool loop);
 void player_get_status(struct player_status *st);
 void player_note_convert(uint32_t us);

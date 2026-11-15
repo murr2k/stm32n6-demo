@@ -85,6 +85,9 @@ static uint32_t spf;            /* audio sample frames per video frame */
 static uint32_t decoded_frame = UINT32_MAX;
 static volatile uint32_t jump_gen; /* counts position changes (seek, play, loop, open) */
 static volatile bool close_req;    /* player_close() was called: the worker lets go of the clip */
+static volatile bool scrub_on;     /* a finger is on the slider: see player_scrub() */
+#define GRAIN 4096u                /* sample frames of sound per scrub grain: 85 ms */
+static int16_t *grain_pcm[2];      /* in PSRAM; the one not playing takes the next grain */
 static volatile bool seek_pending; /* a seek (or the open) is waiting for its picture */
 static uint32_t seek_frame = UINT32_MAX, seek_t0;
 static struct player_status status;
@@ -280,6 +283,8 @@ int player_init(void)
 	if (jpegdec_init() != 0) {
 		return 0;
 	}
+	grain_pcm[0] = psram_alloc(GRAIN * 4, 32);
+	grain_pcm[1] = psram_alloc(GRAIN * 4, 32);
 	sd.index = psram_alloc(INDEX_MAX * 4, 32);
 	sd.stage = psram_alloc(STAGE_CAP, 32);
 	sd.ring = psram_alloc(WIN_BYTES, 32);
@@ -601,23 +606,18 @@ K_THREAD_DEFINE(player_io, 5120, reader_thread, NULL, NULL, NULL, 2, 0, 0);
 
 /* ---- clock -------------------------------------------------------------- */
 
-/* Audio thread: supply the next block. a_pos keeps advancing past the end of
- * the clip (as silence) so the clock still reaches the last frame. It does
- * not advance over sound the reader has not delivered: the clock waits.
+/* Sound of clip c from sample frame pos on, up to `frames` frames into dst.
+ * Returns how many were delivered: fewer at the end of the clip, or when the
+ * reader has not brought that part of a card file in yet (*starved).
  */
-static uint32_t audio_source(int16_t *dst, uint32_t frames, void *ctx)
+static uint32_t pcm_read(const struct clip *c, uint32_t pos, int16_t *dst, uint32_t frames, bool *starved)
 {
-	const struct clip *c = cur;
 	uint32_t done = 0;
-	bool starved = false;
 
-	ARG_UNUSED(ctx);
-	if (c == NULL || !playing || !use_audio) {
-		return 0;
-	}
+	*starved = false;
 	while (done < frames) {
-		uint32_t pos = a_pos + done;
-		uint32_t f = pos / spf, off = pos % spf, len, at;
+		uint32_t p = pos + done;
+		uint32_t f = p / spf, off = p % spf, len, at;
 
 		if (f >= c->hdr.n_frames) {
 			break;
@@ -633,7 +633,7 @@ static uint32_t audio_source(int16_t *dst, uint32_t frames, void *ctx)
 			done += n;
 		} else {
 			if (!file_pcm(c, f, &at, &len)) {
-				starved = true;
+				*starved = true;
 				break;
 			}
 			uint32_t n = MIN(frames - done, len / 4 - MIN(off, len / 4));
@@ -642,20 +642,218 @@ static uint32_t audio_source(int16_t *dst, uint32_t frames, void *ctx)
 				break;
 			}
 			if (!win_get(c, at + off * 4, dst + done * 2, n * 4)) {
-				starved = true;
+				*starved = true;
 				break;
 			}
 			done += n;
 		}
 	}
-	a_pos += starved ? done : frames;
 	return done;
 }
 
+/* No step in the output, wherever the position jumps (pause, play, seek,
+ * loop): the sound that was playing is not cut, what would have come next
+ * fades out over XFADE while the sound at the new position fades in.
+ *
+ * While a finger is on the slider (player_scrub) the picture follows it and
+ * the sound is made of grains: GRAIN of the clip from the frame under the
+ * finger, each one cross-faded into the next, and nothing while the finger
+ * rests. Before, every UI frame restarted the sound at the finger: a step of
+ * up to full scale 60 times a second in a drag, and the same 16 ms over and
+ * over under a resting finger.
+ *
+ * Whatever fades has its samples in memory before it starts. Read from the
+ * clip as it went, a voice fell silent or came in at full level whenever the
+ * card reader was still on its way to a new position, or had already left
+ * the old one: a click per block in a fast drag.
+ *
+ * All of this state belongs to the audio thread.
+ */
+#define XFADE_BITS 10
+#define XFADE      (1u << XFADE_BITS) /* 21 ms */
+#define AHEAD_CAP  (AUDIO_BLOCK_FRAMES + XFADE)
+
+/* a piece of sound on its way out, gain g0 falling to 0 over its n frames */
+struct fader {
+	int16_t pcm[XFADE * 2];
+	uint32_t n, i;
+	uint32_t g0;
+};
+static struct fader fader[2];
+static int16_t ahead[AHEAD_CAP * 2]; /* the stream: the sound from a_pos on */
+static uint32_t ahead_len;
+static uint32_t grain_len, grain_age;
+static uint32_t grain_frame;         /* clip frame the last grain was taken from */
+static int grain_buf;
+static bool grain_on;
+
+static inline int16_t sat16(int32_t v)
+{
+	return (int16_t)CLAMP(v, -32768, 32767);
+}
+
+static inline void add_frame(int16_t *dst, const int16_t *src, uint32_t gain)
+{
+	dst[0] = sat16(dst[0] + ((src[0] * (int32_t)gain) >> XFADE_BITS));
+	dst[1] = sat16(dst[1] + ((src[1] * (int32_t)gain) >> XFADE_BITS));
+}
+
+static void fader_mix(struct fader *f, int16_t *dst, uint32_t frames)
+{
+	if (f->i >= f->n) {
+		return; /* done, or never started */
+	}
+
+	uint32_t n = MIN(frames, f->n - f->i);
+
+	for (uint32_t k = 0; k < n; k++, f->i++) {
+		add_frame(dst + 2 * k, f->pcm + 2 * f->i, f->g0 * (f->n - f->i) / f->n);
+	}
+}
+
+/* Let up to XFADE frames at src fade out from gain g0. */
+static struct fader *fader_start(const int16_t *src, uint32_t n, uint32_t g0)
+{
+	struct fader *f = &fader[0], *o = &fader[1];
+
+	n = MIN(n, XFADE);
+	if (n == 0 || g0 == 0) {
+		return NULL;
+	}
+	/* the free one, or else the one that is nearer its end */
+	if (f->i < f->n && (o->i >= o->n || o->g0 * (o->n - o->i) / o->n < f->g0 * (f->n - f->i) / f->n)) {
+		f = o;
+	}
+	memcpy(f->pcm, src, n * 4);
+	f->n = n;
+	f->i = 0;
+	f->g0 = g0;
+	return f;
+}
+
+static void grain_end(int16_t *dst, uint32_t frames)
+{
+	struct fader *f = fader_start(grain_pcm[grain_buf] + grain_age * 2, grain_len - grain_age,
+				      MIN(grain_age, XFADE));
+
+	grain_on = false;
+	if (f != NULL) {
+		fader_mix(f, dst, frames); /* created in mid-block: its share of this one */
+	}
+}
+
+static void grains_mix(const struct clip *c, int16_t *dst, uint32_t frames, bool scrub)
+{
+	for (uint32_t at = 0; at < frames;) {
+		if (!grain_on) {
+			uint32_t f = base_frame;
+			int b = grain_buf ^ 1;
+			bool starved;
+
+			if (!scrub || f == grain_frame) {
+				return; /* the finger has not moved since the last grain */
+			}
+			uint32_t got = pcm_read(c, f * spf, grain_pcm[b], GRAIN, &starved);
+
+			if (starved) {
+				return; /* the reader is on its way there: again in the next block */
+			}
+			grain_frame = f;
+			if (got < 2 * XFADE) {
+				return; /* the very end of the clip */
+			}
+			grain_buf = b;
+			grain_len = got;
+			grain_age = 0;
+			grain_on = true;
+		}
+		const int16_t *src = grain_pcm[grain_buf];
+		uint32_t n = MIN(frames - at, grain_len - XFADE - grain_age);
+
+		for (uint32_t k = 0; k < n; k++, grain_age++) {
+			add_frame(dst + 2 * (at + k), src + 2 * grain_age, MIN(grain_age, XFADE));
+		}
+		at += n;
+		if (grain_age >= grain_len - XFADE) {
+			grain_end(dst + at * 2, frames - at); /* under the next grain, or into silence */
+		}
+	}
+}
+
+/* Audio thread: supply the next block. a_pos keeps advancing past the end of
+ * the clip (as silence) so the clock still reaches the last frame. It does
+ * not advance over sound the reader has not delivered: the clock waits.
+ */
+static uint32_t audio_source(int16_t *dst, uint32_t frames, void *ctx)
+{
+	static const struct clip *clip;  /* the state here is about this clip */
+	static bool was_playing, was_scrub;
+	static uint32_t expect;          /* a_pos after the last block: anything else is a jump */
+	static uint32_t ramp;            /* gain of the stream, 0..XFADE */
+	const struct clip *c = use_audio ? cur : NULL;
+	uint32_t done = 0;
+
+	ARG_UNUSED(ctx);
+	frames = MIN(frames, AUDIO_BLOCK_FRAMES);
+	if (c != clip) {
+		clip = c;
+		was_playing = was_scrub = grain_on = false;
+		ahead_len = 0;
+		memset(fader, 0, sizeof(fader)); /* i as well: n = 0 with i > 0 is a division by zero in fader_mix */
+	}
+	if (c == NULL) {
+		return 0;
+	}
+
+	bool scrub = scrub_on, play = playing && !scrub;
+	uint32_t pos = a_pos;
+
+	if (play != was_playing || pos != expect) {
+		if (was_playing) {
+			fader_start(ahead, ahead_len, ramp);
+		}
+		ahead_len = 0;
+		ramp = 0;
+	}
+	if (scrub && !was_scrub) {
+		grain_frame = base_frame; /* no grain until the finger moves */
+	} else if (!scrub && was_scrub && grain_on) {
+		grain_end(dst, 0);
+	}
+	was_playing = play;
+	was_scrub = scrub;
+
+	if (play) {
+		bool starved = false;
+
+		if (ahead_len < AHEAD_CAP) {
+			ahead_len += pcm_read(c, pos + ahead_len, ahead + ahead_len * 2, AHEAD_CAP - ahead_len, &starved);
+		}
+		done = MIN(frames, ahead_len);
+		memcpy(dst, ahead, done * 4);
+		for (uint32_t i = 0; i < done && ramp < XFADE; i++, ramp++) {
+			dst[2 * i] = (int16_t)((dst[2 * i] * (int32_t)ramp) >> XFADE_BITS);
+			dst[2 * i + 1] = (int16_t)((dst[2 * i + 1] * (int32_t)ramp) >> XFADE_BITS);
+		}
+		ahead_len -= done;
+		memmove(ahead, ahead + done * 2, ahead_len * 4);
+		a_pos = expect = pos + (done < frames && starved ? done : frames);
+	}
+	if (scrub || grain_on || fader[0].i < fader[0].n || fader[1].i < fader[1].n) {
+		memset(dst + done * 2, 0, (frames - done) * 4);
+		fader_mix(&fader[0], dst, frames);
+		fader_mix(&fader[1], dst, frames);
+		if (grain_pcm[1] != NULL) {
+			grains_mix(c, dst, frames, scrub);
+		}
+		done = frames;
+	}
+	return done;
+}
 static uint32_t clock_frame(void)
 {
-	if (!playing) {
-		return base_frame;
+	if (!playing || scrub_on) {
+		return base_frame; /* paused, or held under the finger on the slider */
 	}
 	if (use_audio) {
 		/* the sample at the DAC right now: what was handed over minus what is still queued */
@@ -686,6 +884,7 @@ int player_open(int clip)
 	}
 	k_mutex_lock(&codec, K_FOREVER);
 	close_req = false;
+	scrub_on = false;
 	cur = &clips[clip];
 	playing = false;
 	decoded_frame = UINT32_MAX;
@@ -722,6 +921,7 @@ int player_open(int clip)
 void player_close(void)
 {
 	playing = false;
+	scrub_on = false;
 	close_req = true;
 	status.open = false;
 	io_want = NULL;
@@ -759,6 +959,17 @@ void player_seek(uint32_t frame)
 			seek_pending = true;
 		}
 		rebase(frame);
+		k_sem_give(&wake);
+	}
+}
+
+void player_scrub(bool on)
+{
+	if (cur && !close_req && on != scrub_on) {
+		if (!on) {
+			rebase(base_frame); /* the sound starts again where the picture is */
+		}
+		scrub_on = on;
 		k_sem_give(&wake);
 	}
 }

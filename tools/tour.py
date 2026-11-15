@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from acap import capture, clicks  # noqa: E402
 from ctl import DEFAULT_HOST, send  # noqa: E402
 from shot import grab  # noqa: E402
 
@@ -125,6 +126,24 @@ def media_tests(host: str) -> None:
     g1 = stats(host)
     print(f"open and close a clip, 3 times: frame worst {g1['render_worst_us'] / 1000:.2f} ms, "
           f"dropped {int(g1['dropped'] - g0['dropped'])}, now on {where(host)[0]}")
+    scrub_sound(host)
+
+
+def scrub_sound(host: str) -> None:
+    """What the DAC gets during a drag on the slider, a pause and a resume, read
+    back from the board: every jump has to be a fade, not a step."""
+    send(host, ["tap 140 200", "sleep 1.3"])  # the controls are up for 3 s after opening
+    drag = [c for i in range(40) for c in (f"touch 0 {200 + 6 * i} 444 1", "sleep 0.03")]
+    send(host, ["reset"])
+    g0, v0 = stats(host), kv(host, "video")
+    pcm = capture(host, 2.6, drag + ["touch 0 440 444 0", "sleep 0.3", "tap 40 444", "sleep 0.3", "tap 40 444"])
+    g1, v1 = stats(host), kv(host, "video")
+    send(host, ["screen 0", "sleep 0.6", f"screen {SCREENS.index('cinema')}", "sleep 0.8"])
+    loud = sum(1 for l, _ in pcm if abs(l) > 200) * 100 // max(len(pcm), 1)
+    print(f"scrub sound: {len(pcm) / 48000:.1f} s recorded over a drag, a pause and a resume: "
+          f"discontinuities {len(clicks(pcm))}, signal in {loud} % of it, frame worst "
+          f"{g1['render_worst_us'] / 1000:.2f} ms, UI dropped {int(g1['dropped'] - g0['dropped'])}, "
+          f"stalls {int(v1.get('stalls', 0) - v0.get('stalls', 0))}")
 
 
 def media(host: str) -> dict[str, int]:

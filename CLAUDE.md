@@ -23,6 +23,7 @@ not to be modified from here.
 .\.venv\Scripts\python.exe tools\tour.py     # regression: per-screen frame stats, screenshots, injected gestures
 .\.venv\Scripts\python.exe tools\ctl.py "screen 2" stats where "tap 400 200"
 .\.venv\Scripts\python.exe tools\fuzz_player.py --secs 120   # random abuse of the video player
+.\.venv\Scripts\python.exe tools\acap.py --secs 2 -o captures\x.wav --clicks "tap 40 444"   # record the DAC feed while commands run, count discontinuities
 .\.venv\Scripts\python.exe tools\n6v.py upload media\out\n6_film.n6v   # clip to the microSD card over Ethernet (4 MB/s); also ls, rm, df
 .\run.cmd                   # host companion: live data for Host Link and Core Map
 ```
@@ -32,7 +33,8 @@ not to be modified from here.
   lap, and 0 stray screen changes, before a commit (about seven minutes;
   `--no-attract` for a quick pass). It starts the companion itself, plays the
   first clip from flash and from the card (`ctl.py "card 0"` hides the card's
-  clips), and uploads, plays, seeks and deletes a generated test clip.
+  clips), records the sound of a drag on the slider (`discontinuities 0`), and
+  uploads, plays, seeks and deletes a generated test clip.
 - Build times: a source-only change is about 2 min; any `prj.conf`, Kconfig or
   CMake change rebuilds LVGL and takes 6 to 8 min. Batch config changes.
 
@@ -228,8 +230,33 @@ not to be modified from here.
   buffer runs empty, so a plain bulk send moved one 21 KB window per 100 ms:
   0.11 to 0.2 MB/s. With the credits: 4 MB/s, and the card write is no
   longer hidden behind the network (it does 9 to 12 MB/s).
-- **PSRAM is nearly full: 25.3 of 32 MB** (`ctl.py media`, `psram_kb`). The
+- **PSRAM is nearly full: 25.3 of 32 MB** (`ctl.py media`, `psram_kb`), 25.9
+  once `acap` has been used (its 576 KB buffer is taken on first use). The
   read-ahead window is 4 MB for that reason; 8 MB left 2.5 MB free.
+- **The player's sound never steps: every change of position (pause, play,
+  seek, loop, a finger on the slider) is a 21 ms cross-fade, and whatever
+  fades plays from samples already copied to memory** (`audio_source` in
+  player.c: `ahead`, `fader`, the grain buffers). **Why:** the slider used to
+  restart the sound at the finger on every UI frame: 35 to 50 full-scale
+  steps a second in a drag, the same 16 ms over and over under a resting
+  finger. A first version that faded voices while reading them from the clip
+  still clicked 15 times a second in a fast drag, because the card reader had
+  not reached the new position yet, or had left the old one. While a finger
+  is on the slider (`player_scrub`) the sound is 85 ms grains from the frame
+  under it, silent while it rests, and the clock holds that frame. Check with
+  `acap.py --clicks` or the `scrub sound` line of the tour: 0.
+- **State that a guard reads must be reset together with it.** The faders
+  were "cleared" on a clip change by zeroing `n` but not `i`: `n - i` wrapped,
+  the guard passed and `fader_mix` divided by zero (UsageFault, board dead on
+  the network). Found from the registers: on a board that no longer pings,
+  `STM32_Programmer_CLI -c port=swd mode=HOTPLUG -halt -coreReg` works (the
+  core is not in WFI), `-r32 <PSP> 0x20` gives the stacked frame, word 6 is
+  the faulting PC, `build/app/zephyr/zephyr.map` names the function. And
+  keep `n6.cmd console --log` running during every test run: this one had
+  none (it was stopped for a flash) and the fault message was lost.
+- **An injected `swipe` across the Cinema slider takes several times its
+  nominal duration** (it runs in the control thread, below the decoder, which
+  a drag keeps busy). Pace drags from the host with `touch` commands.
 - **An injected drag on the Cinema slider only scrubs while the controls are
   showing** (they hide 3.2 s after the last touch while playing). **Why:** a
   measurement made with them hidden reported 6.3 ms "scrub" frames that were
@@ -271,7 +298,8 @@ not to be modified from here.
   crashed while operating the slider, "playing a repeating noise"): probable
   cause found and fixed the same day.** Five fingers on Touch Lab checked by
   the user afterwards (all five slots reported and released, no event
-  dropped in the console log); hard scrubbing in Cinema not yet. A
+  dropped in the console log), and the slider: "no longer hangs the cinema".
+  The new scrub sound (see the invariant) is measured, not yet heard. A
   touch release lost in Zephyr's input queue (see the invariant on
   `CONFIG_INPUT_MODE_SYNCHRONOUS`) leaves the slider pressed: Cinema seeks to
   the same frame on every UI frame, so the picture freezes and the audio

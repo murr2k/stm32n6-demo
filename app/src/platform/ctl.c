@@ -96,6 +96,19 @@ static int handle(char *line, char *out, size_t out_len)
 		uint32_t addr = strtoul(strchr(line, ' ') + 1, NULL, 0) & ~3u;
 
 		return snprintf(out, out_len, "%08x: %08x\n", (unsigned int)addr, (unsigned int)*(volatile uint32_t *)addr);
+	} else if (!strcmp(cmd, "dump") && n >= 2) {
+		/* up to 64 words in hex, no separators: "dump 0x90200000 64" */
+		char *p = strchr(line, ' ') + 1;
+		const volatile uint32_t *w = (const volatile uint32_t *)(strtoul(p, &p, 0) & ~3u);
+		uint32_t words = CLAMP(strtoul(p, NULL, 0), 1, 64);
+		int len = 0;
+
+		for (uint32_t i = 0; i < words; i++) {
+			len += snprintf(out + len, out_len - len, "%08x", (unsigned int)w[i]);
+		}
+		return len + snprintf(out + len, out_len - len, "\n");
+	} else if (!strcmp(cmd, "acap")) {
+		return audio_capture(n >= 2 ? a[0] : 0, out, out_len);
 	} else if (!strcmp(cmd, "saiclk")) {
 		return snprintf(out, out_len,
 				"CCIPR7=%08x IC7CFGR=%08x DIVENR=%08x PLL2CFGR1=%08x PLL2CFGR2=%08x PLL2CFGR3=%08x "

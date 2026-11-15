@@ -405,6 +405,7 @@ static void scrub_touch(lv_event_t *e)
 
 	if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
 		scrubbing = false;
+		player_scrub(false);
 		show_overlay(true);
 		return;
 	}
@@ -417,6 +418,7 @@ static void scrub_touch(lv_event_t *e)
 
 	/* intra-only video: any frame is a direct lookup, so scrubbing is immediate */
 	player_seek((uint32_t)((uint64_t)x * (st.n_frames - 1) / w));
+	player_scrub(true); /* after the seek: the sound starts when the finger moves on from here */
 	show_overlay(true);
 }
 

@@ -14,6 +14,10 @@
  *   audio                      DAC half-buffer count and underruns
  *   tone <hz> <ms>             test tone at -12 dBFS
  *   volume <0..100>            headphone volume
+ *   acap [ms]                  record the next ms of DAC output (3 s at most);
+ *                              without ms: where it is and how far it has got
+ *   dump <addr> <words>        up to 64 words in hex (tools/acap.py reads the
+ *                              recording with it)
  *   saiclk, peek <addr>        bring-up register readouts
  *   reset                      clear the worst-case counters
  *   tap <x> <y>                press and release

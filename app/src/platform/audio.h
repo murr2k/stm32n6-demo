@@ -56,4 +56,10 @@ void audio_set_volume(int percent);
 /* Peak level of the last block sent, 0..32767 per channel (for meters). */
 void audio_get_peak(uint16_t *left, uint16_t *right);
 
+/* Test aid: record the next ms (up to 3 s) of what is handed to the DAC into
+ * PSRAM, interleaved 16-bit stereo. Writes "addr= frames= filled=" to buf;
+ * ms = 0 only reports. Read the samples with the ctl "dump" command.
+ */
+int audio_capture(uint32_t ms, char *buf, size_t len);
+
 #endif

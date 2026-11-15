@@ -145,7 +145,9 @@ screenshots to `captures/tour/`, then drives Touch Lab, Explorer and Core Map
 with injected multi-touch (three contacts, pinches, a flick, an orbit, an
 edge swipe), checks that 80 touch releases never change the screen, makes
 ten screen changes, plays the film from flash and from the card, opens and
-closes a clip three times, uploads a generated test clip to the card while
+closes a clip three times, records what the DAC gets during a drag on the
+slider, a pause and a resume and counts the discontinuities in it, uploads a
+generated test clip to the card while
 Signal Lab runs, plays it, seeks in it five times, scrolls the gallery,
 deletes it again, and runs one lap of attract mode. About seven minutes; a
 screenshot costs the UI one frame (an 18 ms copy to PSRAM), so none is taken
@@ -155,6 +157,11 @@ inside a measured window.
 wandering finger, some starting at a screen edge, some with a second
 contact, mixed with play, pause, back and re-open. It names every action
 that costs the UI a frame or stalls playback, and a seed replays a run.
+
+`acap.py` records up to three seconds of what the firmware hands to the DAC
+(a copy into PSRAM, read back over the control port) as a WAV file, and with
+`--clicks` counts the steps in it that do not belong to the signal. It is how
+the sound of the slider is checked without ears.
 
 The control port serves one client at a time and drops one that has been
 silent for five seconds. `ctl.py` keeps a single connection open for a
@@ -179,6 +186,7 @@ tools/
   shot.py, ctl.py       screenshot and remote-control clients
   tour.py               automated review
   fuzz_player.py        random abuse of the video player through injected touches
+  acap.py               record the DAC feed as a WAV file, count discontinuities
   gen_fonts.py          TTF to LVGL bitmap fonts (needs npm install in tools/fontconv)
   n6v.py                encode video clips; upload them to the card, or pack and flash them
   gdbrun.ps1            scripted ST-LINK gdbserver + GDB session for bring-up
@@ -197,7 +205,7 @@ captures/               screenshots and logs pulled off the board (not committed
 | Touch Lab | Five contacts with trails, crosshairs, distance, report rate, touch-to-swap time | 1.7 / 2.4 ms |
 | Host Link | A PC's per-core CPU load as a scrolling heat map, memory, network throughput and datagram round-trip time, pushed over UDP by `run.cmd` | 6.7 / 10.0 ms |
 | Core Map | The same PC's logical processors as posts on a floor plan of its chip (P-cores, E-cores, SMT threads), height and colour by load. Drag to orbit, pinch to zoom and pan, tap a post, double tap to reset. Software 3D: projected in floating point, filled as anti-aliased quads, no depth buffer | 6.8 / 7.7 ms; 12 ms with every post at 100 % |
-| Cinema | Clips from flash and from the microSD card in a gallery that scrolls sideways; full screen with overlay controls, scrubbing and a stats panel (decode and conversion time, bit rate, seek time, read-ahead). Hardware JPEG decode about 10 ms a frame, DMA2D conversion 4.8 ms, video slaved to the audio clock | 30 fps video, no drops; a video frame costs the UI 6.2 ms, 9.2 ms with the controls up, 9.9 ms while scrubbing |
+| Cinema | Clips from flash and from the microSD card in a gallery that scrolls sideways; full screen with overlay controls, scrubbing (the picture follows the finger, the sound is cross-faded 85 ms pieces of the clip) and a stats panel (decode and conversion time, bit rate, seek time, read-ahead). Hardware JPEG decode about 10 ms a frame, DMA2D conversion 4.8 ms, video slaved to the audio clock | 30 fps video, no drops; a video frame costs the UI 6.2 ms, 9.2 ms with the controls up, 9.9 ms while scrubbing |
 | Specimen | Type scale, colour tokens, motion test | 1.9 / 3.1 ms |
 
 Frame time is all UI-thread work for a frame (screen logic, layout, render),
@@ -299,6 +307,7 @@ Measured by `tour.py` and `fuzz_player.py` on this board and card:
 | Open to first picture | 31 to 39 ms from the card, 23 ms from flash |
 | Seek to picture (a tap on the slider) | 11 to 47 ms from the card: about 12 ms when the target is already in the window, 32 to 47 ms when the card has to be read. 9 to 28 ms from flash |
 | Player fuzz, 436 random actions on card clips | no fault, 0 UI frames dropped, 0 stalls |
+| Discontinuities in the sound, recorded from the DAC feed | 0 in a slow drag, a fast drag, a held finger, three taps, pause and resume. Before the cross-fades: 35 a second in a slow drag, 50 in a fast one, 13 under a resting finger, one at every pause |
 
 Three things were not what they seemed on the way:
 
@@ -350,7 +359,7 @@ and look for isolated steps in both.
 | Web remote, firmware update over the network | Not started |
 | microSD media library | Working: FAT32/exFAT, upload over Ethernet at 2 to 4 MB/s with CRC, streamed playback with 0 stalls in the automated run. Checked by measurement and screenshots, not yet by eye and ear on the panel. Not built: noticing a card put in after boot without `n6v.py mount` (untested with a real insertion), fast seeks in files of a gigabyte or more |
 | Core Map | Working: 22 logical processors of the test PC, no dropped frame while orbiting and zooming under full load |
-| Cinema slider | A crash while scrubbing (picture frozen, a repeating noise) was reported once. Probable cause, found in a console log of real touches: Zephyr's input queue (16 events, drained by a thread at the lowest priority) dropped events, a lost release left the slider pressed, and the player then seeks to the same frame 60 times a second. Touch callbacks now run in the driver's context with no queue. Five fingers on Touch Lab now register and release cleanly with no event dropped; scrubbing with a finger is still to be checked. Injected touches bypass the driver, which is why 2400 fuzzed actions never showed it. Other defects found on the way are fixed: a drag starting near a screen edge closed the film, seeks were counted as dropped frames and as stalls, Back could cost the UI a frame, the touch target was 44 px |
+| Cinema slider | A crash while scrubbing (picture frozen, a repeating noise) was reported once. Probable cause, found in a console log of real touches: Zephyr's input queue (16 events, drained by a thread at the lowest priority) dropped events, a lost release left the slider pressed, and the player then seeks to the same frame 60 times a second. Touch callbacks now run in the driver's context with no queue. Checked on the panel afterwards: five fingers on Touch Lab register and release cleanly with no event dropped, and the slider no longer hangs the film. Injected touches bypass the driver, which is why 2400 fuzzed actions never showed it. The slider's sound was rough as well (every UI frame restarted it at the finger); it is now short pieces of the clip cross-faded into each other while the finger moves and silence while it rests, measured free of steps but not yet judged by ear. Other defects found on the way are fixed: a drag starting near a screen edge closed the film, seeks were counted as dropped frames and as stalls, Back could cost the UI a frame, the touch target was 44 px |
 | Screen transitions | Working: hardware fade, no frame dropped in the automated run |
 | Attract mode | Working: starts after 90 s idle, one lap is about 95 s |
 | Soak test | Not started |

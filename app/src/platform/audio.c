@@ -35,6 +35,7 @@
 
 #include "audio.h"
 #include "gfx.h"
+#include "psram.h"
 
 LOG_MODULE_REGISTER(audio, LOG_LEVEL_INF);
 
@@ -54,6 +55,10 @@ static volatile uint32_t n_halves, n_errors;
 static uint16_t peak_l, peak_r;
 /* test tone: overrides the source while tone_left > 0 */
 static volatile uint32_t tone_left, tone_step, tone_phase;
+/* capture of what is handed to the DAC, for tests (tools/acap.py) */
+#define CAP_FRAMES (3 * AUDIO_RATE)
+static int16_t *cap_buf;
+static volatile uint32_t cap_fill, cap_left;
 
 #if DT_NODE_HAS_STATUS_OKAY(AUDIO_NODE) && DT_NODE_HAS_STATUS_OKAY(CODEC_NODE)
 
@@ -252,6 +257,13 @@ static void audio_thread(void *p1, void *p2, void *p3)
 			got = MIN(fn(dst, HALF_FRAMES, ctx), (uint32_t)HALF_FRAMES);
 		}
 		memset(dst + got * 2, 0, (HALF_FRAMES - got) * 4);
+		if (cap_left > 0) {
+			uint32_t n = MIN(cap_left, (uint32_t)HALF_FRAMES);
+
+			memcpy(cap_buf + cap_fill * 2, dst, n * 4);
+			cap_fill += n;
+			cap_left -= n;
+		}
 		for (uint32_t i = 0; i < got; i += 4) { /* a coarse peak is enough for a meter */
 			l = MAX(l, abs(dst[2 * i]));
 			r = MAX(r, abs(dst[2 * i + 1]));
@@ -566,4 +578,21 @@ void audio_get_peak(uint16_t *left, uint16_t *right)
 {
 	*left = peak_l;
 	*right = peak_r;
+}
+
+int audio_capture(uint32_t ms, char *buf, size_t len)
+{
+	if (ms > 0) {
+		if (cap_buf == NULL) {
+			cap_buf = psram_alloc(CAP_FRAMES * 4, 32);
+		}
+		if (cap_buf == NULL) {
+			return snprintf(buf, len, "err no memory\n");
+		}
+		cap_left = 0; /* the refill thread is above this one: stop it first */
+		cap_fill = 0;
+		cap_left = MIN(ms * (AUDIO_RATE / 1000), (uint32_t)CAP_FRAMES);
+	}
+	return snprintf(buf, len, "addr=0x%08x frames=%u filled=%u\n", (unsigned int)(uintptr_t)cap_buf,
+			(unsigned int)(cap_fill + cap_left), (unsigned int)cap_fill);
 }
