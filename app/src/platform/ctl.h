@@ -20,6 +20,7 @@
  *   mic                        microphone: samples, errors, measured rate, level of the last block
  *   mictune [values]           microphone bring-up: restart with other settings (mic.h)
  *   micbits <kbits> <delay_ns> <khz> <pull>  raw bit stream, clocked by hand (mic.h)
+ *   micscope <n>               n fast samples of the clock and data pins while the MDF runs
  *   micprobe                   microphone bring-up: is the data line free and unclamped with the clock stopped
  *   sigsrc <0|1>               Signal Lab's source: generator or microphone
  *   mcap [ms]                  record the next ms of microphone samples (3 s at most), like acap

@@ -230,7 +230,9 @@ static struct {
 	int clk;       /* kernel clock: 0 IC7, 1 HCLK, 2 HSI, 3 CLKP, 4 IC8, 5 MSI */
 	int pull;      /* on the data pin: 0 none, 1 up, 2 down (is anything driving it?) */
 	int speed;     /* drive strength of the clock pin, 0 (slow edges) to 3 */
-} cfg = {.lf_master = 0, .falling = 1, .proc_div = 1, .cck_div = 4, .sinc = 5, .dec = 16, .gain = 1, .speed = 3};
+	int hpf;       /* high-pass filter: 1 on, 0 bypassed (to see the DC level) */
+	int rsf;       /* reshape filter: 1 on (/4), 0 bypassed */
+} cfg = {.lf_master = 0, .falling = 1, .proc_div = 1, .cck_div = 4, .sinc = 5, .dec = 16, .gain = 1, .speed = 3, .hpf = 1, .rsf = 1};
 
 static int start(void)
 {
@@ -270,9 +272,9 @@ static int start(void)
 	filter.DecimationRatio = cfg.dec;
 	filter.Offset = 0;
 	filter.Gain = cfg.gain;
-	filter.ReshapeFilter.Activation = ENABLE;
+	filter.ReshapeFilter.Activation = cfg.rsf ? ENABLE : DISABLE;
 	filter.ReshapeFilter.DecimationRatio = MDF_RSF_DECIMATION_RATIO_4;
-	filter.HighPassFilter.Activation = ENABLE;
+	filter.HighPassFilter.Activation = cfg.hpf ? ENABLE : DISABLE;
 	filter.HighPassFilter.CutOffFrequency = MDF_HPF_CUTOFF_0_000625FPCM;
 	filter.Integrator.Activation = DISABLE;
 	filter.SoundActivity.Activation = DISABLE;
@@ -340,7 +342,8 @@ int mic_init(void)
 
 int mic_tune(const int *v, int n, char *buf, size_t len)
 {
-	int *field[] = {&cfg.lf_master, &cfg.falling, &cfg.proc_div, &cfg.cck_div, &cfg.sinc, &cfg.dec, &cfg.gain, &cfg.clk, &cfg.pull, &cfg.speed};
+	int *field[] = {&cfg.lf_master, &cfg.falling, &cfg.proc_div, &cfg.cck_div, &cfg.sinc, &cfg.dec, &cfg.gain, &cfg.clk, &cfg.pull, &cfg.speed, &cfg.hpf,
+			&cfg.rsf};
 
 	if (n > 0) {
 		ok = false;
@@ -354,9 +357,9 @@ int mic_tune(const int *v, int n, char *buf, size_t len)
 		ok = start() == 0;
 	}
 	return snprintf(buf, len,
-			"ok=%d lf_master=%d falling=%d proc_div=%d cck_div=%d sinc=%d dec=%d gain=%d clk=%d pull=%d speed=%d ker_hz=%u "
+			"ok=%d lf_master=%d falling=%d proc_div=%d cck_div=%d sinc=%d dec=%d gain=%d clk=%d pull=%d speed=%d hpf=%d rsf=%d ker_hz=%u "
 			"ckgcr=%08x sitfcr=%08x bsmxcr=%08x dfltcr=%08x cicr=%08x rsfr=%08x isr=%08x\n",
-			ok, cfg.lf_master, cfg.falling, cfg.proc_div, cfg.cck_div, cfg.sinc, cfg.dec, cfg.gain, cfg.clk, cfg.pull, cfg.speed,
+			ok, cfg.lf_master, cfg.falling, cfg.proc_div, cfg.cck_div, cfg.sinc, cfg.dec, cfg.gain, cfg.clk, cfg.pull, cfg.speed, cfg.hpf, cfg.rsf,
 			(unsigned int)HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_MDF1),
 			(unsigned int)MDF1->CKGCR, (unsigned int)MDF1_Filter0->SITFCR, (unsigned int)MDF1_Filter0->BSMXCR,
 			(unsigned int)MDF1_Filter0->DFLTCR, (unsigned int)MDF1_Filter0->DFLTCICR,
@@ -466,6 +469,38 @@ int mic_bitbang(uint32_t kbits, uint32_t delay_ns, uint32_t khz, int pull, char 
 	return snprintf(buf, len, "addr=0x%08x pairs=%u core_hz=%u half_cycles=%u delay_cycles=%u restarted=%d\n",
 			(unsigned int)(uintptr_t)cap_buf, (unsigned int)words, (unsigned int)SystemCoreClock,
 			(unsigned int)half, (unsigned int)delay, ok);
+}
+
+/* The two pins as the MDF drives and reads them, sampled as fast as the CPU
+ * can for n samples with interrupts off (a few ms): each word is the cycle
+ * counter shifted left by two, bit 1 the data pin, bit 0 the clock pin. The
+ * capture carries on underneath.
+ */
+int mic_scope(uint32_t n, char *buf, size_t len)
+{
+	if (cap_buf == NULL) {
+		cap_buf = psram_alloc(CAP_SAMPLES * sizeof(int32_t), 32);
+	}
+	if (cap_buf == NULL) {
+		return snprintf(buf, len, "err no memory\n");
+	}
+	n = CLAMP(n, 16, (uint32_t)CAP_SAMPLES);
+	cap_left = 0;
+	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+
+	uint32_t *out = (uint32_t *)cap_buf;
+	unsigned int key = irq_lock();
+
+	for (uint32_t i = 0; i < n; i++) {
+		uint32_t v = GPIOE->IDR;
+
+		out[i] = (DWT->CYCCNT << 2) | (((v >> 8) & 1u) << 1) | ((v >> 2) & 1u);
+	}
+	irq_unlock(key);
+	return snprintf(buf, len, "addr=0x%08x samples=%u core_hz=%u moder=%08x afrl=%08x afrh=%08x\n",
+			(unsigned int)(uintptr_t)cap_buf, (unsigned int)n, (unsigned int)SystemCoreClock,
+			(unsigned int)GPIOE->MODER, (unsigned int)GPIOE->AFR[0], (unsigned int)GPIOE->AFR[1]);
 }
 
 bool mic_ok(void)

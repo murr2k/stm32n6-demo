@@ -372,7 +372,9 @@ not to be modified from here.
   were made with an external PUI DMM-2726-B on those pins (1.536 MHz,
   Sinc5 / 8), not with U13. ST's unmodified MDF_AudioRecorder gave "weak
   audio with hiss" here. Verify the path with a known good microphone on
-  CN5 before anything else.
+  CN5 before anything else. Research on this (other owners' reports, ST's
+  and third-party settings, datasheet, MDF pitfalls, ranked tests):
+  `reports/STM32N6 DK microphone noise only.md`, notes in `research_notes/`.
 - **Touch coordinates are panel coordinates**, not content-area coordinates:
   subtract `UI_CONTENT_Y` only when positioning objects inside a screen root.
 - **Label the origin of data on screen.** Generated or synthetic sources say

@@ -64,6 +64,11 @@ int mic_probe(char *buf, size_t len);
  */
 int mic_bitbang(uint32_t kbits, uint32_t delay_ns, uint32_t khz, int pull, char *buf, size_t len);
 
+/* Bring-up: a logic-analyser view of the clock and data pins while the MDF
+ * runs (mic.c has the word layout).
+ */
+int mic_scope(uint32_t n, char *buf, size_t len);
+
 /* Test aid: record the next ms (up to 3 s) into PSRAM as 32-bit words. Writes
  * "addr= frames= filled=" to buf; ms = 0 only reports (tools/acap.py --mic).
  */
