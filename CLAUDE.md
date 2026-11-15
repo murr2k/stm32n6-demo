@@ -269,7 +269,9 @@ not to be modified from here.
   transitions and attract mode ("sound is excellent, graphics smooth and crisp").
 - **Cinema slider "crash" (2026-11-15, reported by the user: the movie
   crashed while operating the slider, "playing a repeating noise"): probable
-  cause found and fixed the same day, not yet confirmed with a finger.** A
+  cause found and fixed the same day.** Five fingers on Touch Lab checked by
+  the user afterwards (all five slots reported and released, no event
+  dropped in the console log); hard scrubbing in Cinema not yet. A
   touch release lost in Zephyr's input queue (see the invariant on
   `CONFIG_INPUT_MODE_SYNCHRONOUS`) leaves the slider pressed: Cinema seeks to
   the same frame on every UI frame, so the picture freezes and the audio
