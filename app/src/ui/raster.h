@@ -80,6 +80,14 @@ void raster_ring(const struct raster *r, int cx_q, int cy_q, int radius_q, int w
 void raster_line(const struct raster *r, int x0_q, int y0_q, int x1_q, int y1_q, uint32_t rgb,
 		 int half_w, uint8_t a);
 
+/* Anti-aliased convex polygon, vertices in pixels (float), either winding,
+ * at most RASTER_POLY_MAX of them. The interior is filled row by row, which
+ * is the fast direction in the frame buffer; each edge is softened over its
+ * own slope, so near-horizontal and near-vertical edges are both smooth.
+ */
+#define RASTER_POLY_MAX 8
+void raster_poly(const struct raster *r, const float *x, const float *y, int n, uint32_t rgb, uint8_t a);
+
 static inline uint32_t raster_blend(uint32_t dst, uint32_t rgb, uint32_t a)
 {
 	uint32_t ia = 256 - (a += a >> 7);

@@ -204,6 +204,8 @@ void shell_toggle_hud(void)
 static bool edge_tracking, edge_fired;
 static int16_t edge_x0;
 
+static bool covered; /* a full-screen view is up: see shell_set_cover() */
+
 bool shell_gesture_active(void)
 {
 	return edge_tracking;
@@ -217,6 +219,15 @@ static void update_edge_swipe(void)
 	const struct touch_point *p = NULL;
 
 	touch_get(&ts);
+	if (covered) {
+		/* A full-screen view owns every touch. Without this, a drag that began
+		 * near an edge (the left end of the video scrub bar is 14 px from it)
+		 * changed screen and closed the film.
+		 */
+		edge_tracking = false;
+		was_down = true; /* a contact still down when the view closes must not start a swipe */
+		return;
+	}
 	for (int i = 0; i < TOUCH_MAX_POINTS; i++) {
 		if (ts.pt[i].down) {
 			n_down++;
@@ -365,6 +376,7 @@ void shell_start_attract(void)
 {
 	attract = true;
 	attract_next_ms = k_uptime_get_32();
+	attract_enter_ms = attract_next_ms; /* the current screen may be busy: time it from now */
 	lv_obj_remove_flag(bar_demo, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_align_to(bar_demo, bar_title, LV_ALIGN_OUT_RIGHT_MID, 12, 0);
 }
@@ -384,7 +396,13 @@ static void update_attract(uint32_t now)
 		shell_note_input();
 	}
 	if (!attract) {
-		if (now - last_input_ms > ATTRACT_IDLE_MS) {
+		/* Signed: last_input_ms is stamped with a fresh clock reading and can be
+		 * a millisecond AFTER 
+ow, which was sampled at the top of the frame.
+		 * Unsigned, that difference wrapped to four billion and started attract
+		 * mode on a touch release, about one release in five.
+		 */
+		if ((int32_t)(now - last_input_ms) > ATTRACT_IDLE_MS) {
 			shell_start_attract();
 		}
 		return;
@@ -394,7 +412,7 @@ static void update_attract(uint32_t now)
 	}
 	const struct screen *cur = screens[current];
 
-	if (cur->attract_busy && cur->attract_busy() && now - attract_enter_ms < ATTRACT_MAX_MS) {
+	if (cur->attract_busy && cur->attract_busy() && (int32_t)(now - attract_enter_ms) < ATTRACT_MAX_MS) {
 		attract_next_ms = now + 500;
 		return;
 	}
@@ -441,7 +459,7 @@ int shell_current(void)
 	return current;
 }
 
-void shell_set_cover(bool covered)
+void shell_set_cover(bool on)
 {
 	/* A full-screen view (the video player) sits on top of everything. LVGL
 	 * cannot tell that it is opaque, so hide what is underneath rather than
@@ -449,11 +467,13 @@ void shell_set_cover(bool covered)
 	 */
 	lv_obj_t *const under[] = {bar_obj, current >= 0 ? roots[current] : NULL};
 
+	covered = on;
+
 	for (size_t i = 0; i < ARRAY_SIZE(under); i++) {
 		if (under[i] == NULL) {
 			continue;
 		}
-		if (covered) {
+		if (on) {
 			lv_obj_add_flag(under[i], LV_OBJ_FLAG_HIDDEN);
 		} else {
 			lv_obj_remove_flag(under[i], LV_OBJ_FLAG_HIDDEN);

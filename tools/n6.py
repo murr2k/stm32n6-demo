@@ -168,6 +168,7 @@ def console(ser, secs: float, until: str | None, log: Path | None) -> None:
                 continue
             if sink:
                 sink.write(chunk)
+                sink.flush()  # the log has to survive this process being killed
             buf += chunk
             *lines, buf = buf.split(b"\n")
             for ln in lines:

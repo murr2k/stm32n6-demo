@@ -3,6 +3,8 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+#include <math.h>
+
 #include <zephyr/sys/util.h>
 
 #include <lvgl_private.h> /* lv_layer_t internals, lv_area_intersect() */
@@ -356,6 +358,16 @@ void raster_line(const struct raster *r, int x0_q, int y0_q, int x1_q, int y1_q,
 		 int half_w, uint8_t a)
 {
 	int dx = x1_q - x0_q, dy = y1_q - y0_q;
+	int major = MAX(LV_ABS(dx), LV_ABS(dy));
+
+	if (major == 0) {
+		return;
+	}
+	/* The stroke is measured along the minor axis, so widen it by 1 / cos of
+	 * the slope: otherwise a diagonal is 30 % thinner than a level line and a
+	 * rotating wireframe changes brightness as it turns.
+	 */
+	half_w = (int)((float)half_w * sqrtf((float)dx * dx + (float)dy * dy) / major + 0.5f);
 
 	if (LV_ABS(dx) >= LV_ABS(dy)) {
 		/* mostly horizontal: one vertical span per column */
@@ -368,9 +380,10 @@ void raster_line(const struct raster *r, int x0_q, int y0_q, int x1_q, int y1_q,
 			dy = -dy;
 		}
 		int xs = MAX(x0_q >> RQ, r->clip.x1), xe = MIN(x1_q >> RQ, r->clip.x2);
+		float slope = (float)dy / dx; /* not a 64-bit division per column: that was most of the cost */
 
 		for (int x = xs; x <= xe; x++) {
-			int y = dx ? y0_q + (int)((int64_t)dy * ((x << RQ) + RQ_ONE / 2 - x0_q) / dx) : y0_q;
+			int y = y0_q + (int)(slope * (float)((x << RQ) + RQ_ONE / 2 - x0_q));
 
 			vspan(r, x, y - half_w, y + half_w, rgb, a);
 		}
@@ -385,9 +398,10 @@ void raster_line(const struct raster *r, int x0_q, int y0_q, int x1_q, int y1_q,
 			dy = -dy;
 		}
 		int ys = MAX(y0_q >> RQ, r->clip.y1), ye = MIN(y1_q >> RQ, r->clip.y2);
+		float slope = (float)dx / dy;
 
 		for (int y = ys; y <= ye; y++) {
-			int x = x0_q + (int)((int64_t)dx * ((y << RQ) + RQ_ONE / 2 - y0_q) / dy);
+			int x = x0_q + (int)(slope * (float)((y << RQ) + RQ_ONE / 2 - y0_q));
 			int l = x - half_w, rr = x + half_w;
 			int xa = l >> RQ, xb = (rr - 1) >> RQ;
 
@@ -396,6 +410,177 @@ void raster_line(const struct raster *r, int x0_q, int y0_q, int x1_q, int y1_q,
 				uint32_t *p = px(r, xx, y);
 
 				*p = raster_blend(*p, rgb, (uint32_t)a * cov >> RQ);
+			}
+		}
+	}
+}
+
+/* One side of a convex polygon, walked downwards from the top vertex. */
+struct poly_chain {
+	int i;    /* vertex the current edge starts at */
+	int step; /* 1 or n - 1: which way round the polygon */
+	int left; /* edges still to go, including the current one */
+	float xa, ya, yb, slope;
+};
+
+static inline void chain_load(struct poly_chain *c, const float *x, const float *y, int n)
+{
+	int j = (c->i + c->step) % n;
+	float dy = y[j] - y[c->i];
+
+	c->xa = x[c->i];
+	c->ya = y[c->i];
+	c->yb = y[j];
+	c->slope = dy > 1e-4f ? (x[j] - x[c->i]) / dy : 0.0f;
+}
+
+/* x of the chain at height t. Every vertex passed on the way widens [lo, hi]:
+ * a corner inside a pixel row can stick out further than the edge does at the
+ * top or the bottom of the row.
+ */
+static inline float chain_at(struct poly_chain *c, const float *x, const float *y, int n, float t, float *lo,
+			     float *hi)
+{
+	while (t > c->yb && c->left > 1) {
+		c->i = (c->i + c->step) % n;
+		c->left--;
+		*lo = MIN(*lo, x[c->i]);
+		*hi = MAX(*hi, x[c->i]);
+		chain_load(c, x, y, n);
+	}
+	return c->xa + (CLAMP(t, c->ya, c->yb) - c->ya) * c->slope;
+}
+
+static inline int ifloor(float v)
+{
+	int i = (int)v;
+
+	return i - (v < (float)i);
+}
+
+static inline int iceil(float v)
+{
+	int i = (int)v;
+
+	return i + (v > (float)i);
+}
+
+void raster_poly(const struct raster *r, const float *x, const float *y, int n, uint32_t rgb, uint8_t a)
+{
+	float xmin = x[0], xmax = x[0];
+	int top = 0, bot = 0;
+
+	if (n < 3 || n > RASTER_POLY_MAX || a == 0) {
+		return;
+	}
+	for (int i = 1; i < n; i++) {
+		if (y[i] < y[top]) {
+			top = i;
+		}
+		if (y[i] > y[bot]) {
+			bot = i;
+		}
+		xmin = MIN(xmin, x[i]);
+		xmax = MAX(xmax, x[i]);
+	}
+	float ymin = y[top], ymax = y[bot];
+
+	if (xmax < r->clip.x1 || xmin > r->clip.x2 + 1 || ymax < r->clip.y1 || ymin > r->clip.y2 + 1 ||
+	    !(xmax - xmin < 1e6f) || !(ymax - ymin < 1e6f) || !(ymax - ymin > 1e-3f)) {
+		return;
+	}
+	/* the two sides, from the top vertex down to the bottom one */
+	struct poly_chain c1 = {.i = top, .step = 1, .left = (bot - top + n) % n};
+	struct poly_chain c2 = {.i = top, .step = n - 1, .left = (top - bot + n) % n};
+	struct poly_chain *both[2] = {&c1, &c2};
+
+	for (int k = 0; k < 2; k++) {
+		struct poly_chain *c = both[k];
+
+		chain_load(c, x, y, n);
+		while (c->left > 1 && c->yb - c->ya <= 1e-4f) { /* a level top edge */
+			c->i = (c->i + c->step) % n;
+			c->left--;
+			chain_load(c, x, y, n);
+		}
+	}
+	int y0 = MAX(ifloor(ymin), r->clip.y1);
+	int y1 = MIN(iceil(ymax) - 1, r->clip.y2);
+	float lo = 1e9f, hi = -1e9f;
+	float ta = MAX((float)y0, ymin);
+	float a1 = chain_at(&c1, x, y, n, ta, &lo, &hi), a2 = chain_at(&c2, x, y, n, ta, &lo, &hi);
+
+	for (int yy = y0; yy <= y1; yy++) {
+		/* the part of this pixel row that the polygon spans: [ta, tb] */
+		float tb = MIN((float)(yy + 1), ymax);
+
+		lo = 1e9f, hi = -1e9f;
+		float b1 = chain_at(&c1, x, y, n, tb, &lo, &hi), b2 = chain_at(&c2, x, y, n, tb, &lo, &hi);
+		/* each side sweeps from its x at the top of the row to its x at the bottom */
+		float la = MIN(a1, a2), ra = MAX(a1, a2), lb = MIN(b1, b2), rb = MAX(b1, b2);
+		float l_lo = MIN(MIN(la, lb), lo), l_hi = MAX(la, lb), r_lo = MIN(ra, rb), r_hi = MAX(MAX(ra, rb), hi);
+		float span = tb - ta;
+
+		a1 = b1, a2 = b2, ta = tb;
+		if (span <= 0.0f) {
+			continue;
+		}
+		/* coverage ramps: at least a pixel wide, as wide as the edge's sweep */
+		float wl = MAX(l_hi - l_lo, 1.0f), ml = 0.5f * (l_lo + l_hi);
+		float wr = MAX(r_hi - r_lo, 1.0f), mr = 0.5f * (r_lo + r_hi);
+		float kl = wl > 1.0f ? 1.0f / wl : 1.0f, kr = wr > 1.0f ? 1.0f / wr : 1.0f;
+		float row_a = (float)a * span;
+		int xs = MAX(ifloor(ml - 0.5f * wl), r->clip.x1);
+		int xe = MIN(iceil(mr + 0.5f * wr) - 1, r->clip.x2);
+		int in0 = iceil(ml + 0.5f * wl - 0.5f);  /* first pixel fully inside the left edge */
+		int in1 = ifloor(mr - 0.5f * wr - 0.5f); /* last pixel fully inside the right edge */
+
+		if (xs > xe) {
+			continue;
+		}
+		uint32_t *p = px(r, xs, yy);
+		int xx = xs;
+
+		if (in0 <= in1) {
+			int e0 = MIN(in0, xe + 1), e1 = MIN(in1, xe);
+
+			for (; xx < e0; xx++, p++) {
+				float c = ((float)xx + 0.5f - ml) * kl + 0.5f;
+
+				if (c > 0.0f) {
+					*p = raster_blend(*p, rgb, (uint32_t)(row_a * MIN(c, 1.0f)));
+				}
+			}
+			if (row_a >= 254.5f) {
+				uint32_t solid = rgb | 0xff000000u;
+
+				for (; xx <= e1; xx++) {
+					*p++ = solid;
+				}
+			} else {
+				uint32_t ai = (uint32_t)row_a;
+
+				for (; xx <= e1; xx++, p++) {
+					*p = raster_blend(*p, rgb, ai);
+				}
+			}
+			for (; xx <= xe; xx++, p++) {
+				float c = (mr - ((float)xx + 0.5f)) * kr + 0.5f;
+
+				if (c > 0.0f) {
+					*p = raster_blend(*p, rgb, (uint32_t)(row_a * MIN(c, 1.0f)));
+				}
+			}
+		} else {
+			/* a sliver: the two ramps overlap */
+			for (; xx <= xe; xx++, p++) {
+				float cl = CLAMP(((float)xx + 0.5f - ml) * kl + 0.5f, 0.0f, 1.0f);
+				float cr = CLAMP((mr - ((float)xx + 0.5f)) * kr + 0.5f, 0.0f, 1.0f);
+				float c = cl + cr - 1.0f;
+
+				if (c > 0.0f) {
+					*p = raster_blend(*p, rgb, (uint32_t)(row_a * c));
+				}
 			}
 		}
 	}

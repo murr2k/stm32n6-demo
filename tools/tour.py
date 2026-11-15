@@ -2,9 +2,11 @@
 """Unattended review of the running demo.
 
 Visits every screen, lets it run, records frame statistics and a screenshot,
-then exercises the multi-touch paths with injected contacts, a run of screen
-transitions, audio and video playback, and one lap of attract mode. Output
-goes to captures/tour/. Takes about four minutes.
+then exercises the multi-touch paths with injected contacts (Touch Lab,
+Explorer, Core Map), checks that touch releases never change screen, runs a
+set of screen transitions, audio and video playback, and one lap of attract
+mode. host/companion.py is started for the run so Host Link and Core Map
+show live data. Output goes to captures/tour/. Takes about six minutes.
 
 Usage: tour.py [--host IP] [--screens home,deck,...] [--no-touch] [--no-media] [--no-attract]
 """
@@ -12,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -22,7 +25,7 @@ from shot import grab  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "captures" / "tour"
-SCREENS = ["home", "deck", "siglab", "explorer", "touchlab", "hostlink", "cinema", "specimen"]
+SCREENS = ["home", "deck", "siglab", "explorer", "touchlab", "hostlink", "coremap", "cinema", "specimen"]
 
 
 def stats(host: str) -> dict[str, float]:
@@ -41,6 +44,12 @@ def visit(host: str, index: int, name: str, settle: float, run: float) -> None:
     print(f"{name:9s} fps {s['fps']:5.1f}  frame avg {s['render_avg_us'] / 1000:5.2f} ms  "
           f"worst {s['render_worst_us'] / 1000:5.2f} ms  worst period {s['period_worst_us'] / 1000:5.2f} ms  "
           f"dropped {int(s['dropped'] - before['dropped'])}")
+
+
+def where(host: str) -> tuple[str, bool]:
+    """The screen that is up and whether attract mode is running."""
+    v = {k: int(x) for k, x in re.findall(r"(\w+)=(-?\d+)", send(host, ["where"])[0])}
+    return SCREENS[v["screen"]], bool(v["attract"])
 
 
 def kv(host: str, cmd: str) -> dict[str, float]:
@@ -84,7 +93,7 @@ def transition_test(host: str) -> None:
     time.sleep(1.5)
     send(host, ["reset"])
     before = stats(host)
-    order = [1, 2, 3, 5, 6, 0, 2, 4, 1, 0]
+    order = [1, 2, 3, 5, 6, 0, 7, 4, 1, 0]
     for i in order:
         send(host, [f"screen {i}"])
         time.sleep(0.9)
@@ -149,6 +158,45 @@ def touch_tests(host: str) -> None:
     send(host, ["screen 1", "sleep 0.5", "swipe 795 240 560 240 160"])
     time.sleep(0.6)
     grab(host).save(OUT / "t4-after-edge-swipe.png")
+    print(f"edge swipe from Flight Deck: now on {where(host)[0]} (expected {SCREENS[2]})")
+
+    # Core Map: orbit with one finger, pinch to zoom, tap a post, double tap to reset.
+    send(host, [f"screen {SCREENS.index('coremap')}"])
+    time.sleep(1.5)
+    send(host, ["reset"])
+    before = stats(host)
+    send(host, ["touch 0 250 250 1"])
+    for i in range(80):
+        send(host, [f"touch 0 {250 + i * 4} {250 + (i % 30) - 15} 1"])
+        time.sleep(0.012)
+    send(host, ["touch 0 0 0 0"])
+    time.sleep(0.8)
+    send(host, ["touch 0 380 300 1", "touch 1 420 300 1"])
+    for i in range(50):
+        send(host, [f"touch 0 {380 - i * 5} 300 1", f"touch 1 {420 + i * 5} 300 1"])
+        time.sleep(0.012)
+    send(host, ["touch 0 0 0 0", "touch 1 0 0 0"])
+    time.sleep(0.4)
+    s = stats(host)
+    grab(host).save(OUT / "t5-coremap-orbited-zoomed.png")
+    send(host, ["tap 700 150", "sleep 0.1", "tap 700 150", "sleep 1.5", "tap 420 300", "sleep 0.5"])
+    grab(host).save(OUT / "t6-coremap-reset-selected.png")
+    print(f"core map gestures: frame worst {s['render_worst_us'] / 1000:.2f} ms, "
+          f"dropped {int(s['dropped'] - before['dropped'])}, still on {where(host)[0]}")
+
+    # A touch release must never change the screen or start attract mode (it
+    # did, about one release in five, when the idle timer wrapped).
+    home = SCREENS.index("touchlab")
+    send(host, [f"screen {home}"])
+    time.sleep(1.0)
+    stray = 0
+    for i in range(80):
+        send(host, [f"tap {150 + (i * 37) % 500} {150 + (i * 53) % 250}", "sleep 0.05"])
+        name, attract = where(host)
+        if name != "touchlab" or attract:
+            stray += 1
+            send(host, [f"screen {home}", "sleep 0.8"])
+    print(f"touch releases: 80, stray screen changes or attract starts {stray}")
     send(host, ["screen 0"])
 
 
@@ -159,10 +207,25 @@ def main() -> None:
     ap.add_argument("--no-touch", action="store_true")
     ap.add_argument("--no-media", action="store_true")
     ap.add_argument("--no-attract", action="store_true")
+    ap.add_argument("--no-companion", action="store_true", help="do not start host/companion.py for the run")
     ap.add_argument("--run", type=float, default=5.0, help="seconds measured per screen")
-    ap.add_argument("--attract", type=float, default=100.0, help="seconds of attract mode (one lap is about 95)")
+    ap.add_argument("--attract", type=float, default=150.0, help="seconds of attract mode (one lap is about 140 with the companion running)")
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
+    companion = None
+    if not a.no_companion:
+        # Host Link and Core Map are measured with live data, not their waiting state
+        companion = subprocess.Popen([sys.executable, str(ROOT / "host" / "companion.py"), "--host", a.host],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(1.5)
+    try:
+        run(a)
+    finally:
+        if companion:
+            companion.terminate()
+
+
+def run(a: argparse.Namespace) -> None:
     for name in a.screens.split(","):
         visit(a.host, SCREENS.index(name), name, settle=2.0, run=a.run)
     if not a.no_touch:

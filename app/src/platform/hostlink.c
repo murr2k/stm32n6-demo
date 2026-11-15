@@ -28,13 +28,14 @@ const struct hl_state *hostlink_state(void)
 
 bool hostlink_online(void)
 {
-	return st.last_ms != 0 && k_uptime_get_32() - st.last_ms < 2000;
+	/* signed: the receiver may stamp last_ms after this thread read the clock */
+	return st.last_ms != 0 && (int32_t)(k_uptime_get_32() - st.last_ms) < 2000;
 }
 
 static void hostlink_thread(void *p1, void *p2, void *p3)
 {
 	struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(HL_PORT)};
-	static uint8_t buf[HL_HDR + HL_MAX_CORES + 8];
+	static uint8_t buf[HL_HDR + 3 * HL_MAX_CORES + 8];
 	int s;
 
 	net_wait_ip();
@@ -78,6 +79,18 @@ static void hostlink_thread(void *p1, void *p2, void *p3)
 		st.mem_pct = buf[22];
 		st.n_cores = cores;
 		net_addr_ntop(AF_INET, &from.sin_addr, st.host_ip, sizeof(st.host_ip));
+
+		/* the topology follows the loads when the host knows it (and all of it fits) */
+		if (buf[23] == cores && n >= HL_HDR + 3 * cores) {
+			memcpy(st.core_kind, buf + HL_HDR + cores, cores);
+			memcpy(st.core_id, buf + HL_HDR + 2 * cores, cores);
+			st.topo = true;
+		} else {
+			st.topo = false;
+		}
+		for (int i = 0; i < cores; i++) {
+			st.load[i] = MIN(buf[HL_HDR + i], 100);
+		}
 
 		uint16_t h = st.head;
 

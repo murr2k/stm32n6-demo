@@ -314,6 +314,7 @@ static void build_player(void)
 	lv_obj_add_event_cb(scrub, scrub_touch, LV_EVENT_PRESSING, NULL);
 	lv_obj_add_event_cb(scrub, scrub_touch, LV_EVENT_RELEASED, NULL);
 	lv_obj_add_event_cb(scrub, scrub_touch, LV_EVENT_PRESS_LOST, NULL);
+	lv_obj_set_ext_click_area(scrub, 14); /* a finger, not a stylus */
 
 	l_time = ui_label(bottom_bar, &font_mono_14, C_TEXT, "0:00 / 0:00");
 	lv_obj_align(l_time, LV_ALIGN_RIGHT_MID, -UI_PAD, 0);

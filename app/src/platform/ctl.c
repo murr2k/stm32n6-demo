@@ -20,6 +20,7 @@
 #include "gfx.h"
 #include "net.h"
 #include "touch.h"
+#include "ui/shell.h"
 
 LOG_MODULE_REGISTER(ctl, LOG_LEVEL_INF);
 
@@ -152,6 +153,9 @@ static int handle(char *line, char *out, size_t out_len)
 				"kbps=%u audio_clock=%d\n",
 				st.open, st.playing, st.frame, st.n_frames, st.dropped, st.decode_us, st.convert_us,
 				st.kbps, st.audio_clock);
+	} else if (!strcmp(cmd, "where")) {
+		/* which screen is up, and whether the demo is running itself */
+		return snprintf(out, out_len, "screen=%d attract=%d\n", shell_current(), shell_in_attract());
 	} else if (!strcmp(cmd, "stats")) {
 		const struct gfx_stats *g = gfx_stats();
 
@@ -188,6 +192,14 @@ static void ctl_thread(void *p1, void *p2, void *p3)
 		if (s < 0) {
 			continue;
 		}
+		/* One client at a time, so a client that vanishes without a clean close
+		 * (one lost FIN is enough) must not hold the port for ever: without
+		 * these the thread sat in recv() and the board looked dead from outside.
+		 */
+		struct zsock_timeval idle = {.tv_sec = 5};
+
+		zsock_setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &idle, sizeof(idle));
+		zsock_setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &idle, sizeof(idle));
 		for (;;) {
 			char ch;
 

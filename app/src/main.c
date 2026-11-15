@@ -25,6 +25,7 @@ static const struct screen *const screens[] = {
 	&screen_explorer,
 	&screen_touchlab,
 	&screen_hostlink,
+	&screen_coremap,
 	&screen_cinema,
 	&screen_specimen,
 };

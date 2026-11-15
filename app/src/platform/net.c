@@ -126,6 +126,10 @@ static void fbdump_thread(void *a, void *b, void *c)
 		if (s < 0) {
 			continue;
 		}
+		/* a receiver that stops reading must not hold the port for ever */
+		struct zsock_timeval stall = {.tv_sec = 5};
+
+		zsock_setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &stall, sizeof(stall));
 		const uint8_t *p = gfx_snapshot();
 		const uint32_t hdr[4] = {0x4246364e /* "N6FB" */, GFX_W, GFX_H, 32};
 		size_t left = GFX_FB_BYTES;

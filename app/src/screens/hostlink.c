@@ -173,7 +173,7 @@ static void fmt_rate(char *buf, size_t n, const char *tag, uint32_t bps)
 static void tick(uint32_t now_ms)
 {
 	static uint32_t pps_t0, pps_n0, pps;
-	static bool was_online = true;
+	static bool was_online; /* the waiting note starts out visible */
 	const struct hl_state *s = hostlink_state();
 	bool online = hostlink_online();
 	char buf[40];

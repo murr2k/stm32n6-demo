@@ -57,6 +57,7 @@ static volatile uint32_t a_pos;
 static bool use_audio;
 static uint32_t spf;            /* audio sample frames per video frame */
 static uint32_t decoded_frame = UINT32_MAX;
+static volatile bool jumped;    /* the position was set (seek, play, loop): the next frame is not a drop */
 static struct player_status status;
 static K_SEM_DEFINE(wake, 0, 1);
 static K_MUTEX_DEFINE(codec);
@@ -172,6 +173,7 @@ static uint32_t clock_frame(void)
 
 static void rebase(uint32_t frame)
 {
+	jumped = true;
 	base_frame = frame;
 	base_us = gfx_now_us();
 	a_pos = frame * spf;
@@ -350,13 +352,16 @@ static void player_thread(void *p1, void *p2, void *p3)
 		uint32_t us = 0, bytes = 0;
 		int ret = decode_frame(cur, target, bufs[b], &info, &us, &bytes);
 
+		bool jump = jumped;
+
+		jumped = false;
 		key = k_spin_lock(&lock);
 		if (ret == 0) {
 			published = b;
 			published_frame = target;
 			published_info = info;
 		}
-		if (playing && decoded_frame != UINT32_MAX && target > decoded_frame + 1) {
+		if (playing && !jump && decoded_frame != UINT32_MAX && target > decoded_frame + 1) {
 			status.dropped += target - decoded_frame - 1;
 		}
 		status.frame = target;

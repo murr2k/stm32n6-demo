@@ -5,7 +5,7 @@ real-time data visualization, and full-screen video with sound, built on
 Zephyr 4.4.0 and LVGL 9.5. The audience is engineers and UX designers, so the
 rules are: lock to the panel refresh, no fake data, and show the measurements.
 
-> **Status: eight screens, video playback and audio output work on hardware.**
+> **Status: nine screens, video playback and audio output work on hardware.**
 > Every screen holds the panel's 59.98 Hz with no dropped frames in the
 > automated run, a 48 s original film plays from flash at 30 fps with stereo
 > sound, and touch, motion, colour and sound have been checked by hand. Left
@@ -16,6 +16,7 @@ rules are: lock to the panel refresh, no fake data, and show the measurements.
 |---|---|
 | ![Home](docs/img/home.png) | ![Signal Lab](docs/img/signal-lab.png) |
 | ![Explorer](docs/img/explorer.png) | ![The film playing in Cinema](docs/img/film.png) |
+| ![Core Map: a PC's processors in 3D](docs/img/core-map.png) | |
 
 Screenshots are the board's own frame buffer, read back over Ethernet.
 The plan, with architecture, budgets, phases and risks, is in
@@ -94,7 +95,7 @@ target supply, so `STM32_Programmer_CLI --power off/on` does it without a
 finger on the board. The loader has the mirror-image problem: it only works
 against the boot ROM's idle state, not against running firmware.
 
-## Host Link
+## Host Link and Core Map
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install psutil    # once
@@ -103,11 +104,19 @@ against the boot ROM's idle state, not against running firmware.
 
 `run.cmd` starts `host/companion.py`, which sends this PC's per-core CPU
 load, memory use and network throughput to the board ten times a second and
-times the board's reply to each datagram. Only those aggregate numbers leave
-the PC: no process names, no host name. It opens no listening port (replies
-return on the socket it sends from), so there is no firewall prompt. Without
-the companion the Host Link screen says it is waiting; it does not show
-placeholder data.
+times the board's reply to each datagram. On Windows it also sends the
+CPU's layout (which logical processors are P-cores, E-cores, low-power
+E-cores and SMT siblings), which the Core Map uses for its floor plan; on
+other systems the Core Map falls back to a plain grid. Only those aggregate
+numbers leave the PC: no process names, no host name. It opens no listening
+port (replies return on the socket it sends from), so there is no firewall
+prompt. Without the companion both screens say they are waiting; they do not
+show placeholder data.
+
+Start the companion after the board is up, or expect up to a minute of
+"waiting": if it is already sending while the board powers up, Windows marks
+the board's address unreachable and does not ask for it again for a while.
+The board does not yet announce itself when it gets its address.
 
 ## Remote control and automated review
 
@@ -116,7 +125,7 @@ The firmware listens on these ports (trusted LAN only, no authentication):
 | Port | Purpose | Host tool |
 |---|---|---|
 | tcp/5555 | One frame of the display, captured at a frame boundary | `tools/shot.py` |
-| tcp/5556 | Text commands: switch screen, start attract mode, frame statistics, inject touches, audio and video status | `tools/ctl.py` |
+| tcp/5556 | Text commands: switch screen, start attract mode, which screen is up (`where`), frame statistics, inject touches, audio and video status | `tools/ctl.py` |
 | udp/5557 | Host telemetry in, echo out | `host/companion.py` |
 
 ```powershell
@@ -125,12 +134,19 @@ The firmware listens on these ports (trusted LAN only, no authentication):
 .\.venv\Scripts\python.exe tools\tour.py        # every screen: stats, screenshots, gestures
 ```
 
-`tour.py` is the regression check: it visits each screen, measures frame time
-and dropped frames over five seconds, saves screenshots to `captures/tour/`,
-then drives Touch Lab and Explorer with injected multi-touch (three contacts,
-a pinch, a flick, an edge swipe), makes ten screen changes, plays the film and
-runs one lap of attract mode. About four minutes; a screenshot costs the UI
-one frame (an 18 ms copy to PSRAM), so none is taken inside a measured window.
+`tour.py` is the regression check: it starts the companion, visits each
+screen, measures frame time and dropped frames over five seconds, saves
+screenshots to `captures/tour/`, then drives Touch Lab, Explorer and Core Map
+with injected multi-touch (three contacts, pinches, a flick, an orbit, an
+edge swipe), checks that 80 touch releases never change the screen, makes
+ten screen changes, plays the film and runs one lap of attract mode. About
+six minutes; a screenshot costs the UI one frame (an 18 ms copy to PSRAM), so
+none is taken inside a measured window.
+
+The control port serves one client at a time and drops one that has been
+silent for five seconds. `ctl.py` keeps a single connection open for a
+whole script; a tool that opens a connection per command will exhaust the
+board's sixteen TCP slots and find it unreachable for a while.
 
 ## Layout
 
@@ -149,6 +165,7 @@ tools/
   n6.py                 build / flash / run / console
   shot.py, ctl.py       screenshot and remote-control clients
   tour.py               automated review
+  fuzz_player.py        random abuse of the video player through injected touches
   gen_fonts.py          TTF to LVGL bitmap fonts (needs npm install in tools/fontconv)
   n6v.py                encode, pack and flash video clips
   gdbrun.ps1            scripted ST-LINK gdbserver + GDB session for bring-up
@@ -160,19 +177,21 @@ captures/               screenshots and logs pulled off the board (not committed
 
 | Screen | What it shows | Frame time, avg / worst |
 |---|---|---|
-| Home | A tile per screen; each thumbnail is drawn live by that screen's code | 4.5 / 5.5 ms |
-| Flight Deck | Frame time, CPU share per thread, heaps, Ethernet rates: the board measuring itself | 2.6 / 6.9 ms |
-| Signal Lab | Triggered scope, log-frequency spectrum with peak hold and cursor, waterfall; one 1024-point Helium FFT per frame (about 220 us) | 8.2 / 9.9 ms |
+| Home | A tile per screen; each thumbnail is drawn live by that screen's code | 5.4 / 6.4 ms |
+| Flight Deck | Frame time, CPU share per thread, heaps, Ethernet rates: the board measuring itself | 2.9 / 7.9 ms |
+| Signal Lab | Triggered scope, log-frequency spectrum with peak hold and cursor, waterfall; one 1024-point Helium FFT per frame (about 220 us) | 7.8 / 10.2 ms |
 | Explorer | 2^20 samples x 4 channels with a min/max pyramid in PSRAM; pan, pinch, cursor, auto tour | 9.0 / 13.5 ms while it zooms, 3 ms at rest |
-| Touch Lab | Five contacts with trails, crosshairs, distance, report rate, touch-to-swap time | 1.5 / 2.3 ms |
-| Host Link | A PC's per-core CPU load as a scrolling heat map, memory, network throughput and datagram round-trip time, pushed over UDP by `run.cmd` | updates at 10 Hz |
+| Touch Lab | Five contacts with trails, crosshairs, distance, report rate, touch-to-swap time | 1.7 / 2.4 ms |
+| Host Link | A PC's per-core CPU load as a scrolling heat map, memory, network throughput and datagram round-trip time, pushed over UDP by `run.cmd` | 6.7 / 10.0 ms |
+| Core Map | The same PC's logical processors as posts on a floor plan of its chip (P-cores, E-cores, SMT threads), height and colour by load. Drag to orbit, pinch to zoom and pan, tap a post, double tap to reset. Software 3D: projected in floating point, filled as anti-aliased quads, no depth buffer | 6.8 / 7.7 ms; 12 ms with every post at 100 % |
 | Cinema | Clips from flash, full screen, with overlay controls, scrubbing and a stats panel. Hardware JPEG decode about 9 ms a frame, DMA2D conversion 4.8 ms, video slaved to the audio clock | 30 fps video, no drops |
-| Specimen | Type scale, colour tokens, motion test | 1.9 / 2.8 ms |
+| Specimen | Type scale, colour tokens, motion test | 1.9 / 3.1 ms |
 
 Frame time is all UI-thread work for a frame (screen logic, layout, render),
 measured on the board over five seconds per screen by `tools/tour.py`. The
-budget at 59.98 Hz is 16.67 ms. The same run makes ten screen changes and one
-100 s lap of attract mode: no dropped frame in either, worst frame 13.5 ms.
+budget at 59.98 Hz is 16.67 ms. Host Link and Core Map are measured with the
+companion running. The same run makes ten screen changes and a 150 s lap of
+attract mode: no dropped frame in either, worst frame 14.0 ms.
 
 Explorer is the screen closest to the budget, and it was over it until the
 build was told about the FPU: the N657's Cortex-M55 has double precision, but
@@ -267,6 +286,8 @@ and look for isolated steps in both.
 | Host Link | Working: 340 of 340 datagrams answered in the test run, 1.4 to 2.9 ms round trip as timed by the host |
 | Web remote, firmware update over the network | Not started |
 | SD card media library | Not started (a card is fitted) |
+| Core Map | Working: 22 logical processors of the test PC, no dropped frame while orbiting and zooming under full load |
+| Cinema slider | A firmware halt while scrubbing was reported once and has not been reproduced in 450 fuzzed actions. Three defects found on the way are fixed: a drag starting near a screen edge closed the film, seeks were counted as dropped frames, the touch target was 44 px |
 | Screen transitions | Working: hardware fade, no frame dropped in the automated run |
 | Attract mode | Working: starts after 90 s idle, one lap is about 95 s |
 | Soak test | Not started |

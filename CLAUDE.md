@@ -21,12 +21,15 @@ not to be modified from here.
 .\shot.cmd --host 192.168.254.86 -o captures\x.png
 .\tools\gdbrun.ps1 -Elf build\mcuboot\zephyr\zephyr.elf -Ex 'load $ELF','break foo','continue','bt'
 .\.venv\Scripts\python.exe tools\tour.py     # regression: per-screen frame stats, screenshots, injected gestures
-.\.venv\Scripts\python.exe tools\ctl.py "screen 2" stats "tap 400 200"
+.\.venv\Scripts\python.exe tools\ctl.py "screen 2" stats where "tap 400 200"
+.\.venv\Scripts\python.exe tools\fuzz_player.py --secs 120   # random abuse of the video player
+.\run.cmd                   # host companion: live data for Host Link and Core Map
 ```
 
 - Verify UI work by looking: `shot.py` then Read the PNG. `tour.py` must show
   0 dropped frames on every screen, in the transitions and in the attract-mode
-  lap before a commit (about four minutes; `--no-attract` for a quick pass).
+  lap, and 0 stray screen changes, before a commit (about six minutes;
+  `--no-attract` for a quick pass). It starts the companion itself.
 - Build times: a source-only change is about 2 min; any `prj.conf`, Kconfig or
   CMake change rebuilds LVGL and takes 6 to 8 min. Batch config changes.
 
@@ -61,7 +64,9 @@ not to be modified from here.
   and 0x3424_9000 (internal SRAM); PSRAM is a bump allocator (`psram_alloc`),
   first 2 MB reserved for the screenshot copy.
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
-  Index order matters to `tools/tour.py` (SCREENS list).
+  Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
+  explorer, touchlab, hostlink, coremap, cinema, specimen. Home shows eight
+  tiles, its current maximum; a tenth screen needs a 3 x 3 Home.
 
 ## Invariants & "do not regress"
 
@@ -142,6 +147,31 @@ not to be modified from here.
 - **A screenshot (`shot.py`, tcp/5555) costs the UI one frame.** **Why:** the
   1.5 MB copy to PSRAM takes about 18 ms. Never grab inside a window whose
   dropped-frame count is being measured (tour.py reads the stats first).
+- **Compare elapsed time signed when the timestamp may be newer than `now`**:
+  `(int32_t)(now - stamp) > LIMIT`. **Why:** the shell samples `now` once
+  per frame, `shell_note_input()` stamped the input with a fresh clock read a
+  millisecond later, the unsigned difference wrapped to four billion and
+  attract mode started on about one touch release in five (the screen jumped
+  to the next one). `tour.py` checks 80 releases with the `where` command.
+- **The control port (tcp/5556) and the frame dump (tcp/5555) serve one
+  client at a time; host tools must reuse one connection (`ctl.send` does).**
+  **Why:** Zephyr has 16 TCP slots here and a closed connection lingers; a
+  script that connected per command (80 a second in an injected drag) made
+  the board unreachable for tens of seconds, which looked like a crash. Both
+  servers time out a silent client after 5 s. A board that does not answer
+  but shows the WFI debugger signature (Rev Z, `DEV_AP_ACCESS_ERROR`) is in
+  this state, not halted. Do not probe a running board with a hot-plug
+  `-halt`: it stops the core.
+- **A full-screen view (`shell_set_cover`) owns every touch: no edge swipes
+  under it.**
+- **`raster_line` and `raster_poly` must stay free of per-pixel-row divisions
+  and edge scans.** **Why:** a 64-bit division per column made 25 wireframe
+  lines cost 1.5 ms, and two edge scans per row made 22 tall posts cost 6 ms.
+  The polygon fill walks its two edge chains; lines use a float slope.
+- **Core Map zoom is capped at 2.5x.** **Why:** it is fill-rate bound; at 3.5x
+  tall posts overdrew the whole view several times (11.8 ms draw, dropped
+  frames). Faces of one post overlap by a pixel under the face drawn after
+  them, or anti-aliased shared edges let the background show through.
 - **Pad JPEG input to a whole number of 32-bit words past the EOI marker.**
   **Why:** the HAL feeds the codec word by word; with a length that is not a
   multiple of four the end marker is never sent and the decode times out a
@@ -164,6 +194,21 @@ not to be modified from here.
 - The film's crackle (same place every run) was the soundtrack's note-end
   clicks; fixed and confirmed by ear by the user on 2026-11-15, along with
   transitions and attract mode ("sound is excellent, graphics smooth and crisp").
+- **Open bug (2026-11-15, reported by the user): operating the Cinema slider
+  halted the firmware once.** Symptom: the board stopped answering and the
+  audio looped the last 21 ms (the circular DMA keeps running while nothing
+  refills it). The fault state was lost to a reset. Not reproduced since:
+  `tools/fuzz_player.py` ran 450 random scrubs, plays, backs and re-opens
+  (edge starts, a second contact) without a halt. Fixed on the way: a drag
+  starting in the edge-swipe zone closed the film; seeks counted as dropped
+  frames; the attract false start below. If it happens again do NOT reset:
+  read `captures/console.log` (keep `n6.cmd console --log` running; the log
+  is flushed per chunk) and the CPU state.
+- Windows stops resolving the board's address for up to a minute if a host
+  program (the companion) keeps sending to it while the board power-cycles.
+  Fix planned with the next Kconfig change (it costs a full rebuild): a
+  gratuitous ARP when the address is assigned
+  (`CONFIG_NET_ARP_GRATUITOUS_TRANSMISSION`; check the option exists in 4.4.0).
 - A formatted 32 GB microSD card is in the slot (2026-11-15). Plan: media
   library on the card with upload over Ethernet (needs the `fatfs` module and
   a read-ahead buffer in the player). Writing 84 MB of clips to the XSPI flash
