@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# west workspace externals (recreate with `west update`). Root-anchored so
+# directories with the same names inside our own tree are not ignored.
+/.west/
+/zephyr/
+/modules/
+/bootloader/
+
+# Build outputs
+/build/
+/build-*/
+*.o
+*.obj
+*.elf
+*.hex
+*.map
+*.lst
+
+# Generated media (rebuilt by tools/video); sources stay in git
+/media/out/
+/media/cache/
+
+# Captures pulled off the board during bring-up
+/captures/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Secrets
+.env
+*.secret.*

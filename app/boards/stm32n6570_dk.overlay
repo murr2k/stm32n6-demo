@@ -1,0 +1,36 @@
+/*
+ * STM32N6570-DK application overlay.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/*
+ * AXISRAM3..6: four contiguous 448 KB banks (1.75 MB at 0x3420_0000), powered
+ * down and unclocked out of reset. Enabling the nodes makes the
+ * stm32n6_axisram driver clock and power them before the kernel starts.
+ */
+&axisram3 {
+	status = "okay";
+};
+
+&axisram4 {
+	status = "okay";
+};
+
+&axisram5 {
+	status = "okay";
+};
+
+&axisram6 {
+	status = "okay";
+};
+
+/*
+ * The OTP MAC address cell on this board is unprogrammed (reads back as
+ * 00:00:00:00:00:00), so use a fixed locally administered address instead.
+ * A fixed address keeps the DHCP lease, and so the IP, stable across builds.
+ */
+&mac {
+	/delete-property/ nvmem-cells;
+	/delete-property/ nvmem-cell-names;
+	local-mac-address = [02 80 e1 4e 36 01];
+};

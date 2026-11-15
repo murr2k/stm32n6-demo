@@ -1,0 +1,462 @@
+<title>N6 Demo Plan</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&display=swap">
+<style>
+/* Layout: one reading column of engineering-document sections; figures (stack, budgets, memory bars) break out to full column width. */
+:root {
+  --bg: #f2f4f7; --surface: #ffffff; --sunken: #e8ecf1; --line: #cfd6df;
+  --fg: #141b25; --muted: #56616f;
+  --accent: #1d58c4; --accent-soft: #dbe6fa;
+  --ok: #17734a; --ok-soft: #d9efe4; --warn: #99560a; --warn-soft: #f8e9cf; --bad: #b0302a; --bad-soft: #f7dedc;
+  --seg1: #1d58c4; --seg2: #4a86e0; --seg3: #86aee9; --seg4: #b9c4d2; --seg5: #7a8798; --seg6: #2a9c8f; --seg7: #c98a1c;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0e131a; --surface: #161d27; --sunken: #1c2531; --line: #2c3848;
+  --fg: #e3e8ef; --muted: #96a2b2;
+  --accent: #78a9ff; --accent-soft: #1b2c49;
+  --ok: #5fd0a0; --ok-soft: #14301f; --warn: #eeb04c; --warn-soft: #382a10; --bad: #f08a82; --bad-soft: #3a1b19;
+  --seg1: #4f86e8; --seg2: #78a9ff; --seg3: #a9c6f7; --seg4: #3b4757; --seg5: #66758a; --seg6: #4fc4b5; --seg7: #e0a53d;
+  color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0e131a; --surface: #161d27; --sunken: #1c2531; --line: #2c3848;
+  --fg: #e3e8ef; --muted: #96a2b2;
+  --accent: #78a9ff; --accent-soft: #1b2c49;
+  --ok: #5fd0a0; --ok-soft: #14301f; --warn: #eeb04c; --warn-soft: #382a10; --bad: #f08a82; --bad-soft: #3a1b19;
+  --seg1: #4f86e8; --seg2: #78a9ff; --seg3: #a9c6f7; --seg4: #3b4757; --seg5: #66758a; --seg6: #4fc4b5; --seg7: #e0a53d;
+  color-scheme: dark }
+
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 400 16px/1.6 var(--body);
+  padding-block: 40px 72px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.page { max-width: 980px; margin: 0 auto; display: flex; flex-direction: column; gap: 56px; }
+section { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+h1 { font: 600 clamp(34px, 6vw, 52px)/1.05 var(--display); letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+h2 { font: 600 28px/1.15 var(--display); margin: 0; text-wrap: balance; }
+h3 { font: 600 16px/1.3 var(--body); margin: 0; }
+p { margin: 0; max-width: 68ch; }
+.lede { font-size: 18px; color: var(--fg); max-width: 62ch; }
+.muted { color: var(--muted); }
+.eyebrow { font: 500 12px/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+code, .mono { font-family: var(--mono); font-size: 0.9em; }
+code { background: var(--sunken); padding: 1px 5px; border-radius: 3px; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header.top { display: flex; flex-direction: column; gap: 18px; border-bottom: 2px solid var(--fg); padding-bottom: 28px; }
+.specs { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 0; border: 1px solid var(--line); background: var(--surface); }
+.specs div { padding: 12px 14px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); margin: 0 -1px -1px 0; min-width: 0; }
+.specs dt { font: 500 11px/1.2 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.specs dd { margin: 4px 0 0; font: 500 15px/1.3 var(--mono); font-variant-numeric: tabular-nums; }
+dl { margin: 0; }
+
+.pill { display: inline-block; font: 500 11px/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; padding: 4px 7px; border-radius: 3px; white-space: nowrap; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.bad { background: var(--bad-soft); color: var(--bad); }
+.pill.info { background: var(--accent-soft); color: var(--accent); }
+
+.scroll { overflow-x: auto; border: 1px solid var(--line); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; line-height: 1.45; }
+th { text-align: left; font: 500 11px/1.2 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); padding: 10px 14px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+td.k { font-weight: 500; white-space: nowrap; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.callout { border-left: 3px solid var(--warn); background: var(--warn-soft); padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; }
+.callout p { max-width: 74ch; }
+.callout.ask { border-left-color: var(--accent); background: var(--accent-soft); }
+
+/* screens */
+.screens { display: grid; grid-template-columns: repeat(auto-fill, minmax(215px, 1fr)); gap: 16px; }
+.screen { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.screen svg { width: 100%; height: auto; aspect-ratio: 5 / 3; display: block; border: 1px solid var(--line); background: var(--surface); }
+.screen p { font-size: 14px; line-height: 1.45; color: var(--muted); }
+.wf-l { stroke: var(--muted); stroke-width: 1; fill: none; }
+.wf-a { fill: var(--accent); stroke: none; }
+.wf-as { stroke: var(--accent); stroke-width: 1.6; fill: none; }
+.wf-d { fill: var(--sunken); stroke: var(--line); stroke-width: 1; }
+.wf-m { fill: var(--muted); stroke: none; }
+.wf-g1 { fill: var(--seg1); } .wf-g2 { fill: var(--seg2); } .wf-g3 { fill: var(--seg3); } .wf-g6 { fill: var(--seg6); } .wf-g7 { fill: var(--seg7); }
+
+/* stack diagram */
+.stack { display: flex; flex-direction: column; gap: 6px; }
+.layer { display: grid; grid-template-columns: 110px 1fr; gap: 6px; align-items: stretch; }
+.layer > .tag { font: 500 11px/1.25 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; }
+.cells { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.cell { flex: 1 1 130px; background: var(--surface); border: 1px solid var(--line); padding: 8px 10px; font-size: 13.5px; line-height: 1.35; min-width: 0; }
+.cell b { display: block; font-weight: 600; }
+.cell span { color: var(--muted); }
+.cell.own { border-color: var(--accent); background: var(--accent-soft); }
+.cell.hw { background: var(--sunken); }
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 13px; color: var(--muted); }
+.legend i { display: inline-block; width: 12px; height: 12px; margin-right: 6px; vertical-align: -1px; border: 1px solid var(--line); }
+@media (max-width: 560px) { .layer { grid-template-columns: 1fr; } }
+
+/* bars drawn to scale */
+.bar { display: flex; width: 100%; height: 34px; border: 1px solid var(--line); background: var(--surface); }
+.bar > span { display: block; height: 100%; min-width: 2px; }
+.barblock { display: flex; flex-direction: column; gap: 8px; }
+.barhead { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; font: 500 13px/1.3 var(--mono); }
+.keys { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13px; color: var(--muted); }
+.keys i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; }
+.keys b { color: var(--fg); font: 500 12.5px var(--mono); font-variant-numeric: tabular-nums; }
+.s1 { background: var(--seg1); } .s2 { background: var(--seg2); } .s3 { background: var(--seg3); } .s4 { background: var(--seg4); } .s5 { background: var(--seg5); } .s6 { background: var(--seg6); } .s7 { background: var(--seg7); }
+
+/* pipeline */
+.pipe { display: flex; flex-wrap: wrap; gap: 6px; align-items: stretch; }
+.stage { flex: 1 1 140px; background: var(--surface); border: 1px solid var(--line); padding: 10px 12px; font-size: 13.5px; line-height: 1.4; min-width: 0; position: relative; }
+.stage b { display: block; }
+.stage .t { font: 500 12px var(--mono); color: var(--accent); }
+.stage span { color: var(--muted); }
+
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; }
+.two > div { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+ul, ol { margin: 0; padding-left: 20px; max-width: 68ch; display: flex; flex-direction: column; gap: 6px; }
+.phase td:first-child { font: 500 13px var(--mono); white-space: nowrap; color: var(--accent); }
+footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 18px; }
+</style>
+
+<div class="page">
+
+<header class="top">
+  <span class="eyebrow">STM32N6570-DK &middot; plan for review &middot; 2026-11-14 &middot; no firmware written yet</span>
+  <h1>N6 Demo Plan</h1>
+  <p class="lede">An eight-screen touch demo for the STM32N6570-DK: live dashboards, dense real-time data visualization, and full-screen video with sound, all locked to the panel refresh. Built for people who will look for dropped frames, banding, and fake data. Every number on screen is measured on the board or arrives over its Ethernet link.</p>
+  <dl class="specs">
+    <div><dt>Panel</dt><dd>800 x 480, RGB888</dd></div>
+    <div><dt>Frame target</dt><dd>60 fps, 16.7 ms</dd></div>
+    <div><dt>Core</dt><dd>Cortex-M55 + Helium</dd></div>
+    <div><dt>RTOS</dt><dd>Zephyr 4.4.0</dd></div>
+    <div><dt>UI engine</dt><dd>LVGL 9.5.0</dd></div>
+    <div><dt>Video</dt><dd>480p30 MJPEG, HW decode</dd></div>
+    <div><dt>Link</dt><dd>Gigabit Ethernet</dd></div>
+    <div><dt>Probe</dt><dd>ST-LINK V3 on COM17</dd></div>
+  </dl>
+</header>
+
+<section>
+  <span class="eyebrow">Survey</span>
+  <h2>What is on the bench today</h2>
+  <p>Checked on this host before planning. One tool is missing and needs your install; nothing else blocks the start.</p>
+  <div class="scroll"><table>
+    <tr><th>Item</th><th>State</th><th>Note</th></tr>
+    <tr><td class="k">Board + probe</td><td><span class="pill ok">found</span></td><td>CubeProgrammer 2.23.0 identifies an STM32N6570-DK behind the ST-LINK V3 (firmware V3J17M10). Virtual COM port is COM17.</td></tr>
+    <tr><td class="k">Flash + signing tools</td><td><span class="pill ok">found</span></td><td><code>STM32_Programmer_CLI</code>, <code>STM32_SigningTool_CLI</code>, and the <code>MX66UW1G45G_STM32N6570-DK</code> external loader.</td></tr>
+    <tr><td class="k">Compiler + debugger</td><td><span class="pill ok">found</span></td><td>Zephyr SDK 1.0.1 (arm-zephyr-eabi GCC and GDB), plus the ST-LINK GDB server bundled with STM32CubeIDE 2.1.1.</td></tr>
+    <tr><td class="k">Zephyr 4.4.0 + LVGL 9.5.0</td><td><span class="pill ok">found</span></td><td>Already cloned in the sibling <code>STM32N6570-DK</code> project. Used as a local clone cache; that project is not modified.</td></tr>
+    <tr><td class="k">STM32CubeN6 1.3.0</td><td><span class="pill ok">found</span></td><td>Reference only: ST's JPEG decode, LTDC, and DMA2D examples for this exact board.</td></tr>
+    <tr><td class="k">CMake, Ninja, host GCC, Python 3.13, Node</td><td><span class="pill ok">found</span></td><td>Enough for the host simulator, asset pipeline, and companion service.</td></tr>
+    <tr><td class="k">ffmpeg / ffprobe</td><td><span class="pill bad">missing</span></td><td>Needed to transcode video and audio for the board. Requested below.</td></tr>
+    <tr><td class="k">Serial console</td><td><span class="pill warn">silent</span></td><td>Nothing on COM17 at 115200 during a 3 s listen. The board may be in development-boot mode or running the quiet audio-visualizer build.</td></tr>
+    <tr><td class="k">Board on the LAN</td><td><span class="pill warn">not seen</span></td><td>No ST MAC address in the host ARP table. Expected until this firmware brings Ethernet up.</td></tr>
+  </table></div>
+  <div class="callout ask">
+    <h3>Install request: ffmpeg</h3>
+    <p>Per your instruction I am stopping to ask instead of working around it. <code>winget install Gyan.FFmpeg</code> provides both <code>ffmpeg</code> and <code>ffprobe</code>. Nothing else needs a system install: Python and Node packages go in project-local environments.</p>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">The demo</span>
+  <h2>Eight screens, one design system</h2>
+  <p>Swipe between screens with spring-driven, interruptible transitions. A status bar carries time (from SNTP), IP address, and live frame rate. The USER button toggles a performance HUD on any screen. After two idle minutes the demo plays itself for unattended display.</p>
+  <div class="screens">
+    <div class="screen">
+      <svg viewBox="0 0 160 96" role="img" aria-label="Home screen wireframe: carousel of live tiles">
+        <rect class="wf-d" x="6" y="26" width="34" height="44"/><rect class="wf-d" x="120" y="26" width="34" height="44"/>
+        <rect class="wf-d" x="48" y="16" width="64" height="62"/><polyline class="wf-as" points="54,62 64,50 72,56 84,38 94,46 106,30"/>
+        <circle class="wf-m" cx="72" cy="88" r="1.6"/><circle class="wf-a" cx="80" cy="88" r="2.2"/><circle class="wf-m" cx="88" cy="88" r="1.6"/>
+      </svg>
+      <h3>Home</h3>
+      <p>Carousel of live tiles. Each tile is a running miniature of its screen, not an icon.</p>
+    </div>
+    <div class="screen">
+      <svg viewBox="0 0 160 96" role="img" aria-label="Flight Deck wireframe: arc gauges, sparklines, histogram">
+        <path class="wf-l" d="M14 50 A22 22 0 0 1 58 50"/><path class="wf-as" d="M14 50 A22 22 0 0 1 44 30"/>
+        <path class="wf-l" d="M68 50 A22 22 0 0 1 112 50"/><path class="wf-as" d="M68 50 A22 22 0 0 1 82 31"/>
+        <polyline class="wf-as" points="120,44 126,38 132,42 138,30 144,36 152,28"/>
+        <rect class="wf-g3" x="14" y="76" width="6" height="10"/><rect class="wf-g2" x="22" y="68" width="6" height="18"/><rect class="wf-g1" x="30" y="60" width="6" height="26"/><rect class="wf-g2" x="38" y="70" width="6" height="16"/><rect class="wf-g3" x="46" y="80" width="6" height="6"/>
+        <line class="wf-l" x1="68" y1="66" x2="152" y2="66"/><line class="wf-l" x1="68" y1="76" x2="152" y2="76"/><line class="wf-l" x1="68" y1="86" x2="152" y2="86"/>
+        <rect class="wf-a" x="68" y="63" width="52" height="5"/><rect class="wf-a" x="68" y="73" width="30" height="5"/><rect class="wf-a" x="68" y="83" width="66" height="5"/>
+      </svg>
+      <h3>Flight Deck</h3>
+      <p>The board's own telemetry: per-thread CPU, frame-time histogram, heap, die temperature, Ethernet throughput.</p>
+    </div>
+    <div class="screen">
+      <svg viewBox="0 0 160 96" role="img" aria-label="Signal Lab wireframe: spectrum above a waterfall spectrogram">
+        <polyline class="wf-as" points="8,36 20,30 30,12 40,28 52,32 62,20 74,30 90,33 104,26 120,34 152,36"/>
+        <rect class="wf-g1" x="8" y="46" width="144" height="8"/><rect class="wf-g2" x="8" y="54" width="144" height="8"/><rect class="wf-g6" x="8" y="62" width="144" height="8"/><rect class="wf-g7" x="8" y="70" width="144" height="8"/><rect class="wf-g3" x="8" y="78" width="144" height="10"/>
+        <line class="wf-l" x1="30" y1="6" x2="30" y2="90" stroke-dasharray="2 2"/>
+      </svg>
+      <h3>Signal Lab</h3>
+      <p>Live microphone: spectrum, waterfall spectrogram, phosphor-persistence scope. Pinch to zoom, drag cursors for readouts.</p>
+    </div>
+    <div class="screen">
+      <svg viewBox="0 0 160 96" role="img" aria-label="Explorer wireframe: large time series with overview strip">
+        <polyline class="wf-as" points="8,50 18,44 26,52 36,30 46,40 58,22 70,36 82,28 94,46 108,34 122,48 136,26 152,38"/>
+        <line class="wf-l" x1="82" y1="8" x2="82" y2="64" stroke-dasharray="2 2"/><rect class="wf-a" x="70" y="6" width="24" height="9"/>
+        <rect class="wf-d" x="8" y="74" width="144" height="14"/><rect class="wf-g3" x="60" y="74" width="36" height="14"/>
+      </svg>
+      <h3>Explorer</h3>
+      <p>One million samples, four channels. Inertial pan and pinch zoom at full frame rate through a min/max level-of-detail pyramid.</p>
+    </div>
+    <div class="screen">
+      <svg viewBox="0 0 160 96" role="img" aria-label="Host Link wireframe: core heatmap and latency chart">
+        <rect class="wf-g1" x="8" y="10" width="14" height="14"/><rect class="wf-g3" x="24" y="10" width="14" height="14"/><rect class="wf-g2" x="40" y="10" width="14" height="14"/><rect class="wf-g7" x="56" y="10" width="14" height="14"/>
+        <rect class="wf-g3" x="8" y="26" width="14" height="14"/><rect class="wf-g2" x="24" y="26" width="14" height="14"/><rect class="wf-g1" x="40" y="26" width="14" height="14"/><rect class="wf-g3" x="56" y="26" width="14" height="14"/>
+        <rect class="wf-d" x="82" y="10" width="70" height="30"/><rect class="wf-a" x="82" y="10" width="44" height="30"/>
+        <polyline class="wf-as" points="8,78 24,74 40,80 56,60 72,76 88,72 104,78 120,66 136,76 152,74"/><line class="wf-l" x1="8" y1="88" x2="152" y2="88"/>
+      </svg>
+      <h3>Host Link</h3>
+      <p>Telemetry streamed from the PC over Ethernet: per-core load heatmap, memory, round-trip latency strip chart.</p>
+    </div>
+    <div class="screen">
+      <svg viewBox="0 0 160 96" role="img" aria-label="Cinema wireframe: video frame with overlay controls">
+        <rect class="wf-d" x="0.5" y="0.5" width="159" height="95"/><polygon class="wf-a" points="70,34 70,58 92,46"/>
+        <line class="wf-l" x1="12" y1="82" x2="148" y2="82"/><rect class="wf-a" x="12" y="80.5" width="58" height="3"/><circle class="wf-a" cx="70" cy="82" r="4"/>
+        <rect class="wf-m" x="112" y="8" width="38" height="3"/><rect class="wf-m" x="112" y="14" width="30" height="3"/><rect class="wf-m" x="112" y="20" width="34" height="3"/>
+      </svg>
+      <h3>Cinema</h3>
+      <p>Poster gallery, then full-screen video with stereo sound, touch scrubbing, and a stats-for-nerds overlay.</p>
+    </div>
+    <div class="screen">
+      <svg viewBox="0 0 160 96" role="img" aria-label="Touch Lab wireframe: multi-touch points with trails">
+        <path class="wf-as" d="M20 70 Q40 30 62 40"/><circle class="wf-a" cx="62" cy="40" r="5"/><circle class="wf-l" cx="62" cy="40" r="11"/>
+        <path class="wf-as" d="M150 80 Q120 70 108 58"/><circle class="wf-a" cx="108" cy="58" r="5"/><circle class="wf-l" cx="108" cy="58" r="11"/>
+        <circle class="wf-a" cx="88" cy="22" r="5"/><circle class="wf-l" cx="88" cy="22" r="11"/>
+        <rect class="wf-m" x="8" y="8" width="34" height="3"/><rect class="wf-m" x="8" y="14" width="24" height="3"/>
+      </svg>
+      <h3>Touch Lab</h3>
+      <p>Five-point multi-touch, gesture recognition, and a measured touch-to-pixel latency readout.</p>
+    </div>
+    <div class="screen">
+      <svg viewBox="0 0 160 96" role="img" aria-label="Under the Hood wireframe: pipeline boxes with timings">
+        <rect class="wf-d" x="8" y="34" width="30" height="22"/><rect class="wf-d" x="50" y="34" width="30" height="22"/><rect class="wf-d" x="92" y="34" width="30" height="22"/><rect class="wf-a" x="134" y="34" width="18" height="22"/>
+        <line class="wf-l" x1="38" y1="45" x2="50" y2="45"/><line class="wf-l" x1="80" y1="45" x2="92" y2="45"/><line class="wf-l" x1="122" y1="45" x2="134" y2="45"/>
+        <rect class="wf-m" x="12" y="62" width="20" height="3"/><rect class="wf-m" x="54" y="62" width="20" height="3"/><rect class="wf-m" x="96" y="62" width="20" height="3"/>
+        <rect class="wf-m" x="8" y="12" width="60" height="4"/>
+      </svg>
+      <h3>Under the Hood</h3>
+      <p>Live pipeline diagram with per-stage timings, plus a QR code to the board's own web remote.</p>
+    </div>
+  </div>
+  <p class="muted">Design direction: a dark, instrument-grade theme with one accent hue, a real type scale with tabular numerals, and 24-bit color end to end so gradients do not band. Motion uses spring physics with consistent timing, and every gesture can be reversed mid-flight.</p>
+</section>
+
+<section>
+  <span class="eyebrow">Architecture</span>
+  <h2>Firmware stack</h2>
+  <p>Zephyr and LVGL carry the plumbing. The parts that decide whether the demo impresses are written for this project: the display driver, the visualization engine, the video path, and the design system.</p>
+  <div class="stack">
+    <div class="layer"><div class="tag">Screens</div><div class="cells">
+      <div class="cell own"><b>8 screens + HUD</b><span>Home, Flight Deck, Signal Lab, Explorer, Host Link, Cinema, Touch Lab, Under the Hood</span></div></div></div>
+    <div class="layer"><div class="tag">App kit</div><div class="cells">
+      <div class="cell own"><b>Design system</b><span>tokens, components, springs, screen manager</span></div>
+      <div class="cell own"><b>Viz engine</b><span>direct-to-buffer plots, LOD pyramid, colormaps</span></div>
+      <div class="cell own"><b>Media player</b><span>stream demux, A/V sync, jitter buffer</span></div>
+      <div class="cell own"><b>Telemetry</b><span>frame timing, thread load, net counters</span></div></div></div>
+    <div class="layer"><div class="tag">Libraries</div><div class="cells">
+      <div class="cell"><b>LVGL 9.5.0</b><span>Helium blending, DMA2D fills and blits</span></div>
+      <div class="cell"><b>CMSIS-DSP</b><span>Helium FFT and filters</span></div>
+      <div class="cell"><b>Zephyr net</b><span>TCP/IP, DHCP, mDNS, SNTP, HTTP, WebSocket</span></div>
+      <div class="cell"><b>MCUmgr</b><span>firmware update over UDP</span></div></div></div>
+    <div class="layer"><div class="tag">Drivers</div><div class="cells">
+      <div class="cell own"><b>Two-plane LTDC</b><span>vsync buffer swap, video plane under UI plane</span></div>
+      <div class="cell own"><b>JPEG decode</b><span>direct HAL, DMA2D color conversion</span></div>
+      <div class="cell"><b>GT911 touch</b><span>Zephyr input</span></div>
+      <div class="cell"><b>Ethernet</b><span>Zephyr MAC + RTL8211F</span></div>
+      <div class="cell"><b>Audio</b><span>SAI + WM8904 out, MDF microphone in</span></div></div></div>
+    <div class="layer"><div class="tag">Boot</div><div class="cells">
+      <div class="cell"><b>MCUboot as FSBL</b><span>signed, loaded by the boot ROM from XSPI flash</span></div>
+      <div class="cell"><b>Zephyr 4.4.0 kernel</b><span>app executes in place from XSPI flash</span></div></div></div>
+    <div class="layer"><div class="tag">Silicon</div><div class="cells">
+      <div class="cell hw"><b>STM32N657</b><span>M55, LTDC, DMA2D, JPEG codec, NeoChrom GPU</span></div>
+      <div class="cell hw"><b>Memory</b><span>4.2 MB SRAM, 32 MB PSRAM, 128 MB NOR</span></div>
+      <div class="cell hw"><b>Board</b><span>5 inch touch panel, GbE PHY, codec, MEMS mic</span></div></div></div>
+  </div>
+  <div class="legend"><span><i style="background:var(--accent-soft);border-color:var(--accent)"></i>written for this project</span><span><i style="background:var(--surface)"></i>upstream, configured</span><span><i style="background:var(--sunken)"></i>hardware</span></div>
+
+  <div class="two">
+    <div>
+      <h3>Why Zephyr + LVGL</h3>
+      <p>Zephyr 4.4.0 already describes this board's display, touch, Ethernet, PSRAM, and flash in its devicetree, and the workspace is on this machine and known to boot. LVGL 9.5 supplies layout, text, and input handling with Helium-accelerated blending, which leaves the effort for custom drawing where it shows.</p>
+    </div>
+    <div>
+      <h3>What was rejected</h3>
+      <ul>
+        <li><b>TouchGFX.</b> Strong on this chip, but it is driven from a GUI designer that cannot be scripted from here, and it is not installed.</li>
+        <li><b>Bare-metal Cube HAL.</b> Every peripheral example exists, but networking, threading, and the build would be rebuilt by hand.</li>
+        <li><b>Software H.264.</b> The chip has an H.264 encoder but no decoder. A software decoder at 480p30 is unproven on this core; the hardware JPEG codec is the safe path.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">Display</span>
+  <h2>Frame budget and composition</h2>
+  <p>The LTDC blends two planes in hardware. Video decodes into the lower plane; the UI renders into the upper plane with per-pixel alpha. Player controls fade over moving video without the CPU touching a video pixel. Buffer swaps happen only in vertical blanking, so nothing tears.</p>
+  <div class="barblock">
+    <div class="barhead"><span>One frame at 60 fps</span><span>16.7 ms</span></div>
+    <div class="bar" role="img" aria-label="Frame budget: 1 ms input and logic, 8 ms UI render, 3 ms custom visualization drawing, 4.7 ms slack">
+      <span class="s5" style="width:6%"></span><span class="s1" style="width:48%"></span><span class="s6" style="width:18%"></span><span class="s4" style="width:28%"></span>
+    </div>
+    <div class="keys">
+      <span><i class="s5"></i>Input + app logic <b>1.0 ms</b></span>
+      <span><i class="s1"></i>LVGL render <b>8.0 ms</b></span>
+      <span><i class="s6"></i>Custom viz draw <b>3.0 ms</b></span>
+      <span><i class="s4"></i>Slack before vsync <b>4.7 ms</b></span>
+    </div>
+  </div>
+  <p class="muted">These are targets, not measurements. Phase 0 measures fill and blit rates with framebuffers in PSRAM and in internal SRAM, then fixes the pixel format. Preferred outcome: 32-bit buffers for band-free gradients. Fallback: dithered RGB565 double buffer in internal SRAM. The performance HUD and the Flight Deck show the measured frame-time distribution, including the worst frame.</p>
+</section>
+
+<section>
+  <span class="eyebrow">Video</span>
+  <h2>What "YouTube quality" means on this board</h2>
+  <p>The panel is 800 x 480, so the ceiling is 480p class. The plan is full-screen 800 x 480 at 30 fps with 48 kHz stereo sound, instant scrubbing, and no visible compression artifacts. Motion JPEG at about 14 Mbit/s is intra-frame only, so it looks cleaner than typical 480p streaming video and seeks to any frame at once. The board does not talk to YouTube itself: a host service transcodes source files with ffmpeg and streams them over Ethernet.</p>
+  <div class="pipe">
+    <div class="stage"><b>Host transcode</b><span>ffmpeg to MJPEG 4:2:0 + PCM, timestamped chunks</span></div>
+    <div class="stage"><b>TCP over GbE</b><span class="t">about 1.8 MB/s</span><br><span>into a 1 s jitter buffer in PSRAM</span></div>
+    <div class="stage"><b>JPEG codec</b><span class="t">target &lt; 8 ms</span><br><span>hardware decode to YCbCr blocks</span></div>
+    <div class="stage"><b>DMA2D</b><span class="t">target &lt; 5 ms</span><br><span>YCbCr to RGB into the video plane</span></div>
+    <div class="stage"><b>LTDC blend</b><span>flip at vsync, UI plane on top</span></div>
+    <div class="stage"><b>Audio</b><span>PCM to SAI to WM8904; the audio clock is the master, video follows</span></div>
+  </div>
+  <ul>
+    <li><b>Offline loop.</b> About one minute of video stored in XSPI flash plays with no host attached, so the demo survives an unplugged cable.</li>
+    <li><b>Stats for nerds.</b> Bitrate, decode time, buffer health, and dropped frames, measured live.</li>
+    <li><b>Sound.</b> Comes out of the board's audio jack. Headphones or powered speakers are needed.</li>
+  </ul>
+</section>
+
+<section>
+  <span class="eyebrow">Memory</span>
+  <h2>Where things live</h2>
+  <p>Each bar is drawn to its own scale. The NOR layout replaces Zephyr's stock 1.5 MB application slots; PSRAM figures assume the 32-bit framebuffer option wins the Phase 0 bake-off.</p>
+  <div class="barblock">
+    <div class="barhead"><span>XSPI NOR flash at 0x7000_0000</span><span>128 MB</span></div>
+    <div class="bar" role="img" aria-label="NOR flash layout">
+      <span class="s5" style="width:0.4%"></span><span class="s1" style="width:3.1%"></span><span class="s2" style="width:3.1%"></span><span class="s6" style="width:12.5%"></span><span class="s7" style="width:78.1%"></span><span class="s4" style="width:2.8%"></span>
+    </div>
+    <div class="keys">
+      <span><i class="s5"></i>MCUboot <b>64 KB</b></span><span><i class="s1"></i>App slot 0 <b>4 MB</b></span><span><i class="s2"></i>App slot 1 <b>4 MB</b></span><span><i class="s6"></i>UI assets <b>16 MB</b></span><span><i class="s7"></i>Offline video <b>100 MB</b></span><span><i class="s4"></i>Settings + spare <b>3.9 MB</b></span>
+    </div>
+  </div>
+  <div class="barblock">
+    <div class="barhead"><span>HexaSPI PSRAM at 0x9000_0000</span><span>32 MB</span></div>
+    <div class="bar" role="img" aria-label="PSRAM layout">
+      <span class="s1" style="width:9.4%"></span><span class="s2" style="width:9.4%"></span><span class="s7" style="width:25%"></span><span class="s6" style="width:25%"></span><span class="s3" style="width:6.2%"></span><span class="s5" style="width:12.5%"></span><span class="s4" style="width:12.5%"></span>
+    </div>
+    <div class="keys">
+      <span><i class="s1"></i>UI framebuffers <b>3 MB</b></span><span><i class="s2"></i>Video frames <b>3 MB</b></span><span><i class="s7"></i>Stream buffer <b>8 MB</b></span><span><i class="s6"></i>Explorer dataset <b>8 MB</b></span><span><i class="s3"></i>Waterfall history <b>2 MB</b></span><span><i class="s5"></i>Image cache <b>4 MB</b></span><span><i class="s4"></i>Free <b>4 MB</b></span>
+    </div>
+  </div>
+  <div class="barblock">
+    <div class="barhead"><span>Internal SRAM at 0x3400_0000</span><span>4.2 MB</span></div>
+    <div class="bar" role="img" aria-label="Internal SRAM layout">
+      <span class="s1" style="width:48%"></span><span class="s6" style="width:42%"></span><span class="s4" style="width:10%"></span>
+    </div>
+    <div class="keys">
+      <span><i class="s1"></i>AXISRAM1-2: data, stacks, LVGL heap, net buffers <b>about 2 MB</b></span><span><i class="s6"></i>AXISRAM3-6: fast draw buffers, fallback framebuffers <b>1.75 MB</b></span><span><i class="s4"></i>Other regions</span>
+    </div>
+  </div>
+  <p class="muted">Internal SRAM region sizes are from the reference manual and get confirmed against the linker map in Phase 0. The last 32 bytes of PSRAM stay unused (ST errata ES0620, already handled in Zephyr's devicetree).</p>
+</section>
+
+<section>
+  <span class="eyebrow">Network</span>
+  <h2>What the Ethernet link does</h2>
+  <div class="scroll"><table>
+    <tr><th>Service</th><th>Runs on</th><th>Purpose</th></tr>
+    <tr><td class="k">DHCP, mDNS, SNTP</td><td>Board</td><td>Address, the name <code>n6demo.local</code>, and wall-clock time for the status bar.</td></tr>
+    <tr><td class="k">Web remote</td><td>Board, port 80</td><td>A page served by the board: switch screens from a phone, read live telemetry over WebSocket.</td></tr>
+    <tr><td class="k">Screenshot endpoint</td><td>Board</td><td><code>/fb.bmp</code> returns the composed frame. It is also how I check my own work without seeing the panel.</td></tr>
+    <tr><td class="k">Media stream</td><td>Host to board</td><td>Transcoded video and audio. Seek, pause, and title selection travel back as control messages.</td></tr>
+    <tr><td class="k">Host telemetry</td><td>Host to board</td><td>PC load, memory, and network counters for the Host Link screen.</td></tr>
+    <tr><td class="k">Firmware update</td><td>Host to board</td><td>MCUmgr over UDP into app slot 1, so later builds need no hands on the board.</td></tr>
+  </table></div>
+  <p class="muted">The host companion is one Python service with a <code>run.cmd</code>, on a port taken from the shared registry (8783 is next free). It must accept connections from the board, which means one Windows firewall prompt. The board's web page has no login and is meant for a trusted LAN.</p>
+</section>
+
+<section>
+  <span class="eyebrow">Method</span>
+  <h2>Build loop and verification</h2>
+  <div class="two">
+    <div>
+      <h3>Getting code onto the board</h3>
+      <p>The N6 boot ROM picks its source from the BOOT1 switch, and the proven flash path needs development-boot mode. To avoid asking you to flip a switch on every build, Phase 0 tries leaving the board in development-boot mode: write the app to XSPI flash over SWD, then start MCUboot from RAM through the debugger. Once Ethernet works, updates go over the network instead. You flip BOOT1 once at the end for stand-alone power-up.</p>
+    </div>
+    <div>
+      <h3>How I check a screen I cannot see</h3>
+      <ul>
+        <li><b>Framebuffer readback.</b> Screenshots over Ethernet after every build, compared against the previous good frame.</li>
+        <li><b>Host simulator.</b> The same UI code compiled for the PC renders reference frames without hardware.</li>
+        <li><b>On-board counters.</b> Frame-time percentiles, dropped frames, decode times, logged over serial and HTTP.</li>
+        <li><b>Host tests.</b> DSP, decimation, and stream parsing run as unit tests on the PC.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="callout">
+    <h3>What still needs your eyes and ears</h3>
+    <p>Readback proves what was rendered, not what the panel shows. Tearing, motion smoothness, panel color, touch feel, and audio quality need a person. Each phase ends with a short checklist for you, five items or fewer.</p>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">Sequence</span>
+  <h2>Phases and exit criteria</h2>
+  <p>Each phase ends in a build that runs on the board. Phase 0 exists to retire the risks before any screen is designed.</p>
+  <div class="scroll"><table class="phase">
+    <tr><th>Phase</th><th>Work</th><th>Done when</th></tr>
+    <tr><td>P0 Spikes</td><td>West workspace, MCUboot + app boot, color bars, touch coordinates, DHCP and ping, hands-free load, framebuffer readback, memory bake-off, one hardware-decoded JPEG frame.</td><td>A screenshot of the panel arrives on the host over Ethernet, and the fill-rate table picks the pixel format.</td></tr>
+    <tr><td>P1 Platform</td><td>Two-plane display driver with vsync swap, LVGL integration, frame pacing, telemetry, design tokens, fonts, components, screen manager, host simulator.</td><td>Two placeholder screens swap with a spring transition at a measured 60 fps; simulator frames match the board.</td></tr>
+    <tr><td>P2 Core screens</td><td>Home, Flight Deck, Touch Lab, performance HUD.</td><td>Worst frame under 16.7 ms across a 10 minute interaction log.</td></tr>
+    <tr><td>P3 Data viz</td><td>Signal Lab (microphone, FFT, waterfall, scope) and Explorer (LOD pyramid, pan, zoom, cursors).</td><td>A played test tone lands in the correct FFT bin; a full-range zoom on one million samples holds frame rate.</td></tr>
+    <tr><td>P4 Network</td><td>Host companion, Host Link screen, web remote, firmware update over UDP.</td><td>A phone on the LAN switches screens; a new build installs with no cable touched.</td></tr>
+    <tr><td>P5 Video</td><td>Stream protocol, decode path, A/V sync, Cinema UI, offline loop in flash.</td><td>Ten minutes of 480p30 with sound: no dropped frames, audio offset within 40 ms.</td></tr>
+    <tr><td>P6 Polish</td><td>Attract mode, motion tuning, error states (cable pulled, host gone), soak test, stand-alone boot, README and project notes.</td><td>An 8 hour unattended run with no reset, no leak, and no frame-time drift.</td></tr>
+    <tr><td>P7 Stretch</td><td>Camera preview with NPU object detection as a ninth screen, if the camera module is fitted and you want it.</td><td>Agreed separately.</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <span class="eyebrow">Risk</span>
+  <h2>What could go wrong, and the fallback</h2>
+  <div class="scroll"><table>
+    <tr><th>Risk</th><th>Level</th><th>Fallback</th></tr>
+    <tr><td class="k">Hands-free load fails</td><td><span class="pill warn">medium</span></td><td>An earlier attempt on this board to flash without the switch did not work. If the RAM-start route also fails, you flip BOOT1 per flash until network update is up.</td></tr>
+    <tr><td class="k">PSRAM too slow for 32-bit frames</td><td><span class="pill warn">medium</span></td><td>RGB565 double buffer in internal SRAM with ordered dithering on gradients.</td></tr>
+    <tr><td class="k">JPEG decode path</td><td><span class="pill warn">medium</span></td><td>Zephyr 4.4.0's JPEG driver only encodes, so decode calls the ST HAL directly, modelled on ST's example. If hardware decode misbehaves, drop to half resolution in software.</td></tr>
+    <tr><td class="k">Audio output wiring</td><td><span class="pill warn">medium</span></td><td>The codec and SAI drivers exist upstream but this board's devicetree does not connect them. If it stalls, video ships silent with an on-screen level meter and audio becomes a follow-up.</td></tr>
+    <tr><td class="k">MCUboot execute-in-place on N6</td><td><span class="pill info">low</span></td><td>Documented upstream as the default. Alternative is RAM-load mode, which also frees the flash for runtime writes.</td></tr>
+    <tr><td class="k">LVGL too slow for full-screen motion</td><td><span class="pill info">low</span></td><td>Heavy visuals already bypass LVGL and draw straight into the buffer. The NeoChrom GPU library ships in the LVGL tree as optional acceleration, off the critical path.</td></tr>
+    <tr><td class="k">Ethernet throughput</td><td><span class="pill info">low</span></td><td>Video needs under 2 percent of a gigabit link. If the driver stalls under load, lower the bitrate or play from flash.</td></tr>
+    <tr><td class="k">Scope</td><td><span class="pill warn">medium</span></td><td>Eight screens is a lot. The order above ships the strongest material first; Explorer and Host Link are the ones to cut if time runs short.</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <span class="eyebrow">Your call</span>
+  <h2>Questions before I start</h2>
+  <p>Defaults are what I will do if you just say go.</p>
+  <div class="scroll"><table>
+    <tr><th>#</th><th>Question</th><th>Default</th></tr>
+    <tr><td class="num">1</td><td><b>Install ffmpeg?</b> <code>winget install Gyan.FFmpeg</code></td><td>Needed before Phase 5. Phases 0 to 4 can start without it.</td></tr>
+    <tr><td class="num">2</td><td><b>May I overwrite the board's flash?</b> It probably holds the audio-visualizer build from the sibling project, whose source stays untouched.</td><td>No default. I will not write to the board without a yes.</td></tr>
+    <tr><td class="num">3</td><td><b>Can you set BOOT1 high (development boot) and leave it?</b> And are you near the board for the odd reset?</td><td>BOOT1 high for the whole build-out; I aim for zero further switch flips.</td></tr>
+    <tr><td class="num">4</td><td><b>Which video content?</b></td><td>Blender Foundation open films (Creative Commons), downloaded from their official source. Your own files work too.</td></tr>
+    <tr><td class="num">5</td><td><b>Is anything plugged into the audio jack?</b></td><td>Build audio out and assume headphones or powered speakers at demo time.</td></tr>
+    <tr><td class="num">6</td><td><b>Is the camera module fitted, and do you want the camera + NPU screen?</b></td><td>Left as the Phase 7 stretch.</td></tr>
+    <tr><td class="num">7</td><td><b>Is a microSD card in the slot?</b></td><td>Not required. Offline video lives in XSPI flash.</td></tr>
+    <tr><td class="num">8</td><td><b>Git.</b></td><td>Local repository in this folder, no remote and no push until you ask. No attribution trailers in commits.</td></tr>
+  </table></div>
+</section>
+
+<footer>Plan drawn from a survey of this host and the Zephyr 4.4.0 tree on 2026-11-14. Performance figures are targets until Phase 0 measures them.</footer>
+
+</div>

@@ -1,0 +1,34 @@
+# west manifest for the STM32N6570-DK graphics demo.
+# T3 topology: the project root is the west workspace, this app holds the
+# manifest, Zephyr and its modules are cloned beside it by `west update`.
+#
+# Pinned to v4.4.0, the same tag the sibling STM32N6570-DK project boots.
+# STM32N6 support on main still churns; bump deliberately, not by default.
+manifest:
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: v4.4.0
+      import:
+        name-allowlist:
+          - cmsis
+          - cmsis_6
+          - cmsis-dsp
+          - hal_stm32
+          - hal_st
+          - picolibc
+          - segger
+          - mbedtls
+          - mbedtls-3.6
+          - tf-psa-crypto
+          - mcuboot
+          - zcbor
+          - lvgl
+          - littlefs
+
+  self:
+    path: app
