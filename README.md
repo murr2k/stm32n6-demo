@@ -189,6 +189,7 @@ tools/
   tour.py               automated review
   fuzz_player.py        random abuse of the video player through injected touches
   acap.py               record the DAC feed as a WAV file, count discontinuities
+  dataset.py            move Explorer's data set from PSRAM into the flash
   gen_fonts.py          TTF to LVGL bitmap fonts (needs npm install in tools/fontconv)
   n6v.py                encode video clips; upload them to the card, or pack and flash them
   gdbrun.ps1            scripted ST-LINK gdbserver + GDB session for bring-up
@@ -203,7 +204,7 @@ captures/               screenshots and logs pulled off the board (not committed
 | Home | A tile per screen; each thumbnail is drawn live by that screen's code. Two rows of four; more screens go into further columns that pan in under the finger and come to rest on a column | 5.4 / 6.4 ms |
 | Flight Deck | Frame time, CPU share per thread, heaps, Ethernet rates: the board measuring itself | 2.9 / 7.9 ms |
 | Signal Lab | Triggered scope, log-frequency spectrum with peak hold and cursor, waterfall; one 1024-point Helium FFT per frame (about 220 us) | 7.8 / 10.2 ms |
-| Explorer | 2^20 samples x 4 channels with a min/max pyramid in PSRAM; pan, pinch, cursor, auto tour | 11.1 / 14.5 ms while it zooms, 3 ms at rest |
+| Explorer | 2^20 samples x 4 channels with a min/max pyramid, used in place from the flash; pan, pinch, cursor, auto tour | 11.1 / 14.5 ms while it zooms, 3 ms at rest |
 | Touch Lab | Five contacts with trails, crosshairs, distance, report rate, touch-to-swap time | 1.7 / 2.4 ms |
 | Host Link | A PC's per-core CPU load as a scrolling heat map, memory, network throughput and datagram round-trip time, pushed over UDP by `run.cmd` | 6.7 / 10.0 ms |
 | Core Map | The same PC's logical processors as posts on a floor plan of its chip (P-cores, E-cores, SMT threads), height and colour by load. Drag to orbit, pinch to zoom and pan, tap a post, double tap to reset. Software 3D: projected in floating point, filled as anti-aliased quads, no depth buffer | 6.8 / 7.7 ms; 12 ms with every post at 100 % |
@@ -227,6 +228,20 @@ Signal Lab's source is a built-in signal generator and Explorer's dataset is
 synthetic; both are labelled as such on screen. Everything on Flight Deck is
 measured.
 
+Explorer's 14 MB (the samples and their pyramid) used to be generated into
+PSRAM at every start, which made it the largest holder of the 32 MB by far.
+It is read-only, so it now lies in the last 16 MB of the flash and is used
+where it lies: PSRAM in use went from 25.3 to 11.6 MB and the 1.5 s of
+generating became a 0.44 s checksum. Reading it from the flash costs nothing
+that shows: the worst frame is 14.1 ms in the zoom tour (13.8 ms from PSRAM)
+and 12.3 ms under gestures (12.0 ms). A board without the copy generates the
+data into PSRAM as before, and that is also where the copy comes from:
+
+```powershell
+.\.venv\Scripts\python.exe tools\dataset.py pull -o media\out\dataset.bin   # read it out of the running board, checksum verified (1 min)
+.\.venv\Scripts\python.exe tools\dataset.py flash media\out\dataset.bin     # write it to the flash over SWD (1.5 min), then n6.cmd run
+.\.venv\Scripts\python.exe tools\dataset.py info                            # flash or generated, checksum
+```
 ### Navigation, transitions, attract mode
 
 Swipe in from the left or right edge to step between screens, tap a Home tile
@@ -250,7 +265,8 @@ touch hands control back. `ctl.py attract` starts it immediately.
 
 Clips are Motion JPEG with 48 kHz stereo PCM in a small container (`.n6v`,
 described in `app/src/media/player.h`). They live in two places: a media
-partition of the XSPI flash at `0x7042_0000`, and `/clips` on a microSD card.
+partition of the XSPI flash at `0x7042_0000` (108 MB, up to Explorer's data
+set at `0x7700_0000`), and `/clips` on a microSD card.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install skia-python     # once, for the film renderer

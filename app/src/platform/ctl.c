@@ -16,6 +16,7 @@
 
 #include "audio.h"
 #include "ctl.h"
+#include "dsp/dataset.h"
 #include "media/player.h"
 #include "media/sdcard.h"
 #include "gfx.h"
@@ -200,6 +201,8 @@ static int handle(char *line, char *out, size_t out_len)
 				h->n_frames, h->title);
 	} else if (!strcmp(cmd, "play") && n >= 2) {
 		post(CTL_PLAY, a[0]);
+	} else if (!strcmp(cmd, "ds")) {
+		return ds_info(out, out_len);
 	} else if (!strcmp(cmd, "hometiles") && n >= 2) {
 		post(CTL_HOME_TILES, a[0]);
 	} else if (!strcmp(cmd, "home")) {

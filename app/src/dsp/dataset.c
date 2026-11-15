@@ -4,9 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <math.h>
+#include <stdio.h>
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/crc.h>
 
 #include <arm_math.h>
 
@@ -18,9 +20,32 @@ LOG_MODULE_REGISTER(dataset, LOG_LEVEL_INF);
 #define TWO_PI 6.28318530718f
 #define CHUNK  4096
 
-static int16_t *raw[DS_CH];
-static struct ds_node *lvl[DS_CH][DS_LEVELS];
-static volatile bool ready;
+/* The data and its pyramid are one block: per channel the samples, then the
+ * five levels. It is used where it lies. Normally that is the flash, at
+ * DS_FLASH_ADDR behind a struct ds_blob: 14 MB that cost no RAM and no
+ * time at boot beyond a checksum. Without a valid copy there, the block is
+ * generated into PSRAM as it always was, and tools/dataset.py can read it
+ * out of the running board and put it into the flash.
+ */
+#define DS_FLASH_ADDR 0x77000000u /* the last 16 MB of the 128 MB flash */
+#define DS_MAGIC      0x5344364eu /* "N6DS" */
+#define DS_VERSION    1u
+#define DS_PYR_NODES  (DS_N / 4 + DS_N / 16 + DS_N / 64 + DS_N / 256 + DS_N / 1024)
+#define DS_BYTES      (DS_CH * (DS_N * sizeof(int16_t) + DS_PYR_NODES * sizeof(struct ds_node)))
+BUILD_ASSERT(DS_LEVELS == 5);
+
+struct ds_blob {
+	uint32_t magic, version, n, ch, levels;
+	uint32_t bytes; /* of the block that follows */
+	uint32_t crc;   /* CRC-32 (IEEE) of the block */
+	uint32_t rsvd;
+};
+
+static const int16_t *raw[DS_CH];
+static const struct ds_node *lvl[DS_CH][DS_LEVELS];
+static const uint8_t *block;
+static uint32_t block_crc;
+static bool from_flash;static volatile bool ready;
 static volatile uint32_t done_samples;
 static uint32_t build_ms;
 static uint32_t rng = 0x9e3779b9;
@@ -129,7 +154,7 @@ static void build_pyramid(int ch)
 {
 	uint32_t n = DS_N / 4;
 	const int16_t *s = raw[ch];
-	struct ds_node *d = lvl[ch][0];
+	struct ds_node *d = (struct ds_node *)lvl[ch][0]; /* in PSRAM here: writable */
 
 	for (uint32_t k = 0; k < n; k++, s += 4) {
 		int16_t lo = MIN(MIN(s[0], s[1]), MIN(s[2], s[3]));
@@ -142,7 +167,7 @@ static void build_pyramid(int ch)
 		const struct ds_node *src = lvl[ch][l - 1];
 
 		n /= 4;
-		d = lvl[ch][l];
+		d = (struct ds_node *)lvl[ch][l];
 		for (uint32_t k = 0; k < n; k++, src += 4) {
 			d[k].lo = MIN(MIN(src[0].lo, src[1].lo), MIN(src[2].lo, src[3].lo));
 			d[k].hi = MAX(MAX(src[0].hi, src[1].hi), MAX(src[2].hi, src[3].hi));
@@ -151,28 +176,83 @@ static void build_pyramid(int ch)
 	}
 }
 
+/* Where each array is inside a block. */
+static void point_at(const uint8_t *b)
+{
+	block = b;
+	for (int ch = 0; ch < DS_CH; ch++) {
+		raw[ch] = (const int16_t *)b;
+		b += DS_N * sizeof(int16_t);
+		for (int l = 0, n = DS_N / 4; l < DS_LEVELS; l++, n /= 4) {
+			lvl[ch][l] = (const struct ds_node *)b;
+			b += n * sizeof(struct ds_node);
+		}
+	}
+}
+
+static uint32_t block_checksum(const uint8_t *b, bool progress)
+{
+	uint32_t crc = 0;
+
+	for (uint32_t at = 0; at < DS_BYTES; at += KB(64)) {
+		crc = crc32_ieee_update(crc, b + at, MIN(KB(64), DS_BYTES - at));
+		if (progress) {
+			done_samples = (uint32_t)((uint64_t)at * (DS_N * DS_CH) / DS_BYTES);
+		}
+		k_yield();
+	}
+	return crc;
+}
+
+static bool use_flash_copy(void)
+{
+	const struct ds_blob *h = (const struct ds_blob *)DS_FLASH_ADDR;
+
+	if (h->magic != DS_MAGIC || h->version != DS_VERSION || h->n != DS_N || h->ch != DS_CH ||
+	    h->levels != DS_LEVELS || h->bytes != DS_BYTES) {
+		return false;
+	}
+	block_crc = block_checksum((const uint8_t *)(h + 1), true);
+	if (block_crc != h->crc) {
+		LOG_WRN("the copy in flash at 0x%08x is damaged (checksum %08x, expected %08x)", DS_FLASH_ADDR,
+			block_crc, h->crc);
+		return false;
+	}
+	point_at((const uint8_t *)(h + 1));
+	from_flash = true;
+	return true;
+}
+
 static void build_thread(void *p1, void *p2, void *p3)
 {
 	static float (*const fn[DS_CH])(struct gen *, uint32_t) = {gen_vibration, gen_current,
 								   gen_pressure, gen_pwm};
 	uint32_t t0 = k_uptime_get_32();
 
-	for (int ch = 0; ch < DS_CH; ch++) {
-		raw[ch] = psram_alloc(DS_N * sizeof(int16_t), 32);
-		for (int l = 0, n = DS_N / 4; l < DS_LEVELS; l++, n /= 4) {
-			lvl[ch][l] = psram_alloc(n * sizeof(struct ds_node), 32);
-		}
-		if (raw[ch] == NULL || lvl[ch][DS_LEVELS - 1] == NULL) {
-			LOG_ERR("out of PSRAM");
-			return;
-		}
+	if (use_flash_copy()) {
+		build_ms = k_uptime_get_32() - t0;
+		done_samples = DS_N * DS_CH;
+		ready = true;
+		LOG_INF("%u samples x %d channels + pyramid in flash at 0x%08x, checked in %u ms", DS_N, DS_CH,
+			DS_FLASH_ADDR, build_ms);
+		return;
 	}
+
+	uint8_t *mem = psram_alloc(DS_BYTES, 32);
+
+	if (mem == NULL) {
+		LOG_ERR("out of PSRAM");
+		return;
+	}
+	point_at(mem);
+	done_samples = 0;
 	for (int ch = 0; ch < DS_CH; ch++) {
 		struct gen g = {0};
+		int16_t *w = (int16_t *)raw[ch];
 
 		for (uint32_t i = 0; i < DS_N; i += CHUNK) {
 			for (uint32_t j = i; j < i + CHUNK; j++) {
-				raw[ch][j] = (int16_t)(fn[ch](&g, j) * 30000.0f);
+				w[j] = (int16_t)(fn[ch](&g, j) * 30000.0f);
 			}
 			done_samples += CHUNK;
 			k_yield();
@@ -181,9 +261,10 @@ static void build_thread(void *p1, void *p2, void *p3)
 	}
 	build_ms = k_uptime_get_32() - t0;
 	ready = true;
-	LOG_INF("%u samples x %d channels + pyramid built in %u ms", DS_N, DS_CH, build_ms);
-}
-/* Preemptible and below the UI thread: building must not cost a frame. */
+	LOG_INF("%u samples x %d channels + pyramid built in %u ms, in PSRAM (no copy in flash: tools/dataset.py)",
+		DS_N, DS_CH, build_ms);
+	block_crc = block_checksum(mem, false); /* for the tool that reads it out */
+}/* Preemptible and below the UI thread: building must not cost a frame. */
 K_THREAD_DEFINE(ds_build, 4096, build_thread, NULL, NULL, NULL, 12, 0, 1500);
 
 bool ds_ready(void)
@@ -199,6 +280,18 @@ int ds_progress_pct(void)
 uint32_t ds_build_ms(void)
 {
 	return build_ms;
+}
+
+int ds_info(char *buf, size_t len)
+{
+	return snprintf(buf, len, "ready=%d source=%s addr=0x%08x bytes=%u crc=%08x ms=%u\n", ready,
+			from_flash ? "flash" : "generated", (unsigned int)(uintptr_t)block, (unsigned int)DS_BYTES,
+			(unsigned int)block_crc, (unsigned int)build_ms);
+}
+
+bool ds_in_flash(void)
+{
+	return from_flash;
 }
 
 const char *ds_name(int ch)

@@ -25,6 +25,7 @@ not to be modified from here.
 .\.venv\Scripts\python.exe tools\fuzz_player.py --secs 120   # random abuse of the video player
 .\.venv\Scripts\python.exe tools\acap.py --secs 2 -o captures\x.wav --clicks "tap 40 444"   # record the DAC feed while commands run, count discontinuities
 .\.venv\Scripts\python.exe tools\n6v.py upload media\out\n6_film.n6v   # clip to the microSD card over Ethernet (4 MB/s); also ls, rm, df
+.\.venv\Scripts\python.exe tools\dataset.py info   # Explorer's data set: must say "source flash"; pull + flash put it there
 .\run.cmd                   # host companion: live data for Host Link and Core Map
 ```
 
@@ -70,11 +71,16 @@ not to be modified from here.
   first 2 MB reserved for the screenshot copy. Budget, measured 2026-11-15:
   internal RAM 771 of 840 KB (LVGL pool 256 KB, heap 64 KB, the card's two
   32 KB I/O buffers, stacks), all screens' LVGL objects are built at boot and
-  kept; PSRAM 25.3 of 32 MB and never freed: Explorer's data set and pyramid
-  13.6 MB, the player 7.0 MB (4 MB read-ahead window, three 576 KB decode
-  buffers, 1 MB index), Cinema 2.4 MB, screenshot 2 MB; code 0.89 MB in a
-  1.5 MB slot of a 128 MB flash. A new demo with buffers needs a place in
-  this before it is written.
+  kept; PSRAM 11.6 of 32 MB and never freed: the player 7.0 MB (4 MB
+  read-ahead window, three 576 KB decode buffers, 1 MB index), Cinema 2.4 MB,
+  screenshot 2 MB (25.6 MB when Explorer's data set has to be generated
+  because the flash holds no copy); code 0.89 MB in a 1.5 MB slot of a 128 MB
+  flash. A new demo with buffers needs a place in this before it is written.
+- Flash map (128 MB at 0x7000_0000): MCUboot and the two image slots up to
+  0x7041_0000, media partition 0x7042_0000 to 0x7700_0000 (108 MB, 84 MB
+  used), Explorer's data set 0x7700_0000 to the end (16 MB, 14 MB used).
+  Read-only data belongs in flash and is used in place; `tools/dataset.py`
+  (pull, flash, info, erase) is the pattern for getting it there.
 - Media: a clip is either in the flash media partition (read in place) or a
   file in `/SD:/clips` on the microSD card (FAT32 or exFAT, SDMMC2 with its
   internal DMA). A card clip with the same title as a flash clip takes its
@@ -240,9 +246,20 @@ not to be modified from here.
   buffer runs empty, so a plain bulk send moved one 21 KB window per 100 ms:
   0.11 to 0.2 MB/s. With the credits: 4 MB/s, and the card write is no
   longer hidden behind the network (it does 9 to 12 MB/s).
-- **PSRAM is nearly full: 25.3 of 32 MB** (`ctl.py media`, `psram_kb`), 25.9
-  once `acap` has been used (its 576 KB buffer is taken on first use). The
-  read-ahead window is 4 MB for that reason; 8 MB left 2.5 MB free.
+- **Explorer's data set lives in the flash and is used in place; keep it out
+  of PSRAM.** **Why:** generated into PSRAM it held 14 of 32 MB for good
+  (25.3 MB in use, 6.7 free, no room for a camera or NPU demo). From the
+  flash the worst Explorer frame is the same within 0.3 ms (14.1 against
+  13.8 ms in the zoom tour, 12.3 against 12.0 under gestures) and the boot
+  work is a 0.44 s checksum instead of 1.5 s of generating. `ctl.py ds` or
+  `dataset.py info` must say `source flash`; `generated` means the copy is
+  missing or damaged and 14 MB of PSRAM are gone again (the firmware falls
+  back by itself, and the log says so). After a change to the generator or
+  to DS_N: `dataset.py erase`, start, `pull`, `flash`.
+- **PSRAM in use: 11.6 of 32 MB** (`ctl.py media`, `psram_kb`), 12.2 once
+  `acap` has been used (its 576 KB buffer is taken on first use). The
+  read-ahead window was cut from 8 to 4 MB when PSRAM was nearly full; that
+  reason is gone, the 4 MB have been enough (0 stalls).
 - **The player's sound never steps: every change of position (pause, play,
   seek, loop, a finger on the slider) is a 21 ms cross-fade, and whatever
   fades plays from samples already copied to memory** (`audio_source` in

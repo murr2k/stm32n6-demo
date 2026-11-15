@@ -408,7 +408,7 @@ static void tick(uint32_t now_ms)
 	char buf[40];
 
 	if (!ds_ready()) {
-		snprintf(buf, sizeof(buf), "Building dataset  %d %%", ds_progress_pct());
+		snprintf(buf, sizeof(buf), "Preparing dataset  %d %%", ds_progress_pct());
 		lv_label_set_text(l_wait, buf);
 		lv_obj_align(l_wait, LV_ALIGN_CENTER, 0, 0);
 		return;

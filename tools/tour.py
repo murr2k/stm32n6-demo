@@ -448,6 +448,9 @@ def run(a: argparse.Namespace) -> None:
         card_tests(a.host)
     if not a.no_attract:
         attract_test(a.host, a.attract)
+    ds = dict(re.findall(r"(\w+)=(\S+)", send(a.host, ["ds"])[0]))
+    print(f"memory: PSRAM in use {media(a.host)['psram_kb'] / 1000:.1f} of 32 MB; Explorer's data set from "
+          f"{ds['source']}" + ("" if ds["source"] == "flash" else " (14 MB of PSRAM: tools/dataset.py puts it in the flash)"))
     send(a.host, ["screen 0"])
 
 
