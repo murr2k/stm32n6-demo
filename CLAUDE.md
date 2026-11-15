@@ -326,8 +326,12 @@ not to be modified from here.
 
 ## Open questions / known gaps
 
-- Stand-alone boot (BOOT1 = L) has not been tested; it needs the user at the
-  board.
+- Stand-alone boot (BOOT1 = L) works: tried by the user on 2026-11-15, the
+  demo starts by itself after a reset (console: MCUboot from flash, then the
+  application, network up 6.7 s after reset). A board that does not answer
+  and sits in the boot ROM (hot-plug: Rev B, PC 0x1800_xxxx, R3 = 0xCAFEDEAD)
+  was reset or power-cycled in development boot (BOOT1 = H), where nothing
+  starts it again but `n6.cmd run`: that is not a firmware halt.
 - Touch, navigation, motion and colour were checked on the panel by the user on 2026-11-14 (all good). The repository is public: keep host names, serial numbers and personal paths out of committed files.
 - Audio out works and is underrun-free in the automated checks; the sample
   clock is PLL2 (HSI-based), measured 47.6 to 47.7 kHz. Video is slaved to it.

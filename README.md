@@ -371,7 +371,7 @@ and look for isolated steps in both.
 | Touch | 5 points, verified by hand: orientation, multi-touch, pinch and pan |
 | Video | 800 x 480, 30 fps from flash and from the microSD card, no dropped frames in the automated run |
 | Audio out | 48 kHz stereo to the headphone jack, zero underruns in the automated run, checked by ear. The sample clock comes from the HSI-fed PLL2 and measures 47.6 to 47.7 kHz (0.7 % low) |
-| Stand-alone boot (BOOT1 = L) | Not tested, needs a hand on the switch |
+| Stand-alone boot (BOOT1 = L) | Working: with the switch at L the demo starts by itself after a reset (the console shows the boot ROM loading MCUboot from flash, then the application) |
 | Microphone as Signal Lab source | Not started (generator only) |
 | Host Link | Working: 340 of 340 datagrams answered in the test run, 1.4 to 2.9 ms round trip as timed by the host |
 | Web remote, firmware update over the network | Not started |
