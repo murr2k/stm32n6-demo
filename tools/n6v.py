@@ -6,21 +6,39 @@
   pack A.n6v B.n6v -o media.bin    build the media partition image
   flash media.bin                  write it to the board's XSPI flash
 
-The format is documented in app/src/media/player.h.
+  upload A.n6v B.n6v               copy clips to the board's microSD card over Ethernet
+  ls | rm NAME.n6v | df            list or delete clips on the card, free space
+  mount                            mount a card that was put in after the board started
+
+Clips on the card show up in Cinema as soon as the upload ends; one with the
+same title as a clip in flash replaces it in the list. The format is
+documented in app/src/media/player.h, the upload protocol in
+app/src/media/sdcard.h.
 """
 from __future__ import annotations
 
 import argparse
 import glob
 import os
+import re
 import shutil
+import socket
 import struct
 import subprocess
 import sys
 import tempfile
+import time
+import zlib
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ctl import DEFAULT_HOST  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
+MEDIA_PORT = 5558
+# Bytes of an upload per credit from the board (SD_PIECE in sdcard.h, where
+# the reason is: Zephyr's delayed ACK makes a plain bulk send crawl).
+PIECE = 8192
 W, H = 800, 480
 JPEG_PAD = 8
 MEDIA_FLASH_ADDR = 0x70420000
@@ -144,9 +162,123 @@ def cmd_flash(a: argparse.Namespace) -> None:
     print("[n6v] done; restart the board with: n6.cmd run")
 
 
+class Card:
+    """One connection to the board's upload service (tcp/5558)."""
+
+    def __init__(self, host: str, timeout: float = 30.0) -> None:
+        self.s = socket.create_connection((host, MEDIA_PORT), timeout=timeout)
+        self.s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        self.f = self.s.makefile("rb")
+
+    def reply(self) -> tuple[list[str], str]:
+        """Data lines, then the "ok ..." or "err ..." line that ends every reply."""
+        lines: list[str] = []
+        while True:
+            raw = self.f.readline()
+            if not raw:
+                raise ConnectionError("the board closed the connection")
+            line = raw.decode("ascii", "replace").rstrip("\n")
+            if line == "ok" or line.startswith(("ok ", "err ")):
+                return lines, line
+            lines.append(line)
+
+    def ask(self, line: str) -> tuple[list[str], str]:
+        self.s.sendall((line + "\n").encode("ascii"))
+        return self.reply()
+
+    def close(self) -> None:
+        self.s.close()
+
+
+def card_name(path: Path) -> str:
+    """The name a clip gets on the card: the board accepts letters, digits, . _ - only."""
+    name = re.sub(r"[^A-Za-z0-9._-]", "_", path.stem)[:32].lstrip(".") or "clip"
+    return name + ".n6v"
+
+
+def upload(host: str, files: list[str], quiet: bool = False) -> list[tuple[str, int, float]]:
+    """Copy clips to the card. Returns (name, bytes, seconds) per file."""
+    card = Card(host)
+    done = []
+    try:
+        for f in files:
+            data = Path(f).read_bytes()
+            if data[:4] != b"N6V1":
+                sys.exit(f"{f}: not an N6V clip")
+            name = card_name(Path(f))
+            _, r = card.ask(f"put {name} {len(data)} {zlib.crc32(data):08x}")
+            if r != "ok go":
+                sys.exit(f"{name}: {r}")
+            t0 = time.time()
+            view, shown = memoryview(data), -1
+            for pos in range(0, len(data), PIECE):
+                card.s.sendall(view[pos:pos + PIECE])
+                if pos + PIECE <= len(data) and card.f.read(1) != b".":
+                    sys.exit(f"\n{name}: the board stopped the upload: {card.f.readline().decode('ascii', 'replace').strip()}")
+                pct = 100 * min(pos + PIECE, len(data)) // len(data)
+                if not quiet and pct != shown:
+                    shown = pct
+                    print(f"\r{name}: {pct:3d} %", end="", flush=True)
+            _, r = card.reply()
+            secs = time.time() - t0
+            if not r.startswith("ok "):
+                sys.exit(f"\n{name}: {r}")
+            if not quiet:
+                part = r.split()
+                split = f" (board: {int(part[3]) / 1000:.1f} s receiving, {int(part[4]) / 1000:.1f} s writing)" if len(part) >= 5 else ""
+                print(f"\r{name}: {len(data) / 1e6:.1f} MB in {secs:.1f} s, {len(data) / 1e6 / secs:.2f} MB/s, checksum verified{split}")
+            done.append((name, len(data), secs))
+    finally:
+        card.close()
+    return done
+
+
+def cmd_upload(a: argparse.Namespace) -> None:
+    upload(a.host, a.files)
+
+
+def cmd_ls(a: argparse.Namespace) -> None:
+    card = Card(a.host)
+    lines, r = card.ask("list")
+    card.close()
+    if not r.startswith("ok"):
+        sys.exit(r)
+    for line in lines:
+        _, name, size = line.split()
+        print(f"{int(size) / 1e6:8.1f} MB  {name}")
+    print(f"{len(lines)} file(s) in /clips on the card")
+
+
+def cmd_rm(a: argparse.Namespace) -> None:
+    card = Card(a.host)
+    for name in a.names:
+        print(f"{name}: {card.ask(f'del {name}')[1]}")
+    card.close()
+
+
+def cmd_df(a: argparse.Namespace) -> None:
+    card = Card(a.host, timeout=120.0)  # a FAT32 card may have to count its free clusters
+    print(card.ask("df")[1])
+    card.close()
+
+
+def cmd_mount(a: argparse.Namespace) -> None:
+    card = Card(a.host)
+    print(card.ask("mount")[1])
+    card.close()
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
+    for name, fn in (("upload", cmd_upload), ("ls", cmd_ls), ("rm", cmd_rm), ("df", cmd_df), ("mount", cmd_mount)):
+        c = sub.add_parser(name)
+        c.add_argument("--host", default=DEFAULT_HOST)
+        if name == "upload":
+            c.add_argument("files", nargs="+")
+        elif name == "rm":
+            c.add_argument("names", nargs="+")
+        c.set_defaults(fn=fn)
     e = sub.add_parser("encode")
     e.add_argument("input")
     e.add_argument("-o", "--output", required=True)

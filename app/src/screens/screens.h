@@ -21,4 +21,7 @@ extern const struct screen screen_hostlink;
 extern const struct screen screen_coremap;
 extern const struct screen screen_specimen;
 
+/* Cinema: open clip number `clip` once that screen is showing (remote control). */
+void cinema_play(int clip);
+
 #endif

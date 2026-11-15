@@ -29,6 +29,7 @@ manifest:
           - zcbor
           - lvgl
           - littlefs
+          - fatfs
 
   self:
     path: app

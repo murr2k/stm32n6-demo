@@ -7,6 +7,10 @@
  *   attract                    start attract mode now
  *   stats                      one line of frame statistics
  *   video                      one line of player status
+ *   media                      the clip list and the SD card
+ *   clip <n>                   clip n: its file on the card, frames, title
+ *   card <0|1>                 list the card's clips or only the flash ones
+ *   play <n>                   go to Cinema and open clip n
  *   audio                      DAC half-buffer count and underruns
  *   tone <hz> <ms>             test tone at -12 dBFS
  *   volume <0..100>            headphone volume
@@ -28,6 +32,7 @@ enum ctl_cmd {
 	CTL_SCREEN,
 	CTL_HUD,
 	CTL_ATTRACT,
+	CTL_PLAY,
 };
 
 /* UI thread: fetch the next pending UI command, if any. */

@@ -4,9 +4,10 @@
 Visits every screen, lets it run, records frame statistics and a screenshot,
 then exercises the multi-touch paths with injected contacts (Touch Lab,
 Explorer, Core Map), checks that touch releases never change screen, runs a
-set of screen transitions, audio and video playback, and one lap of attract
+set of screen transitions, audio and video playback from flash, an upload to
+the microSD card with playback and seeks from it, and one lap of attract
 mode. host/companion.py is started for the run so Host Link and Core Map
-show live data. Output goes to captures/tour/. Takes about six minutes.
+show live data. Output goes to captures/tour/. Takes about seven minutes.
 
 Usage: tour.py [--host IP] [--screens home,deck,...] [--no-touch] [--no-media] [--no-attract]
 """
@@ -56,6 +57,39 @@ def kv(host: str, cmd: str) -> dict[str, float]:
     return {k: float(v) for k, v in re.findall(r"(\w+)=([\d.]+)", send(host, [cmd])[0])}
 
 
+def use_card(host: str, on: bool) -> None:
+    """List the card's clips or only the flash ones, and wait until the gallery has followed."""
+    send(host, [f"card {int(on)}"])
+    for _ in range(40):
+        time.sleep(0.25)
+        if (media(host)["card_clips"] > 0) == on:
+            break
+    time.sleep(1.0)  # thumbnails
+
+
+def video_test(host: str) -> None:
+    send(host, [f"screen {SCREENS.index('cinema')}"])
+    time.sleep(1.0)
+    send(host, ["tap 140 200"])  # first clip card
+    time.sleep(2.0)
+    send(host, ["reset"])
+    v0, g0, t0 = kv(host, "video"), stats(host), time.time()
+    time.sleep(6.0)
+    v1, g1, t1 = kv(host, "video"), stats(host), time.time()
+    source = "card" if v1.get("card") else "flash"
+    grab(host).save(OUT / f"v1-cinema-playing-{source}.png")
+    if v1.get("open"):
+        print(f"video from {source}: {(v1['frame'] - v0['frame']) / (t1 - t0):.2f} fps over {t1 - t0:.1f} s, "
+              f"decode {v1['decode_us'] / 1000:.1f} ms, convert {v1['convert_us'] / 1000:.1f} ms, "
+              f"{v1['kbps'] / 1000:.1f} Mbit/s, player dropped {int(v1['dropped'] - v0['dropped'])}, "
+              f"UI dropped {int(g1['dropped'] - g0['dropped'])}, stalls {int(v1.get('stalls', 0))}, "
+              f"clock {'audio' if v1['audio_clock'] else 'system'}")
+    else:
+        print("video: no clip opened (is the media partition flashed, or a clip on the card?)")
+    send(host, ["tap 400 240", "sleep 0.4", "tap 40 26"])  # show the overlay, then Back
+    time.sleep(0.8)
+
+
 def media_tests(host: str) -> None:
     """Audio sample clock and video playback rate, measured against the host clock."""
     a0, t0 = kv(host, "audio"), time.time()
@@ -67,24 +101,138 @@ def media_tests(host: str) -> None:
     else:
         print("audio: not running")
 
-    send(host, [f"screen {SCREENS.index('cinema')}"])
-    time.sleep(1.0)
-    send(host, ["tap 140 200"])  # first clip card
-    time.sleep(2.0)
+    # The first clip, from flash and then, if the card holds a copy of it (same
+    # title), from the card: "card 0" takes the card's clips out of the list.
+    on_card = media(host).get("card_clips", 0) > 0
+    try:
+        if on_card:
+            use_card(host, False)
+        video_test(host)
+        if on_card:
+            use_card(host, True)
+            if media(host)["first_card"] == 0:
+                video_test(host)
+    finally:
+        if on_card:
+            send(host, ["card 1"])
+
+    # Opening a clip and leaving it again (Back while a frame is being decoded)
+    # must not cost the UI a frame either.
+    send(host, ["reset"])
+    g0 = stats(host)
+    for _ in range(3):
+        send(host, ["tap 140 200", "sleep 1.3", "tap 40 26", "sleep 0.7"])
+    g1 = stats(host)
+    print(f"open and close a clip, 3 times: frame worst {g1['render_worst_us'] / 1000:.2f} ms, "
+          f"dropped {int(g1['dropped'] - g0['dropped'])}, now on {where(host)[0]}")
+
+
+def media(host: str) -> dict[str, int]:
+    return {k: int(v) for k, v in re.findall(r"(\w+)=(-?\d+)", send(host, ["media"])[0])}
+
+
+def card_tests(host: str) -> None:
+    """Clips on the microSD card: an upload, playback through the read-ahead window, seeks."""
+    import n6v
+
+    m = media(host)
+    if not m.get("mounted"):
+        print("card: no microSD card mounted, skipped")
+        return
+    clip = OUT / "card-test.n6v"
+    if not clip.exists():
+        # an 8 s test pattern with a tone, made once: nothing in the repository is needed
+        subprocess.run([sys.executable, str(ROOT / "tools" / "n6v.py"), "encode", "testsrc2=size=800x480:rate=30",
+                        "--lavfi", "--duration", "8", "--audio-lavfi", "sine=frequency=440:sample_rate=48000",
+                        "--title", "Card test", "-o", str(clip)], capture_output=True)
+    if clip.exists():
+        # Uploaded while Signal Lab runs: the upload itself must not cost the UI a frame.
+        # The gallery rebuild that follows decodes the new clip's thumbnail on the
+        # UI thread and is allowed to; it is counted separately.
+        send(host, [f"screen {SCREENS.index('siglab')}"])
+        time.sleep(1.5)
+        send(host, ["reset"])
+        g0, a0 = stats(host), kv(host, "audio")
+        name, size, secs = n6v.upload(host, [str(clip)], quiet=True)[0]
+        g1 = stats(host)
+        time.sleep(2.0)
+        g2, a1 = stats(host), kv(host, "audio")
+        print(f"card upload: {name}, {size / 1e6:.1f} MB at {size / 1e6 / secs:.2f} MB/s, checksum verified; "
+              f"UI dropped {int(g1['dropped'] - g0['dropped'])} while receiving, "
+              f"{int(g2['dropped'] - g1['dropped'])} in the gallery rebuild, "
+              f"audio underruns {int(a1.get('errors', 0) - a0.get('errors', 0))}")
+        m = media(host)
+    else:
+        print("card upload: could not make the test clip (is ffmpeg installed?), skipped")
+    if m["first_card"] < 0:
+        print("card: no clips on it, playback skipped")
+        return
+    # play the test clip if it is there, else the first clip that is read from the card
+    index = m["first_card"]
+    for i in range(m["clips"]):
+        if send(host, [f"clip {i}"])[0].split()[0] == f"file={n6v.card_name(clip)}":
+            index = i
+    try:
+        card_playback(host, m, index)
+    finally:
+        if clip.exists():
+            # leave the card as it was: the test clip does not belong in the gallery
+            card = n6v.Card(host)
+            r = card.ask(f"del {n6v.card_name(clip)}")[1]
+            card.close()
+            time.sleep(1.5)
+            print(f"card cleanup: test clip removed ({r}), {media(host)['clips']} clips listed")
+
+
+def card_playback(host: str, m: dict[str, int], index: int) -> None:
+    # the test clip is 8 s long: measure and start seeking before it ends
+    send(host, [f"play {index}"])
+    time.sleep(1.5)
+    first_us = kv(host, "video").get("seek_us", 0)
     send(host, ["reset"])
     v0, g0, t0 = kv(host, "video"), stats(host), time.time()
-    time.sleep(6.0)
+    time.sleep(4.0)
     v1, g1, t1 = kv(host, "video"), stats(host), time.time()
-    grab(host).save(OUT / "v1-cinema-playing.png")
-    if v1.get("open"):
-        print(f"video: {(v1['frame'] - v0['frame']) / (t1 - t0):.2f} fps over {t1 - t0:.1f} s, "
-              f"decode {v1['decode_us'] / 1000:.1f} ms, convert {v1['convert_us'] / 1000:.1f} ms, "
-              f"{v1['kbps'] / 1000:.1f} Mbit/s, player dropped {int(v1['dropped'] - v0['dropped'])}, "
-              f"UI dropped {int(g1['dropped'] - g0['dropped'])}, clock {'audio' if v1['audio_clock'] else 'system'}")
-    else:
-        print("video: no clip opened (is the media partition flashed?)")
-    send(host, ["tap 400 240", "sleep 0.4", "tap 40 26"])  # show the overlay, then Back
+    grab(host).save(OUT / "v2-cinema-card-playing.png")
+    if not (v1.get("open") and v1.get("card")):
+        print("card video: the clip did not open from the card")
+        return
+    print(f"card video: {(v1['frame'] - v0['frame']) / (t1 - t0):.2f} fps over {t1 - t0:.1f} s, "
+          f"{v1['kbps'] / 1000:.1f} Mbit/s, player dropped {int(v1['dropped'] - v0['dropped'])}, "
+          f"UI dropped {int(g1['dropped'] - g0['dropped'])}, stalls {int(v1['stalls'])}, "
+          f"read ahead {v1['ahead_kb'] / 1024:.1f} MB, open to first picture {first_us / 1000:.0f} ms")
+
+    # Seeks: the overlay is hidden by now, so one tap shows it, then taps on the slider.
+    # Each lands outside what is buffered or inside it; either way the picture must come.
+    n = int(v1["n_frames"])
+    send(host, ["reset", "tap 400 240", "sleep 0.4"])
+    g0 = stats(host)
+    times = []
+    for x in (520, 110, 380, 560, 90):
+        send(host, [f"tap {x} 444", "sleep 0.5"])
+        v = kv(host, "video")
+        want = (x - 86) * (n - 1) // 544
+        ok = want - 2 <= v["frame"] <= want + 40 and not v["buffering"]
+        times.append(f"{v['seek_us'] / 1000:.0f}{'' if ok else '!'}")
+    time.sleep(1.0)
+    v2, g2 = kv(host, "video"), stats(host)
+    print(f"card seeks: picture after {', '.join(times)} ms (a ! marks a seek that did not arrive), "
+          f"stalls {int(v2['stalls'])}, UI dropped {int(g2['dropped'] - g0['dropped'])}, "
+          f"{'playing' if v2['playing'] else 'NOT playing'} afterwards")
+    send(host, ["tap 40 26"])  # Back (the overlay is up after the seeks)
     time.sleep(0.5)
+
+    if m["clips"] > 3:
+        send(host, ["reset"])
+        g0 = stats(host)
+        send(host, ["swipe 600 180 250 180 250"])
+        time.sleep(1.2)
+        g1 = stats(host)
+        grab(host).save(OUT / "v3-cinema-gallery-scrolled.png")
+        send(host, ["swipe 250 180 600 180 250"])
+        time.sleep(1.0)
+        print(f"gallery scroll: {m['clips']} clips, frame worst {g1['render_worst_us'] / 1000:.2f} ms, "
+              f"dropped {int(g1['dropped'] - g0['dropped'])}, still on {where(host)[0]}")
 
 
 def transition_test(host: str) -> None:
@@ -233,6 +381,7 @@ def run(a: argparse.Namespace) -> None:
     transition_test(a.host)
     if not a.no_media:
         media_tests(a.host)
+        card_tests(a.host)
     if not a.no_attract:
         attract_test(a.host, a.attract)
     send(a.host, ["screen 0"])

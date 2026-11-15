@@ -98,6 +98,18 @@
 	};
 };
 
+/*
+ * microSD card on SDMMC2, 4 bits, 48 MHz kernel clock from IC4 (the board file
+ * sets that up). Use the peripheral's internal DMA: in interrupt mode the CPU
+ * moves the data itself, one interrupt per 32 bytes, which at the card's
+ * 12 MB/s works out to about 370 000 a second: frame time taken from the UI.
+ * The DMA is a bus master of its own and gets its RIF master attributes in
+ * src/media/sdcard.c; Zephyr's SoC code does not set them for the SDMMC.
+ */
+&sdmmc2 {
+	idma;
+};
+
 / {
 	/* What the WM8904 driver queries for the MCLK rate; the SAI generates it. */
 	audio_mclk: audio-mclk {

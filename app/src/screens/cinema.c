@@ -1,10 +1,14 @@
 /*
- * Cinema: clips stored in flash, played full screen.
+ * Cinema: clips from the flash and from the microSD card, played full screen.
  *
  * The hardware codec decodes each frame to YCbCr on the player thread. This
  * screen's draw handler then has DMA2D convert that frame straight into the
  * LVGL frame buffer, and LVGL draws the controls over it. So the picture is
  * never copied by the CPU, and the overlay is ordinary UI.
+ *
+ * The gallery is rebuilt when the card's contents change (an upload from the
+ * host, tools/n6v.py). That reads the card and decodes a thumbnail per clip
+ * on the UI thread: tens of milliseconds, once, and never while a clip plays.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -14,7 +18,10 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include <lvgl_private.h> /* lv_cover_check_info_t */
+
 #include "media/player.h"
+#include "media/sdcard.h"
 #include "platform/psram.h"
 #include "screens.h"
 #include "ui/raster.h"
@@ -22,19 +29,42 @@
 
 LOG_MODULE_REGISTER(cinema, LOG_LEVEL_INF);
 
-#define MAX_CARDS 3
+#define MAX_CARDS PLAYER_MAX_CLIPS
+#define CARD_W    244
+#define CARD_H    250
+#define ROW_Y     40
 #define TH_W      212
 #define TH_H      127
 #define OVERLAY_MS 3200
+#define EDGE_GUARD 28                     /* the shell's edge-swipe zone */
 
 static int n_clips;
-static uint32_t *scratch;                 /* ARGB8888 800x480 in PSRAM: thumbnails, partial redraws */
+static uint32_t *scratch;                 /* ARGB8888 800x480 in PSRAM: partial redraws of the player view */
 static uint32_t scratch_frame = UINT32_MAX;
-static uint32_t *thumb[MAX_CARDS];
+static uint32_t *thumb[MAX_CARDS];        /* the picture on card i, NULL if it has none */
+/* What each picture buffer shows, so that a change of the list re-decodes only
+ * what is new. Buffers come from the PSRAM bump allocator and are never freed:
+ * `px` without `ok` is one waiting to be used again.
+ */
+static struct thumb_slot {
+	uint32_t *px;
+	bool ok, card;
+	uint32_t size;
+	char key[SD_NAME_MAX];            /* file name on the card, title in flash */
+} th[MAX_CARDS];
+static uint8_t *still_mcu;                /* one decoded frame, for make_thumb() */
+static lv_obj_t *row, *l_card;
+static uint32_t lib_gen;                  /* the card generation the gallery shows */
+static uint32_t scan_gen;                 /* the one being read */
+enum { LIB_IDLE, LIB_SCAN, LIB_SCANNED, LIB_THUMBS };
+static volatile int lib_state;
+static volatile bool thumbs_dirty;
+static K_SEM_DEFINE(bg_wake, 0, 1);
+static int pending_play = -1;
 
 /* player view */
 static lv_obj_t *pv, *top_bar, *bottom_bar, *l_title, *l_time, *l_stats, *btn_play, *scrub;
-static int open_clip = -1;
+static volatile int open_clip = -1;
 static uint32_t overlay_until;
 static bool overlay_on;
 static uint32_t shown_frame = UINT32_MAX;
@@ -42,43 +72,145 @@ static bool scrubbing;
 
 /* ---- thumbnails --------------------------------------------------------- */
 
-static void make_thumb(int clip)
+/* Decode one frame of a clip and box-filter it down to a card's picture:
+ * every source pixel contributes, so fine detail does not alias.
+ *
+ * Straight from the codec's output, without DMA2D or a full-size RGB copy,
+ * so that it can run on the background thread while the UI thread draws. The
+ * codec delivers 4:2:0 as MCUs of 384 bytes in raster order: four 8x8 luma
+ * blocks (top left, top right, bottom left, bottom right), then Cb, then Cr.
+ */
+static bool make_thumb(int clip, uint32_t *px)
 {
-	static uint8_t *mcu;
 	const struct n6v_header *h = player_clip(clip);
 	struct jpeg_info info;
 
-	if (mcu == NULL) {
-		mcu = psram_alloc(JPEG_MCU_BYTES(800, 480), 32);
+	if (still_mcu == NULL || px == NULL ||
+	    player_decode_still(clip, h->n_frames / 3, still_mcu, JPEG_MCU_BYTES(800, 480), &info) != 0) {
+		return false;
 	}
-	thumb[clip] = psram_alloc(TH_W * TH_H * 4, 32);
-	if (mcu == NULL || thumb[clip] == NULL ||
-	    player_decode_still(clip, h->n_frames / 3, mcu, JPEG_MCU_BYTES(800, 480), &info) != 0 ||
-	    jpegdec_convert(mcu, &info, scratch, GFX_W, NULL) != 0) {
-		thumb[clip] = NULL;
-		return;
-	}
-	/* box filter: every source pixel contributes, so fine detail does not alias */
+	int mcus_per_row = info.width / 16;
+
 	for (int y = 0; y < TH_H; y++) {
 		int sy0 = y * info.height / TH_H, sy1 = MAX((y + 1) * info.height / TH_H, sy0 + 1);
 
 		for (int x = 0; x < TH_W; x++) {
 			int sx0 = x * info.width / TH_W, sx1 = MAX((x + 1) * info.width / TH_W, sx0 + 1);
-			uint32_t r = 0, g = 0, b = 0, n = 0;
+			int32_t luma = 0, cb = 0, cr = 0, n = 0;
 
 			for (int sy = sy0; sy < sy1; sy++) {
-				const uint32_t *row = scratch + sy * GFX_W;
-
 				for (int sx = sx0; sx < sx1; sx++, n++) {
-					r += (row[sx] >> 16) & 0xff;
-					g += (row[sx] >> 8) & 0xff;
-					b += row[sx] & 0xff;
+					const uint8_t *m = still_mcu + ((sy >> 4) * mcus_per_row + (sx >> 4)) * 384;
+					int c = ((sy & 15) >> 1) * 8 + ((sx & 15) >> 1);
+
+					luma += m[(((sy >> 3) & 1) * 2 + ((sx >> 3) & 1)) * 64 + (sy & 7) * 8 + (sx & 7)];
+					cb += m[256 + c];
+					cr += m[320 + c];
 				}
 			}
-			thumb[clip][y * TH_W + x] = 0xff000000u | ((r / n) << 16) | ((g / n) << 8) | (b / n);
+			luma /= n;
+			cb = cb / n - 128;
+			cr = cr / n - 128;
+			/* JFIF: full-range BT.601, the same matrix DMA2D applies to the video */
+			int32_t r = luma + ((91881 * cr) >> 16);
+			int32_t g = luma - ((22554 * cb + 46802 * cr) >> 16);
+			int32_t b = luma + ((116130 * cb) >> 16);
+
+			px[y * TH_W + x] = 0xff000000u | (CLAMP(r, 0, 255) << 16) | (CLAMP(g, 0, 255) << 8) | CLAMP(b, 0, 255);
+		}
+	}
+	return true;
+}
+
+/* Match pictures to the clip list. A clip keeps its picture when it is the
+ * same clip as before (same place, name and size) and its file is not one of
+ * the `n_stale` names just uploaded (n_stale < 0: every clip on the card is
+ * suspect). The rest get a buffer and wait for make_thumb().
+ */
+static void assign_thumbs(char (*stale)[SD_NAME_MAX], int n_stale)
+{
+	static struct thumb_slot old[MAX_CARDS];
+	uint32_t *spare[MAX_CARDS];
+	int n_spare = 0;
+
+	memcpy(old, th, sizeof(old));
+	memset(th, 0, sizeof(th));
+	for (int i = 0; i < n_clips; i++) {
+		const struct n6v_header *h = player_clip(i);
+		bool card = player_clip_on_card(i);
+		const char *key = card ? player_clip_file(i) : h->title;
+		bool keep = !(card && n_stale < 0);
+
+		for (int k = 0; card && k < n_stale; k++) {
+			keep = keep && strcmp(stale[k], key) != 0;
+		}
+		th[i].card = card;
+		th[i].size = h->file_size;
+		strncpy(th[i].key, key, sizeof(th[i].key) - 1);
+		for (int j = 0; keep && j < MAX_CARDS; j++) {
+			if (old[j].px && old[j].ok && old[j].card == card && old[j].size == th[i].size &&
+			    strcmp(old[j].key, th[i].key) == 0) {
+				th[i].px = old[j].px;
+				th[i].ok = true;
+				old[j].px = NULL;
+				break;
+			}
+		}
+	}
+	for (int j = 0; j < MAX_CARDS; j++) {
+		if (old[j].px) {
+			spare[n_spare++] = old[j].px;
+		}
+	}
+	for (int i = 0; i < MAX_CARDS; i++) {
+		if (i < n_clips && !th[i].ok) {
+			th[i].px = n_spare ? spare[--n_spare] : psram_alloc(TH_W * TH_H * 4, 32);
+		} else if (i >= n_clips && n_spare) {
+			th[i].px = spare[--n_spare]; /* parked until the list grows again */
+		}
+		thumb[i] = th[i].ok ? th[i].px : NULL;
+	}
+}
+
+/* Make the pictures that are missing. */
+static void make_thumbs(void)
+{
+	for (int i = 0; i < n_clips; i++) {
+		if (th[i].px != NULL && !th[i].ok) {
+			while (open_clip >= 0) {
+				k_msleep(100); /* the codec belongs to the clip that is playing */
+			}
+			th[i].ok = make_thumb(i, th[i].px);
+			if (th[i].ok) {
+				thumb[i] = th[i].px;
+				thumbs_dirty = true;
+			}
 		}
 	}
 }
+
+/* Background thread: what a change of the card's contents needs and the UI
+ * thread has no time for. Reading the clip list off the card (LIB_SCAN), and
+ * after the UI thread has put that list in place, the new pictures
+ * (LIB_THUMBS). The UI thread moves the state to LIB_SCAN and from
+ * LIB_SCANNED to LIB_THUMBS; this thread makes the other two steps. While a
+ * step is this thread's, the UI thread leaves the list and th[] alone.
+ */
+static void bg_thread(void *p1, void *p2, void *p3)
+{
+	for (;;) {
+		k_sem_take(&bg_wake, K_FOREVER);
+		if (lib_state == LIB_SCAN) {
+			player_scan();
+			lib_state = LIB_SCANNED;
+		} else if (lib_state == LIB_THUMBS) {
+			make_thumbs();
+			lib_state = LIB_IDLE;
+		}
+	}
+}
+/* Below the player's threads, above the network services. FatFs wants about 1 KB of stack for a long name. */
+K_THREAD_DEFINE(cinema_bg, 6144, bg_thread, NULL, NULL, NULL, 6, 0, 0);
 
 static void blit(const struct raster *r, const uint32_t *src, int w, int h)
 {
@@ -132,6 +264,19 @@ static void pv_draw(lv_event_t *e)
 			scratch_frame = frame;
 		}
 		blit(&r, scratch, GFX_W, GFX_H);
+	}
+}
+
+/* The picture covers everything under it. LVGL cannot know that of a widget
+ * that draws itself, and would fill the screen background first: 1.5 MB of
+ * writes before every video frame, for pixels the picture then replaces.
+ */
+static void pv_cover(lv_event_t *e)
+{
+	lv_cover_check_info_t *info = lv_event_get_param(e);
+
+	if (info->res != LV_COVER_RES_MASKED) {
+		info->res = LV_COVER_RES_COVER;
 	}
 }
 
@@ -289,6 +434,7 @@ static void build_player(void)
 	pv = ui_box(lv_screen_active(), 0, 0, GFX_W, GFX_H);
 	lv_obj_add_flag(pv, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_HIDDEN);
 	lv_obj_add_event_cb(pv, pv_draw, LV_EVENT_DRAW_MAIN, NULL);
+	lv_obj_add_event_cb(pv, pv_cover, LV_EVENT_COVER_CHECK, NULL);
 	lv_obj_add_event_cb(pv, pv_click, LV_EVENT_SHORT_CLICKED, NULL);
 
 	top_bar = shade(pv, 0, 52);
@@ -336,33 +482,25 @@ static void card_click(lv_event_t *e)
 	open_player((int)(intptr_t)lv_event_get_user_data(e));
 }
 
-static void create(lv_obj_t *root)
+/* One card per clip in a row that scrolls sideways when there are more than three. */
+static void build_gallery(void)
 {
-	scratch = psram_alloc(GFX_W * GFX_H * 4, 32);
-	/* not MIN(player_init(), ...): the macro would evaluate the call twice */
-	int found = scratch ? player_init() : 0;
-
-	n_clips = MIN(found, MAX_CARDS);
-
-	lv_obj_set_pos(ui_caption(root, "CLIPS IN FLASH"), UI_PAD, 12);
-	lv_obj_t *fmt = ui_caption(root, "MOTION JPEG  HARDWARE DECODE  DMA2D COLOUR CONVERSION");
-
-	lv_obj_align(fmt, LV_ALIGN_TOP_RIGHT, -UI_PAD, 12);
+	lv_obj_clean(row);
+	lv_obj_scroll_to_x(row, 0, LV_ANIM_OFF);
 
 	if (n_clips == 0) {
-		lv_obj_t *l = ui_label(root, &font_textm_20, C_TEXT2, "No clips in flash");
+		lv_obj_t *l = ui_label(row, &font_textm_20, C_TEXT2, "No clips");
 
 		lv_obj_align(l, LV_ALIGN_CENTER, 0, -14);
-		l = ui_label(root, &font_mono_14, C_TEXT3, "tools/n6v.py encode, pack, flash");
+		l = ui_label(row, &font_mono_14, C_TEXT3, "tools/n6v.py encode, then upload (card) or pack and flash");
 		lv_obj_align(l, LV_ALIGN_CENTER, 0, 18);
 		return;
 	}
 	for (int i = 0; i < n_clips; i++) {
 		const struct n6v_header *h = player_clip(i);
 		uint32_t secs = (uint32_t)((uint64_t)h->n_frames * h->fps_den / h->fps_num);
-		lv_obj_t *c = ui_card(root, UI_PAD + i * (244 + UI_GAP), 40, 244, 250);
+		lv_obj_t *c = ui_card(row, UI_PAD + i * (CARD_W + UI_GAP), 0, CARD_W, CARD_H);
 
-		make_thumb(i);
 		lv_obj_add_flag(c, LV_OBJ_FLAG_CLICKABLE);
 		lv_obj_set_style_bg_color(c, ui_c(C_BG2), LV_STATE_PRESSED);
 		lv_obj_set_style_border_color(c, ui_c(C_AZURE), LV_STATE_PRESSED);
@@ -379,8 +517,128 @@ static void create(lv_obj_t *root)
 				      h->file_size / 1000000, (h->file_size / 100000) % 10);
 		lv_obj_set_pos(meta, 16, 190);
 		lv_obj_set_pos(ui_caption(c, "TAP TO PLAY"), 16, 216);
+		/* where the clip is read from: the two paths are not the same machinery */
+		lv_obj_t *tag = ui_caption(c, player_clip_on_card(i) ? "SD CARD" : "FLASH");
+
+		lv_obj_set_style_text_color(tag, ui_c(player_clip_on_card(i) ? C_AZURE : C_TEXT3), 0);
+		lv_obj_align(tag, LV_ALIGN_TOP_RIGHT, -16, 216);
 	}
+}
+
+static void create(lv_obj_t *root)
+{
+	struct sd_status sd;
+
+	scratch = psram_alloc(GFX_W * GFX_H * 4, 32);
+	still_mcu = psram_alloc(JPEG_MCU_BYTES(800, 480), 32);
+	if (scratch != NULL) {
+		player_init();
+	}
+	sdcard_get_status(&sd);
+	lib_gen = sd.generation;
+	/* nothing is on screen yet: the first pictures are made here and now */
+	n_clips = MIN(player_clip_count(), MAX_CARDS);
+	assign_thumbs(NULL, 0);
+	make_thumbs();
+	thumbs_dirty = false;
+
+	lv_obj_set_pos(ui_caption(root, "CLIPS"), UI_PAD, 12);
+	lv_obj_t *fmt = ui_caption(root, "MOTION JPEG  HARDWARE DECODE  DMA2D COLOUR CONVERSION");
+
+	lv_obj_align(fmt, LV_ALIGN_TOP_RIGHT, -UI_PAD, 12);
+
+	row = ui_box(root, 0, ROW_Y, GFX_W, CARD_H);
+	lv_obj_add_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+	lv_obj_set_scroll_dir(row, LV_DIR_HOR);
+	lv_obj_set_scrollbar_mode(row, LV_SCROLLBAR_MODE_OFF);
+	lv_obj_set_style_pad_right(row, UI_PAD, 0);
+	/* A drag that starts in the shell's edge zone changes screen: it must not
+	 * scroll the row or press a card as well. These swallow it.
+	 */
+	lv_obj_add_flag(ui_box(root, 0, ROW_Y, EDGE_GUARD, CARD_H), LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_add_flag(ui_box(root, GFX_W - EDGE_GUARD, ROW_Y, EDGE_GUARD, CARD_H), LV_OBJ_FLAG_CLICKABLE);
+
+	l_card = ui_caption(root, "");
+	lv_obj_set_pos(l_card, UI_PAD, ROW_Y + CARD_H + 16);
+
+	build_gallery();
 	build_player();
+}
+
+/* The card's state under the gallery: free space, or an upload as it arrives. */
+static void update_card_line(const struct sd_status *sd)
+{
+	static char shown[96];
+	char text[96];
+
+	if (sd->receiving) {
+		snprintf(text, sizeof(text), "RECEIVING %s   %u %%   %u.%u MB/s", sd->rx_name,
+			 sd->rx_size ? (unsigned int)((uint64_t)sd->rx_done * 100 / sd->rx_size) : 0,
+			 sd->rx_kbps / 8000, (sd->rx_kbps / 800) % 10);
+	} else if (!sd->mounted) {
+		snprintf(text, sizeof(text), "NO SD CARD");
+	} else if (!sd->space_known) {
+		snprintf(text, sizeof(text), "SD CARD");
+	} else {
+		snprintf(text, sizeof(text), "SD CARD   %u.%u GB FREE OF %u.%u GB   UPLOAD OVER ETHERNET: tools/n6v.py upload",
+			 sd->free_mb / 1024, (sd->free_mb % 1024) * 10 / 1024, sd->total_mb / 1024,
+			 (sd->total_mb % 1024) * 10 / 1024);
+	}
+	if (strcmp(text, shown) != 0) {
+		strcpy(shown, text);
+		lv_label_set_text(l_card, text);
+	}
+}
+
+/* Whether visible or not: pick up a change of the card's contents. All this
+ * thread does is start the background work and, when the new list has been
+ * read and no clip is open, swap it in and rebuild the cards. The reading and
+ * the decoding are the background thread's (bg_thread).
+ */
+static void service(uint32_t now_ms)
+{
+	static uint32_t t0;
+	struct sd_status sd;
+
+	if (thumbs_dirty) {
+		thumbs_dirty = false;
+		lv_obj_invalidate(row);
+	}
+	if (now_ms - t0 < 250 || scratch == NULL) {
+		return;
+	}
+	t0 = now_ms;
+	sdcard_get_status(&sd);
+	update_card_line(&sd);
+	if (lib_state == LIB_IDLE && sd.generation != lib_gen && !sd.receiving) {
+		scan_gen = sd.generation;
+		lib_state = LIB_SCAN;
+		k_sem_give(&bg_wake);
+	} else if (lib_state == LIB_SCANNED && open_clip < 0 && player_commit() >= 0) {
+		/* the files behind generations lib_gen + 1 .. scan_gen, if the card still remembers them all */
+		static char stale[SD_CHANGES][SD_NAME_MAX];
+		int n_stale = 0;
+
+		if (sd.generation - lib_gen > SD_CHANGES) {
+			n_stale = -1;
+		} else {
+			for (uint32_t g = lib_gen + 1; g != scan_gen + 1; g++) {
+				memcpy(stale[n_stale++], sd.changed[g % SD_CHANGES], SD_NAME_MAX);
+			}
+		}
+		lib_gen = scan_gen;
+		n_clips = MIN(player_clip_count(), MAX_CARDS);
+		assign_thumbs(stale, n_stale);
+		build_gallery();
+		lib_state = LIB_THUMBS;
+		k_sem_give(&bg_wake);
+	}
+}
+
+/* Remote control: open a clip by number as soon as this screen is up. */
+void cinema_play(int clip)
+{
+	pending_play = clip;
 }
 
 static void tick(uint32_t now_ms)
@@ -388,6 +646,13 @@ static void tick(uint32_t now_ms)
 	static uint32_t text_t0;
 	struct player_status st;
 
+	if (pending_play >= 0) {
+		int clip = pending_play;
+
+		pending_play = -1;
+		close_player();
+		open_player(clip);
+	}
 	if (open_clip < 0) {
 		return;
 	}
@@ -409,12 +674,24 @@ static void tick(uint32_t now_ms)
 
 		text_t0 = now_ms;
 		lv_label_set_text_fmt(l_time, "%u:%02u / %u:%02u", pos / 60, pos % 60, len / 60, len % 60);
+		char source[72];
+
+		if (!st.on_card) {
+			snprintf(source, sizeof(source), "flash, read in place");
+		} else if (st.buffering) {
+			snprintf(source, sizeof(source), "SD card\nBUFFER   waiting for the card\nSTALLS   %u", st.stalls);
+		} else {
+			snprintf(source, sizeof(source), "SD card\nBUFFER   %u.%u MB ahead\nSTALLS   %u", st.ahead_kb / 1024,
+				 (st.ahead_kb % 1024) * 10 / 1024, st.stalls);
+		}
 		lv_label_set_text_fmt(l_stats,
 				      "FRAME    %u / %u\nDECODE   %u.%u ms\nCONVERT  %u.%u ms\n"
-				      "BITRATE  %u.%u Mbit/s\nFRAME    %u KB\nDROPPED  %u\nCLOCK    %s",
+				      "BITRATE  %u.%u Mbit/s\nFRAME    %u KB\nDROPPED  %u\nCLOCK    %s\nSEEK     %u ms\n"
+				      "SOURCE   %s",
 				      st.frame + 1, st.n_frames, st.decode_us / 1000, (st.decode_us / 100) % 10,
 				      st.convert_us / 1000, (st.convert_us / 100) % 10, st.kbps / 1000,
-				      (st.kbps / 100) % 10, st.frame_bytes / 1024, st.dropped, st.audio_clock ? "audio DAC" : "system");
+				      (st.kbps / 100) % 10, st.frame_bytes / 1024, st.dropped,
+				      st.audio_clock ? "audio DAC" : "system", (st.seek_us + 500) / 1000, source);
 		/* label changes are small dirty areas; redraw the whole view with them
 		 * so the picture takes the fast path
 		 */
@@ -462,6 +739,7 @@ const struct screen screen_cinema = {
 	.blurb = "Video with sound",
 	.create = create,
 	.tick = tick,
+	.service = service,
 	.hide = hide,
 	.mini = mini,
 	.attract_secs = 3,

@@ -23,13 +23,16 @@ not to be modified from here.
 .\.venv\Scripts\python.exe tools\tour.py     # regression: per-screen frame stats, screenshots, injected gestures
 .\.venv\Scripts\python.exe tools\ctl.py "screen 2" stats where "tap 400 200"
 .\.venv\Scripts\python.exe tools\fuzz_player.py --secs 120   # random abuse of the video player
+.\.venv\Scripts\python.exe tools\n6v.py upload media\out\n6_film.n6v   # clip to the microSD card over Ethernet (4 MB/s); also ls, rm, df
 .\run.cmd                   # host companion: live data for Host Link and Core Map
 ```
 
 - Verify UI work by looking: `shot.py` then Read the PNG. `tour.py` must show
   0 dropped frames on every screen, in the transitions and in the attract-mode
-  lap, and 0 stray screen changes, before a commit (about six minutes;
-  `--no-attract` for a quick pass). It starts the companion itself.
+  lap, and 0 stray screen changes, before a commit (about seven minutes;
+  `--no-attract` for a quick pass). It starts the companion itself, plays the
+  first clip from flash and from the card (`ctl.py "card 0"` hides the card's
+  clips), and uploads, plays, seeks and deletes a generated test clip.
 - Build times: a source-only change is about 2 min; any `prj.conf`, Kconfig or
   CMake change rebuilds LVGL and takes 6 to 8 min. Batch config changes.
 
@@ -63,6 +66,16 @@ not to be modified from here.
 - Memory: app RAM is 840 KB at 0x3400_0000; frame buffers A/B at 0x340D_2000
   and 0x3424_9000 (internal SRAM); PSRAM is a bump allocator (`psram_alloc`),
   first 2 MB reserved for the screenshot copy.
+- Media: a clip is either in the flash media partition (read in place) or a
+  file in `/SD:/clips` on the microSD card (FAT32 or exFAT, SDMMC2 with its
+  internal DMA). A card clip with the same title as a flash clip takes its
+  place in the list. Threads, highest first: audio (cooperative), UI (0),
+  `player_io` (2, streams the open card clip into a 4 MB PSRAM window around
+  the play position), `player` (3, owns the JPEG codec), `cinema_bg` (6,
+  re-reads the clip list and makes thumbnails after an upload), then the
+  network services (`sd_service` on tcp/5558 takes uploads). The window is
+  moved by `player_io` only; the others copy out of it and wait when their
+  data is not there (the clock is held, nothing is skipped).
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
   Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
   explorer, touchlab, hostlink, coremap, cinema, specimen. Home shows eight
@@ -172,6 +185,56 @@ not to be modified from here.
   tall posts overdrew the whole view several times (11.8 ms draw, dropped
   frames). Faces of one post overlap by a pixel under the face drawn after
   them, or anti-aliased shared edges let the background show through.
+- **The SDMMC2 node has `idma` and `sdcard.c` gives the SDMMC2 bus master
+  secure, privileged RIF attributes before mounting. Keep both.** **Why:**
+  without `idma` the driver moves the data in an interrupt per 32 bytes
+  (by arithmetic about 370 000 a second during a read at 12 MB/s: UI frame
+  time; not measured, the DMA path was used from the start). With it the
+  peripheral writes memory itself, and Zephyr's SoC code sets RIF master
+  attributes for the display, camera, Ethernet, DMA2D, NPU and video encoder
+  but not for the SDMMC. Checked by leaving the call out: the mount fails
+  with `fs mount error (-19)`, the DMA's writes do not land.
+- **Card reads go through `sdcard_read_at()`: whole sectors into one
+  cache-line-aligned buffer, then a copy.** **Why:** the driver invalidates
+  the data cache over the DMA target, so a buffer that shares a cache line
+  with other data can lose that data. `CONFIG_FS_FATFS_WINDOW_ALIGNMENT=32`
+  does the same for FatFs's own sector buffer.
+- **`CONFIG_FS_FATFS_MOUNT_MKFS=n`. Never let a failed mount format the
+  card** (Zephyr's default does).
+- **No card I/O and no thumbnail decoding on the UI thread once the demo is
+  running.** `cinema_bg` reads the list (`player_scan`) and makes the
+  pictures; the UI thread only swaps the list in (`player_commit`) and
+  rebuilds the cards. **Why:** done on the UI thread, a batch of uploads
+  froze the display for 167 ms (three thumbnails). Thumbnails are filtered
+  straight from the codec's YCbCr blocks, so they need neither DMA2D nor the
+  full-size RGB buffer the player view uses.
+- **`player_io` runs above `player`.** **Why:** the reader waits on the card,
+  the worker polls the codec; with the reader below, a seek on the 14 Mbit/s
+  clip left playback on an empty window (16 stalls in one fuzz run, 0 after).
+- **`player_close()` does not wait for the worker**, and the worker copies a
+  frame out of the window without holding `win_lock`. **Why:** Back blocked
+  the UI behind a decode in progress (10 to 25 ms), and the audio thread,
+  waiting for the lock, lent the worker a priority above the UI.
+- **A seek belongs to the frame decoded after it, not to the one in flight**
+  (`jump_gen`, read as a pair with the clock in `player_thread`). **Why:**
+  with a plain flag the frame being decoded when the finger moved consumed
+  it, and the seek then counted as a stall or as dropped frames.
+- **The player view answers `LV_EVENT_COVER_CHECK` with "covers".** **Why:**
+  LVGL cannot tell that a self-drawing widget is opaque and filled the whole
+  screen background before every video frame (about 0.9 ms of 7).
+- **Uploads go in 8 KB pieces, each acknowledged by one byte from the
+  board** (`SD_PIECE`). **Why:** Zephyr's TCP acknowledges at once only a
+  segment with PSH and otherwise after 100 ms; a host sets PSH when its send
+  buffer runs empty, so a plain bulk send moved one 21 KB window per 100 ms:
+  0.11 to 0.2 MB/s. With the credits: 4 MB/s, and the card write is no
+  longer hidden behind the network (it does 9 to 12 MB/s).
+- **PSRAM is nearly full: 25.3 of 32 MB** (`ctl.py media`, `psram_kb`). The
+  read-ahead window is 4 MB for that reason; 8 MB left 2.5 MB free.
+- **An injected drag on the Cinema slider only scrubs while the controls are
+  showing** (they hide 3.2 s after the last touch while playing). **Why:** a
+  measurement made with them hidden reported 6.3 ms "scrub" frames that were
+  plain playback, and a Back tap that only re-showed the controls looked like
+  a firmware fault. Tap the picture first, or scrub within 3 s of opening.
 - **Pad JPEG input to a whole number of 32-bit words past the EOI marker.**
   **Why:** the HAL feeds the codec word by word; with a length that is not a
   multiple of four the end marker is never sent and the decode times out a
@@ -197,23 +260,36 @@ not to be modified from here.
 - **Open bug (2026-11-15, reported by the user): operating the Cinema slider
   halted the firmware once.** Symptom: the board stopped answering and the
   audio looped the last 21 ms (the circular DMA keeps running while nothing
-  refills it). The fault state was lost to a reset. Not reproduced since:
-  `tools/fuzz_player.py` ran 450 random scrubs, plays, backs and re-opens
-  (edge starts, a second contact) without a halt. Fixed on the way: a drag
-  starting in the edge-swipe zone closed the film; seeks counted as dropped
-  frames; the attract false start below. If it happens again do NOT reset:
+  refills it). The fault state was lost to a reset. Not reproduced since, on
+  the old player (450 random actions) or on the reworked one (about 2000,
+  console logged): `tools/fuzz_player.py` scrubs, plays, pauses, goes back
+  and re-opens (edge starts, a second contact; flash and card clips) without
+  a halt or a fault message. Caveat on all but the last 440: until the fuzz was made to return
+  to Cinema, a drag from the screen edge with the player closed swiped it to
+  other screens, so part of every run abused those instead (and one of them
+  drops a frame under a wild two-finger drag; which one is not identified).
+  Fixed on the way: a drag starting in the edge-swipe zone closed the film;
+  seeks counted as dropped frames and as stalls; Back blocked the UI behind
+  a decode; the attract false start below. If it happens again do NOT reset:
   read `captures/console.log` (keep `n6.cmd console --log` running; the log
   is flushed per chunk) and the CPU state.
-- Windows stops resolving the board's address for up to a minute if a host
-  program (the companion) keeps sending to it while the board power-cycles.
-  Fix planned with the next Kconfig change (it costs a full rebuild): a
-  gratuitous ARP when the address is assigned
-  (`CONFIG_NET_ARP_GRATUITOUS_TRANSMISSION`; check the option exists in 4.4.0).
-- A formatted 32 GB microSD card is in the slot (2026-11-15). Plan: media
-  library on the card with upload over Ethernet (needs the `fatfs` module and
-  a read-ahead buffer in the player). Writing 84 MB of clips to the XSPI flash
-  over SWD takes 8 minutes.
+- The board announces its address when DHCP assigns it
+  (`CONFIG_NET_ARP_GRATUITOUS_TRANSMISSION`). Checked 2026-11-15: with the
+  companion sending through a power cycle the board answered 0.1 s after
+  getting its address; before, Windows held it unreachable for up to a
+  minute.
+- A 32 GB microSD card (FAT32) is in the slot and holds the three clips in
+  `/clips`; they stand in for the flash copies in the list, so attract mode
+  plays the film from the card. The flash media partition is still written
+  and is what plays when the card is out. Writing 84 MB to the flash over
+  SWD takes 8 minutes; to the card over Ethernet, about 22 s.
 - Media: `media/film/*.py` render the original clips (Skia + numpy score),
-  `tools/n6v.py encode|pack|flash` puts them in the media partition at
-  0x7042_0000. Outputs go to `media/out/` (not committed).
+  `tools/n6v.py encode` makes the `.n6v`, `upload` puts it on the card,
+  `pack` and `flash` in the media partition at 0x7042_0000. Outputs go to
+  `media/out/` (not committed).
+- Not built: mounting a card put in after boot without a host command (the
+  card-detect pin is not watched; `n6v.py mount` asks for it, and that path
+  has not been tried with a real insertion), fast seeks in
+  very large files (FatFs walks the cluster chain: a backward seek in a
+  1 GB clip on FAT32 may take a few hundred ms; untested), FAT timestamps.
 - Camera (IMX335) and NPU are a later addition; keep a screen slot for them.

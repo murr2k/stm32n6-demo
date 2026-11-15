@@ -17,8 +17,10 @@
 #include "audio.h"
 #include "ctl.h"
 #include "media/player.h"
+#include "media/sdcard.h"
 #include "gfx.h"
 #include "net.h"
+#include "psram.h"
 #include "touch.h"
 #include "ui/shell.h"
 
@@ -150,9 +152,40 @@ static int handle(char *line, char *out, size_t out_len)
 		player_get_status(&st);
 		return snprintf(out, out_len,
 				"open=%d playing=%d frame=%u n_frames=%u dropped=%u decode_us=%u convert_us=%u "
-				"kbps=%u audio_clock=%d\n",
+				"kbps=%u audio_clock=%d card=%d buffering=%d stalls=%u ahead_kb=%u seek_us=%u\n",
 				st.open, st.playing, st.frame, st.n_frames, st.dropped, st.decode_us, st.convert_us,
-				st.kbps, st.audio_clock);
+				st.kbps, st.audio_clock, st.on_card, st.buffering, st.stalls, st.ahead_kb, st.seek_us);
+	} else if (!strcmp(cmd, "media")) {
+		/* the clip list: how many, and the first one that is read from the card */
+		struct sd_status sd;
+		int clips = player_clip_count(), first_card = -1, on_card = 0;
+
+		sdcard_get_status(&sd);
+		for (int i = clips - 1; i >= 0; i--) {
+			if (player_clip_on_card(i)) {
+				first_card = i;
+				on_card++;
+			}
+		}
+		return snprintf(out, out_len,
+				"mounted=%d clips=%d card_clips=%d first_card=%d total_mb=%u free_mb=%u gen=%u "
+				"receiving=%d psram_kb=%u\n",
+				sd.mounted, clips, on_card, first_card, sd.total_mb, sd.free_mb, sd.generation,
+				sd.receiving, (unsigned int)(psram_used() / 1024));
+	} else if (!strcmp(cmd, "card") && n >= 2) {
+		player_use_card(a[0] != 0);
+	} else if (!strcmp(cmd, "clip") && n >= 2) {
+		const struct n6v_header *h = player_clip(a[0]);
+
+		if (h == NULL) {
+			return snprintf(out, out_len, "err no such clip\n");
+		}
+		/* file first: it has no spaces, the title may */
+		return snprintf(out, out_len, "file=%s card=%d frames=%u title=%s\n",
+				player_clip_on_card(a[0]) ? player_clip_file(a[0]) : "-", player_clip_on_card(a[0]),
+				h->n_frames, h->title);
+	} else if (!strcmp(cmd, "play") && n >= 2) {
+		post(CTL_PLAY, a[0]);
 	} else if (!strcmp(cmd, "where")) {
 		/* which screen is up, and whether the demo is running itself */
 		return snprintf(out, out_len, "screen=%d attract=%d\n", shell_current(), shell_in_attract());

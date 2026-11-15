@@ -61,6 +61,15 @@ int main(void)
 		case CTL_ATTRACT:
 			shell_start_attract();
 			break;
+		case CTL_PLAY:
+			shell_note_input();
+			for (int i = 0; i < (int)ARRAY_SIZE(screens); i++) {
+				if (screens[i] == &screen_cinema) {
+					shell_goto(i);
+				}
+			}
+			cinema_play(arg);
+			break;
 		default:
 			break;
 		}
