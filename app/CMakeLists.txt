@@ -8,11 +8,6 @@ file(GLOB_RECURSE app_sources CONFIGURE_DEPENDS src/*.c)
 target_sources(app PRIVATE ${app_sources})
 target_include_directories(app PRIVATE src)
 
-# Media embedded in the image (small items only; video lives in its own flash partition).
-set(gen_dir ${ZEPHYR_BINARY_DIR}/include/generated)
-generate_inc_file_for_target(app ${CMAKE_CURRENT_SOURCE_DIR}/../assets/media/poster.jpg
-  ${gen_dir}/poster.jpg.inc)
-
 # LVGL's Helium (MVE) blend routines. The Zephyr module build lists the C
 # sources but not this assembly file, so without it CONFIG_LV_DRAW_SW_ASM_HELIUM
 # fails at link time.
