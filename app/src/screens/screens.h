@@ -16,6 +16,7 @@ extern const struct screen screen_deck;
 extern const struct screen screen_siglab;
 extern const struct screen screen_explorer;
 extern const struct screen screen_touchlab;
+extern const struct screen screen_cinema;
 extern const struct screen screen_specimen;
 
 #endif

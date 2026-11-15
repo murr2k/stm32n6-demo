@@ -1,0 +1,13 @@
+# Application Kconfig.
+# SPDX-License-Identifier: Apache-2.0
+
+# The media path drives the JPEG codec and DMA2D through the ST HAL directly:
+# Zephyr 4.4.0's JPEG driver only encodes. These HAL modules are hidden
+# symbols that drivers normally select, so select them here.
+config APP_MEDIA
+	bool "Hardware JPEG decode path"
+	default y
+	select USE_STM32_HAL_JPEG
+	select USE_STM32_HAL_DMA2D
+
+source "Kconfig.zephyr"

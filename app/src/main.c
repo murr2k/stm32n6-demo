@@ -23,6 +23,7 @@ static const struct screen *const screens[] = {
 	&screen_siglab,
 	&screen_explorer,
 	&screen_touchlab,
+	&screen_cinema,
 	&screen_specimen,
 };
 
