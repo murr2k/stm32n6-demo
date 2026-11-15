@@ -24,7 +24,7 @@ struct gfx_stats {
 	uint32_t dropped;       /* vsync intervals missed while animating */
 	uint32_t refresh_uhz;   /* measured panel refresh, micro-hertz */
 	uint32_t period_us;     /* nominal refresh period */
-	uint32_t last_render_us;
+	uint32_t last_render_us; /* UI thread time for the frame: tick, layout and render */
 	uint32_t last_period_us;
 	uint32_t worst_render_us; /* since the last gfx_stats_reset_worst() */
 	uint32_t worst_period_us;
@@ -50,6 +50,9 @@ lv_display_t *gfx_display(void);
  * boundary and return it (ARGB8888, GFX_FB_BYTES). Called from other threads.
  */
 const uint8_t *gfx_snapshot(void);
+
+/* Time of the most recent buffer swap, gfx_now_us() timebase. */
+uint32_t gfx_last_present_us(void);
 
 /* Microseconds since boot, from the 800 MHz cycle counter. */
 uint32_t gfx_now_us(void);

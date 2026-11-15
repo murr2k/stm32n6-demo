@@ -5,6 +5,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include "screens.h"
+#include "ui/raster.h"
 #include "ui/theme.h"
 
 static void anim_x(void *obj, int32_t v)
@@ -98,7 +99,20 @@ static void create(lv_obj_t *root)
 	lv_anim_start(&a);
 }
 
+static void mini(const struct raster *r)
+{
+	static const uint32_t c[] = {C_AZURE, C_AMBER, C_VIOLET, C_MINT, C_CORAL};
+	int w = lv_area_get_width(&r->box) / 5;
+
+	for (int i = 0; i < 5; i++) {
+		raster_disc(r, (r->box.x1 + i * w + w / 2) * RQ_ONE, ((r->box.y1 + r->box.y2) / 2) * RQ_ONE,
+			    (w / 2 - 6) * RQ_ONE, c[i], 255);
+	}
+}
+
 const struct screen screen_specimen = {
 	.title = "Specimen",
+	.blurb = "Type, colour, motion",
 	.create = create,
+	.mini = mini,
 };

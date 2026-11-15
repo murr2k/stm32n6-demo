@@ -89,9 +89,14 @@ def cmd_build(a: argparse.Namespace) -> None:
     if proc.returncode != 0:
         # Show the tail that contains the first compiler/linker error.
         lines = text.splitlines()
-        hits = [i for i, ln in enumerate(lines) if re.search(r"error[: ]|FAILED|undefined reference|Error:", ln)]
-        start = max(0, (hits[0] if hits else len(lines)) - 6)
-        print("\n".join(lines[start:start + 60]))
+        # Compiler diagnostics first (deduplicated), then the first failure block.
+        diags = [ln for ln in lines if re.search(r": (fatal )?error:|undefined reference|: warning: implicit", ln)]
+        if diags:
+            print("\n".join(dict.fromkeys(diags[:40])))
+        else:
+            hits = [i for i, ln in enumerate(lines) if re.search(r"FAILED|Error", ln)]
+            start = max(0, (hits[0] if hits else len(lines)) - 6)
+            print("\n".join(lines[start:start + 40]))
         sys.exit(f"[n6] build failed ({proc.returncode})")
     for ln in text.splitlines():
         if re.search(r"^\s+(FLASH|RAM|PSRAM|AXISRAM\w*|\w*_REGION):|warning:", ln):

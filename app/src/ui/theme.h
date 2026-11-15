@@ -66,6 +66,15 @@ lv_obj_t *ui_label(lv_obj_t *parent, const lv_font_t *font, uint32_t color, cons
 /* Small uppercase caption used above values: Mono 12, letter-spaced, TEXT3. */
 lv_obj_t *ui_caption(lv_obj_t *parent, const char *text);
 
+/* Draw text straight into a layer from a widget's draw handler. For labels
+ * that move every frame: a label object would be re-laid-out and invalidated
+ * twice per move, and thirty-two invalid areas in one frame make LVGL redraw
+ * the whole screen. Returns the text width in pixels.
+ */
+int32_t ui_draw_text(lv_layer_t *layer, const lv_font_t *font, uint32_t color, int32_t x, int32_t y,
+		     const char *text);
+int32_t ui_text_width(const lv_font_t *font, const char *text);
+
 /* Blend two colours, t in 0..255. */
 lv_color_t ui_mix(uint32_t a, uint32_t b, uint8_t t);
 

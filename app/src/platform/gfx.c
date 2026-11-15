@@ -34,7 +34,7 @@ static lv_display_t *disp;
 static struct gfx_stats stats;
 
 static const uint8_t *front;      /* buffer the LTDC is scanning out */
-static uint32_t t_render_start;
+static uint32_t t_frame_start;     /* end of the previous frame slot */
 static uint32_t t_last_present;
 static bool presented;            /* a frame was presented in this gfx_run_frame() */
 static bool streak;               /* previous frame slot also presented */
@@ -55,11 +55,6 @@ static uint32_t tick_cb(void)
 	return k_uptime_get_32();
 }
 
-static void render_start_cb(lv_event_t *e)
-{
-	ARG_UNUSED(e);
-	t_render_start = gfx_now_us();
-}
 
 static void account_frame(uint32_t render_us, uint32_t now)
 {
@@ -107,7 +102,8 @@ static void flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *px_map)
 		const struct display_buffer_descriptor desc = {
 			.buf_size = GFX_FB_BYTES, .width = GFX_W, .height = GFX_H, .pitch = GFX_W,
 		};
-		uint32_t render_us = gfx_now_us() - t_render_start;
+		/* everything the UI thread did for this frame: screen tick, layout, render */
+		uint32_t render_us = gfx_now_us() - t_frame_start;
 
 		/* Blocks until the LTDC has switched to this buffer. */
 		display_write(panel, 0, 0, &desc, px_map);
@@ -171,9 +167,8 @@ int gfx_init(void)
 	lv_display_set_color_format(disp, LV_COLOR_FORMAT_XRGB8888);
 	lv_display_set_buffers(disp, FB_A, FB_B, GFX_FB_BYTES, LV_DISPLAY_RENDER_MODE_DIRECT);
 	lv_display_set_flush_cb(disp, flush_cb);
-	lv_display_add_event_cb(disp, render_start_cb, LV_EVENT_RENDER_START, NULL);
 
-	t_last_present = win_start_us = gfx_now_us();
+	t_last_present = win_start_us = t_frame_start = gfx_now_us();
 	display_blanking_off(panel);
 	return 0;
 }
@@ -197,16 +192,16 @@ void gfx_run_frame(void)
 
 	if (presented) {
 		streak = true;
-		return;
-	}
-	streak = false;
+	} else {
+		streak = false;
+		/* Nothing to draw: idle part of a frame slot so timers and input keep
+		 * their cadence and lower-priority threads get to run.
+		 */
+		uint32_t spent = gfx_now_us() - t0;
 
-	/* Nothing to draw: idle one frame slot so timers and input keep their cadence. */
-	uint32_t spent = gfx_now_us() - t0;
-
-	if (spent < stats.period_us) {
-		k_sleep(K_USEC(MIN(stats.period_us - spent, 4000)));
+		k_sleep(K_USEC(spent < stats.period_us ? MIN(stats.period_us - spent, 4000) : 500));
 	}
+	t_frame_start = gfx_now_us();
 }
 
 const uint8_t *gfx_snapshot(void)
@@ -222,6 +217,11 @@ const uint8_t *gfx_snapshot(void)
 const struct gfx_stats *gfx_stats(void)
 {
 	return &stats;
+}
+
+uint32_t gfx_last_present_us(void)
+{
+	return t_last_present;
 }
 
 void gfx_stats_reset_worst(void)

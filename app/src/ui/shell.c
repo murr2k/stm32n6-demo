@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <stdio.h>
+#include <string.h>
 
 #include <zephyr/kernel.h>
 
@@ -191,16 +192,61 @@ void shell_toggle_hud(void)
 
 /* ---- screens ------------------------------------------------------------ */
 
-static void gesture_cb(lv_event_t *e)
-{
-	lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_active());
+/* Edge swipes. Full-canvas screens (plots, the touch lab) use horizontal drags
+ * themselves, so navigation only listens to touches that start within
+ * EDGE_ZONE px of the left or right edge and travel inward.
+ */
+#define EDGE_ZONE   28
+#define EDGE_TRAVEL 90
 
-	ARG_UNUSED(e);
-	if (dir == LV_DIR_LEFT) {
-		shell_goto((current + 1) % n_screens);
-	} else if (dir == LV_DIR_RIGHT) {
-		shell_goto((current + n_screens - 1) % n_screens);
+static bool edge_tracking, edge_fired;
+static int16_t edge_x0;
+
+bool shell_gesture_active(void)
+{
+	return edge_tracking;
+}
+
+static void update_edge_swipe(void)
+{
+	static bool was_down;
+	struct touch_state ts;
+	int n_down = 0;
+	const struct touch_point *p = NULL;
+
+	touch_get(&ts);
+	for (int i = 0; i < TOUCH_MAX_POINTS; i++) {
+		if (ts.pt[i].down) {
+			n_down++;
+			p = p ? p : &ts.pt[i];
+		}
 	}
+	if (n_down == 1 && !was_down) {
+		edge_tracking = p->x < EDGE_ZONE || p->x >= GFX_W - EDGE_ZONE;
+		edge_fired = false;
+		edge_x0 = p->x;
+	}
+	if (n_down == 1 && edge_tracking && !edge_fired) {
+		int dx = p->x - edge_x0;
+
+		if (edge_x0 >= GFX_W - EDGE_ZONE && dx < -EDGE_TRAVEL) {
+			edge_fired = true;
+			shell_goto((current + 1) % n_screens);
+		} else if (edge_x0 < EDGE_ZONE && dx > EDGE_TRAVEL) {
+			edge_fired = true;
+			shell_goto((current + n_screens - 1) % n_screens);
+		}
+	}
+	if (n_down == 0) {
+		edge_tracking = false;
+	}
+	was_down = n_down > 0;
+}
+
+static void home_cb(lv_event_t *e)
+{
+	ARG_UNUSED(e);
+	shell_goto(0);
 }
 
 void shell_goto(int index)
@@ -229,6 +275,16 @@ int shell_current(void)
 	return current;
 }
 
+int shell_count(void)
+{
+	return n_screens;
+}
+
+const struct screen *shell_screen(int index)
+{
+	return (index >= 0 && index < n_screens) ? screens[index] : NULL;
+}
+
 void shell_init(const struct screen *const *list, int count)
 {
 	lv_obj_t *scr = lv_screen_active();
@@ -244,7 +300,12 @@ void shell_init(const struct screen *const *list, int count)
 	}
 	build_bar(scr);
 	build_hud();
-	lv_obj_add_event_cb(scr, gesture_cb, LV_EVENT_GESTURE, NULL);
+
+	/* the wordmark and title are the way home: a generous invisible button */
+	lv_obj_t *home = ui_box(scr, 0, 0, 240, UI_BAR_H + 8);
+
+	lv_obj_add_flag(home, LV_OBJ_FLAG_CLICKABLE);
+	lv_obj_add_event_cb(home, home_cb, LV_EVENT_CLICKED, NULL);
 	shell_goto(0);
 }
 
@@ -255,8 +316,14 @@ void shell_tick(void)
 	if (touch_user_button_pressed()) {
 		shell_toggle_hud();
 	}
+	update_edge_swipe();
 	update_bar(now);
 	update_hud(now);
+	for (int i = 0; i < n_screens; i++) {
+		if (screens[i]->service) {
+			screens[i]->service(now);
+		}
+	}
 	if (current >= 0 && screens[current]->tick) {
 		screens[current]->tick(now);
 	}

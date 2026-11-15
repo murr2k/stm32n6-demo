@@ -60,6 +60,30 @@ lv_obj_t *ui_caption(lv_obj_t *parent, const char *text)
 	return l;
 }
 
+int32_t ui_text_width(const lv_font_t *font, const char *text)
+{
+	lv_point_t size;
+
+	lv_text_get_size(&size, text, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+	return size.x;
+}
+
+int32_t ui_draw_text(lv_layer_t *layer, const lv_font_t *font, uint32_t color, int32_t x, int32_t y,
+		     const char *text)
+{
+	lv_draw_label_dsc_t dsc;
+	int32_t w = ui_text_width(font, text);
+	lv_area_t a = {x, y, x + w + 2, y + lv_font_get_line_height(font)};
+
+	lv_draw_label_dsc_init(&dsc);
+	dsc.font = font;
+	dsc.color = lv_color_hex(color);
+	dsc.text = text;
+	dsc.text_local = 1;
+	lv_draw_label(layer, &dsc, &a);
+	return w;
+}
+
 lv_color_t ui_mix(uint32_t a, uint32_t b, uint8_t t)
 {
 	return lv_color_mix(lv_color_hex(b), lv_color_hex(a), t);

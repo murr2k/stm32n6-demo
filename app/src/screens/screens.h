@@ -11,6 +11,11 @@
 #include "platform/gfx.h"
 #include "ui/shell.h"
 
+extern const struct screen screen_home;
+extern const struct screen screen_deck;
+extern const struct screen screen_siglab;
+extern const struct screen screen_explorer;
+extern const struct screen screen_touchlab;
 extern const struct screen screen_specimen;
 
 #endif

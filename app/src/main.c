@@ -6,9 +6,11 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include "dsp/sig.h"
 #include "platform/ctl.h"
 #include "platform/gfx.h"
 #include "platform/net.h"
+#include "platform/tele.h"
 #include "platform/touch.h"
 #include "screens/screens.h"
 #include "ui/shell.h"
@@ -16,6 +18,11 @@
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 
 static const struct screen *const screens[] = {
+	&screen_home,
+	&screen_deck,
+	&screen_siglab,
+	&screen_explorer,
+	&screen_touchlab,
 	&screen_specimen,
 };
 
@@ -28,6 +35,7 @@ int main(void)
 		return 0;
 	}
 	touch_init();
+	sig_init();
 	net_start();
 	shell_init(screens, ARRAY_SIZE(screens));
 	LOG_INF("ui up");
@@ -45,6 +53,7 @@ int main(void)
 		default:
 			break;
 		}
+		tele_poll(k_uptime_get_32());
 		shell_tick();
 		gfx_run_frame();
 	}
