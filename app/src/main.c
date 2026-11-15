@@ -51,10 +51,14 @@ int main(void)
 
 		switch (ctl_poll(&arg)) {
 		case CTL_SCREEN:
+			shell_note_input();
 			shell_goto(arg);
 			break;
 		case CTL_HUD:
 			shell_toggle_hud();
+			break;
+		case CTL_ATTRACT:
+			shell_start_attract();
 			break;
 		default:
 			break;

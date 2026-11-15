@@ -26,6 +26,13 @@ struct screen {
 	void (*service)(uint32_t now_ms);
 	/* Draw a live thumbnail into r->box for the Home tile. */
 	void (*mini)(const struct raster *r);
+
+	/* Attract mode (the demo running itself when nobody touches it). */
+	uint16_t attract_secs;          /* how long to stay; 0 means the default */
+	bool attract_skip;              /* never visit: needs a person to make sense */
+	bool (*available)(void);        /* visit only while this returns true */
+	void (*attract_start)(void);    /* called on arrival, e.g. to start a clip */
+	bool (*attract_busy)(void);     /* stay until this returns false */
 };
 
 void shell_init(const struct screen *const *screens, int count);
@@ -38,6 +45,12 @@ int shell_current(void);
 int shell_count(void);
 const struct screen *shell_screen(int index);
 void shell_toggle_hud(void);
+
+/* Something other than a touch counted as user input (remote control). */
+void shell_note_input(void);
+/* Enter attract mode now instead of after the idle timeout. */
+void shell_start_attract(void);
+bool shell_in_attract(void);
 
 /* Hide (or show again) the status bar and the current screen while a
  * full-screen view covers them.

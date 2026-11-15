@@ -53,6 +53,14 @@ void raster_trace(const struct raster *r, int x0, const int32_t *y_q, int n, uin
 void raster_envelope(const struct raster *r, int x0, const int32_t *lo_q, const int32_t *hi_q, int n,
 		     uint32_t rgb, int half_w, uint8_t a);
 
+/* An envelope with a translucent body (opacity body_a) and opaque edges, the
+ * same pixels as raster_envelope() followed by raster_trace() on lo_q and on
+ * hi_q, but column by column: each column's cache lines are visited once
+ * instead of three times, which is where the time goes on a noisy signal.
+ */
+void raster_band(const struct raster *r, int x0, const int32_t *lo_q, const int32_t *hi_q, int n,
+		 uint32_t rgb, int body_half_w, uint8_t body_a, int edge_half_w);
+
 /* Gradient fill between the trace and y_base: opacity a_top at y_top fading to
  * zero at y_base.
  */

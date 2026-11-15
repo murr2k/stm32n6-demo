@@ -135,6 +135,55 @@ static void vspan(const struct raster *r, int x, int top_q, int bot_q, uint32_t 
 	}
 }
 
+/* Column i of a trace: the sample, joined to the neighbours' midpoints so steep
+ * segments stay connected.
+ */
+static inline void trace_col(const int32_t *y_q, int i, int n, int32_t *lo_out, int32_t *hi_out)
+{
+	int32_t lo = y_q[i], hi = y_q[i];
+
+	if (i > 0) {
+		int32_t m = (y_q[i - 1] + y_q[i]) / 2;
+
+		lo = MIN(lo, m);
+		hi = MAX(hi, m);
+	}
+	if (i < n - 1) {
+		int32_t m = (y_q[i + 1] + y_q[i]) / 2;
+
+		lo = MIN(lo, m);
+		hi = MAX(hi, m);
+	}
+	*lo_out = lo;
+	*hi_out = hi;
+}
+
+/* Column i of an envelope: its range, extended to close the gap to a
+ * neighbour whose range does not overlap this one.
+ */
+static inline void envelope_col(const int32_t *lo_q, const int32_t *hi_q, int i, int n, int32_t *lo_out,
+				int32_t *hi_out)
+{
+	int32_t lo = lo_q[i], hi = hi_q[i];
+
+	if (i > 0) {
+		if (hi_q[i - 1] < lo) {
+			lo = (hi_q[i - 1] + lo) / 2;
+		} else if (lo_q[i - 1] > hi) {
+			hi = (lo_q[i - 1] + hi) / 2;
+		}
+	}
+	if (i < n - 1) {
+		if (hi_q[i + 1] < lo) {
+			lo = (hi_q[i + 1] + lo) / 2;
+		} else if (lo_q[i + 1] > hi) {
+			hi = (lo_q[i + 1] + hi) / 2;
+		}
+	}
+	*lo_out = lo;
+	*hi_out = hi;
+}
+
 void raster_trace(const struct raster *r, int x0, const int32_t *y_q, int n, uint32_t rgb, int half_w,
 		  uint8_t a)
 {
@@ -142,21 +191,9 @@ void raster_trace(const struct raster *r, int x0, const int32_t *y_q, int n, uin
 	int i1 = MIN(n - 1, r->clip.x2 - x0);
 
 	for (int i = i0; i <= i1; i++) {
-		int32_t lo = y_q[i], hi = y_q[i];
+		int32_t lo, hi;
 
-		/* Join to the neighbours' midpoints so steep segments stay connected. */
-		if (i > 0) {
-			int32_t m = (y_q[i - 1] + y_q[i]) / 2;
-
-			lo = MIN(lo, m);
-			hi = MAX(hi, m);
-		}
-		if (i < n - 1) {
-			int32_t m = (y_q[i + 1] + y_q[i]) / 2;
-
-			lo = MIN(lo, m);
-			hi = MAX(hi, m);
-		}
+		trace_col(y_q, i, n, &lo, &hi);
 		vspan(r, x0 + i, lo - half_w, hi + half_w, rgb, a);
 	}
 }
@@ -168,24 +205,28 @@ void raster_envelope(const struct raster *r, int x0, const int32_t *lo_q, const 
 	int i1 = MIN(n - 1, r->clip.x2 - x0);
 
 	for (int i = i0; i <= i1; i++) {
-		int32_t lo = lo_q[i], hi = hi_q[i];
+		int32_t lo, hi;
 
-		/* close the gap to a neighbour whose range does not overlap this one */
-		if (i > 0) {
-			if (hi_q[i - 1] < lo) {
-				lo = (hi_q[i - 1] + lo) / 2;
-			} else if (lo_q[i - 1] > hi) {
-				hi = (lo_q[i - 1] + hi) / 2;
-			}
-		}
-		if (i < n - 1) {
-			if (hi_q[i + 1] < lo) {
-				lo = (hi_q[i + 1] + lo) / 2;
-			} else if (lo_q[i + 1] > hi) {
-				hi = (lo_q[i + 1] + hi) / 2;
-			}
-		}
+		envelope_col(lo_q, hi_q, i, n, &lo, &hi);
 		vspan(r, x0 + i, lo - half_w, hi + half_w, rgb, a);
+	}
+}
+
+void raster_band(const struct raster *r, int x0, const int32_t *lo_q, const int32_t *hi_q, int n,
+		 uint32_t rgb, int body_half_w, uint8_t body_a, int edge_half_w)
+{
+	int i0 = MAX(0, r->clip.x1 - x0);
+	int i1 = MIN(n - 1, r->clip.x2 - x0);
+
+	for (int i = i0; i <= i1; i++) {
+		int32_t lo, hi;
+
+		envelope_col(lo_q, hi_q, i, n, &lo, &hi);
+		vspan(r, x0 + i, lo - body_half_w, hi + body_half_w, rgb, body_a);
+		trace_col(lo_q, i, n, &lo, &hi);
+		vspan(r, x0 + i, lo - edge_half_w, hi + edge_half_w, rgb, 255);
+		trace_col(hi_q, i, n, &lo, &hi);
+		vspan(r, x0 + i, lo - edge_half_w, hi + edge_half_w, rgb, 255);
 	}
 }
 
@@ -265,6 +306,17 @@ void raster_ring(const struct raster *r, int cx_q, int cy_q, int radius_q, int w
 	int y1 = MAX((cy_q - radius_q) >> RQ, r->clip.y1);
 	int y2 = MIN(((cy_q + radius_q) >> RQ) + 1, r->clip.y2);
 	int inner_q = radius_q - width_q;
+	const int half = RQ_ONE / 2;
+
+	/* Squared-distance bounds that settle a pixel without a square root: only
+	 * the pixels on an edge need the distance itself. Each bound is the
+	 * conservative side of the edge_cov() thresholds, so the result is the same.
+	 */
+	uint32_t outside2 = (uint32_t)((radius_q + half) * (radius_q + half));
+	uint32_t full2 = radius_q > half ? (uint32_t)((radius_q - half) * (radius_q - half)) : 0;
+	bool ring = width_q > 0;
+	uint32_t hole2 = ring && inner_q > half ? (uint32_t)((inner_q - half) * (inner_q - half)) : 0;
+	uint32_t solid2 = ring && inner_q + half > 0 ? (uint32_t)((inner_q + half) * (inner_q + half)) : 0;
 
 	for (int y = y1; y <= y2; y++) {
 		int dy = (y << RQ) + RQ_ONE / 2 - cy_q;
@@ -272,11 +324,21 @@ void raster_ring(const struct raster *r, int cx_q, int cy_q, int radius_q, int w
 
 		for (int x = x1; x <= x2; x++, p++) {
 			int dx = (x << RQ) + RQ_ONE / 2 - cx_q;
-			int d = (int)isqrt((uint32_t)(dx * dx + dy * dy));
-			uint32_t c = edge_cov(radius_q - d);
+			uint32_t d2 = (uint32_t)(dx * dx + dy * dy);
+			uint32_t c;
 
-			if (width_q > 0) {
-				c = c * edge_cov(d - inner_q) / 255;
+			if (d2 >= outside2 || (hole2 && d2 <= hole2)) {
+				continue;
+			}
+			if (d2 <= full2 && d2 >= solid2 && full2) {
+				c = 255;
+			} else {
+				int d = (int)isqrt(d2);
+
+				c = edge_cov(radius_q - d);
+				if (ring) {
+					c = c * edge_cov(d - inner_q) / 255;
+				}
 			}
 			if (c) {
 				*p = raster_blend(*p, rgb, c * a / 255);

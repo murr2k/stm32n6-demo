@@ -26,8 +26,10 @@ SR = score.SR
 
 
 def encode(name: str, title: str, q: int) -> None:
-    subprocess.run([sys.executable, str(ROOT / "tools" / "n6v.py"), "encode", str(OUT / f"{name}.mp4"), "-o",
-                    str(OUT / f"{name}.n6v"), "--title", title, "--q", str(q)], check=True)
+    # sound from the WAV, not from the master's AAC track
+    subprocess.run([sys.executable, str(ROOT / "tools" / "n6v.py"), "encode", str(OUT / f"{name}.mp4"), "--audio",
+                    str(OUT / f"{name}.wav"), "-o", str(OUT / f"{name}.n6v"), "--title", title, "--q", str(q)],
+                   check=True)
 
 
 # ---- flow ---------------------------------------------------------------------

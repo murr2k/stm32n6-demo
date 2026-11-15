@@ -4,6 +4,7 @@
  *
  *   screen <n>                 switch screen
  *   hud                        toggle the performance HUD
+ *   attract                    start attract mode now
  *   stats                      one line of frame statistics
  *   video                      one line of player status
  *   audio                      DAC half-buffer count and underruns
@@ -26,6 +27,7 @@ enum ctl_cmd {
 	CTL_NONE,
 	CTL_SCREEN,
 	CTL_HUD,
+	CTL_ATTRACT,
 };
 
 /* UI thread: fetch the next pending UI command, if any. */

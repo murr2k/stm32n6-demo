@@ -14,4 +14,13 @@ config APP_MEDIA
 	select USE_STM32_HAL_DMA
 	select USE_STM32_HAL_DMA_EX
 
+# The N657's Cortex-M55 has a double-precision FPU (MVFR0 = 0x10110221, FPDP
+# field = 2), but Zephyr 4.4.0's SoC definition only selects CPU_HAS_FPU, so
+# the build used -mfpu=fpv5-sp-d16 and every `double` operation was a library
+# call. That cost Explorer 2 to 5 ms a frame.
+config APP_FPU_DOUBLE
+	bool "Use the double-precision FPU"
+	default y
+	select CPU_HAS_FPU_DOUBLE_PRECISION
+
 source "Kconfig.zephyr"

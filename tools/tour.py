@@ -2,10 +2,11 @@
 """Unattended review of the running demo.
 
 Visits every screen, lets it run, records frame statistics and a screenshot,
-then exercises the multi-touch paths with injected contacts. Output goes to
-captures/tour/.
+then exercises the multi-touch paths with injected contacts, a run of screen
+transitions, audio and video playback, and one lap of attract mode. Output
+goes to captures/tour/. Takes about four minutes.
 
-Usage: tour.py [--host IP] [--screens home,deck,...]
+Usage: tour.py [--host IP] [--screens home,deck,...] [--no-touch] [--no-media] [--no-attract]
 """
 from __future__ import annotations
 
@@ -77,6 +78,40 @@ def media_tests(host: str) -> None:
     time.sleep(0.5)
 
 
+def transition_test(host: str) -> None:
+    """Screen changes: the fade is done by the LTDC, so none may cost a frame."""
+    send(host, ["screen 0"])
+    time.sleep(1.5)
+    send(host, ["reset"])
+    before = stats(host)
+    order = [1, 2, 3, 5, 6, 0, 2, 4, 1, 0]
+    for i in order:
+        send(host, [f"screen {i}"])
+        time.sleep(0.9)
+    s = stats(host)
+    print(f"transitions: {len(order)} screen changes, frame worst {s['render_worst_us'] / 1000:.2f} ms, "
+          f"dropped {int(s['dropped'] - before['dropped'])}")
+
+
+def attract_test(host: str, secs: float) -> None:
+    """Attract mode, one lap: every screen it shows, Explorer's zoom tour and the film.
+
+    No screenshots here: reading the frame buffer back costs the UI one frame
+    (an 18 ms copy to PSRAM), which would be counted as a drop.
+    """
+    send(host, ["screen 0"])
+    time.sleep(1.5)
+    send(host, ["reset"])
+    before, a0 = stats(host), kv(host, "audio")
+    send(host, ["attract"])
+    time.sleep(secs)
+    s, a1 = stats(host), kv(host, "audio")
+    send(host, ["screen 0"])  # counts as input: ends attract mode
+    print(f"attract mode: {secs:.0f} s, frame worst {s['render_worst_us'] / 1000:.2f} ms, "
+          f"dropped {int(s['dropped'] - before['dropped'])}, "
+          f"audio underruns {int(a1.get('errors', 0) - a0.get('errors', 0))}")
+
+
 def touch_tests(host: str) -> None:
     # Touch Lab: three contacts held, one of them dragged.
     send(host, [f"screen {SCREENS.index('touchlab')}"])
@@ -123,15 +158,20 @@ def main() -> None:
     ap.add_argument("--screens", default=",".join(SCREENS))
     ap.add_argument("--no-touch", action="store_true")
     ap.add_argument("--no-media", action="store_true")
+    ap.add_argument("--no-attract", action="store_true")
     ap.add_argument("--run", type=float, default=5.0, help="seconds measured per screen")
+    ap.add_argument("--attract", type=float, default=100.0, help="seconds of attract mode (one lap is about 95)")
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     for name in a.screens.split(","):
         visit(a.host, SCREENS.index(name), name, settle=2.0, run=a.run)
     if not a.no_touch:
         touch_tests(a.host)
+    transition_test(a.host)
     if not a.no_media:
         media_tests(a.host)
+    if not a.no_attract:
+        attract_test(a.host, a.attract)
     send(a.host, ["screen 0"])
 
 

@@ -25,7 +25,8 @@ not to be modified from here.
 ```
 
 - Verify UI work by looking: `shot.py` then Read the PNG. `tour.py` must show
-  0 dropped frames on every screen before a commit.
+  0 dropped frames on every screen, in the transitions and in the attract-mode
+  lap before a commit (about four minutes; `--no-attract` for a quick pass).
 - Build times: a source-only change is about 2 min; any `prj.conf`, Kconfig or
   CMake change rebuilds LVGL and takes 6 to 8 min. Batch config changes.
 
@@ -47,7 +48,10 @@ not to be modified from here.
 - `tools/n6.py` is the only supported way to flash and start the board.
 - UI loop (main.c): `tele_poll`, `shell_tick` (edge swipes, bar, every
   screen's `service`, the visible screen's `tick`), then `gfx_run_frame`
-  (LVGL timers, render, present). LVGL has no theme; everything is styled from
+  (LVGL timers, render, present). The shell also owns transitions and attract
+  mode: 90 s without a touch report starts a lap through the screens, steered
+  by each screen's `attract_secs`, `attract_skip`, `available`,
+  `attract_start` and `attract_busy` (ui/shell.h). LVGL has no theme; everything is styled from
   `ui/theme.h` tokens.
 - Dense visuals do not use LVGL draw calls: a widget's `LV_EVENT_DRAW_MAIN`
   handler gets a `struct raster` and writes pixels into the layer buffer
@@ -115,6 +119,29 @@ not to be modified from here.
   (about 10 ms here). Moving 14 axis labels did exactly that. Draw moving text
   with `ui_draw_text()` inside the widget's draw handler, and spread bursts of
   label updates over several frames (see deck.c `update_stage`).
+- **The app is built for the double-precision FPU (`APP_FPU_DOUBLE` in
+  app/Kconfig selects `CPU_HAS_FPU_DOUBLE_PRECISION`). Do not remove it.**
+  **Why:** Zephyr 4.4.0's N6 SoC definition only selects `CPU_HAS_FPU`, which
+  gives `-mfpu=fpv5-sp-d16` and turns every `double` operation into a library
+  call (the core has DP: MVFR0 = 0x10110221). Explorer's per-column `double`
+  maths cost 2 to 5 ms a frame and dropped frames during its zoom tour. Check
+  with `-mfpu=fpv5-d16` in `build/app/compile_commands.json`.
+- **A click at the same place in a clip on every run: suspect the clip before
+  the playback.** Check before touching firmware: extract the PCM from the
+  `.n6v`, compare it with the WAV and look for isolated steps. **Why:** the
+  film had steps of 4000 LSB at 6.24 s and 9.6 s, bass notes that stopped
+  mid-cycle in `media/film/score.py`; the playback faults seen so far all
+  showed in the underrun counter. Every voice mixed by `score.add()` gets a release ramp,
+  and clips take audio from the WAV (`n6v.py encode --audio`), never from the
+  MP4's AAC track.
+- **Screen transitions fade with the LTDC layer alpha (`gfx_set_fade`), not
+  by blending in the frame buffer.** **Why:** a software veil over the content
+  area dropped one frame on every transition; the hardware fade costs nothing
+  and hides the frame that builds the new screen. `LTDC->BCCR` must stay equal
+  to `C_BG0` or the fade flashes a different colour.
+- **A screenshot (`shot.py`, tcp/5555) costs the UI one frame.** **Why:** the
+  1.5 MB copy to PSRAM takes about 18 ms. Never grab inside a window whose
+  dropped-frame count is being measured (tour.py reads the stats first).
 - **Pad JPEG input to a whole number of 32-bit words past the EOI marker.**
   **Why:** the HAL feeds the codec word by word; with a length that is not a
   multiple of four the end marker is never sent and the decode times out a
@@ -134,6 +161,9 @@ not to be modified from here.
 - Touch, navigation, motion and colour were checked on the panel by the user on 2026-11-14 (all good). The repository is public: keep host names, serial numbers and personal paths out of committed files.
 - Audio out works and is underrun-free in the automated checks; the sample
   clock is PLL2 (HSI-based), measured 47.6 to 47.7 kHz. Video is slaved to it.
+- The user reported a crackle at the same place in the film on every run
+  (2026-11-15). The soundtrack's note-end clicks were fixed and reflashed the
+  same day; not yet confirmed by ear that this was the crackle they meant.
 - A formatted 32 GB microSD card is in the slot (2026-11-15). Plan: media
   library on the card with upload over Ethernet (needs the `fatfs` module and
   a read-ahead buffer in the player). Writing 84 MB of clips to the XSPI flash

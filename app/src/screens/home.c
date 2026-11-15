@@ -78,4 +78,5 @@ const struct screen screen_home = {
 	.title = "Home",
 	.create = create,
 	.tick = tick,
+	.attract_secs = 7,
 };

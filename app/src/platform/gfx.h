@@ -51,6 +51,12 @@ lv_display_t *gfx_display(void);
  */
 const uint8_t *gfx_snapshot(void);
 
+/* Fade the whole display towards the background colour in hardware: the LTDC
+ * layer's constant alpha, 255 = fully visible. Costs no CPU time, unlike
+ * blending a veil over the frame buffer. Takes effect at the next vertical blank.
+ */
+void gfx_set_fade(uint8_t alpha);
+
 /* Time of the most recent buffer swap, gfx_now_us() timebase. */
 uint32_t gfx_last_present_us(void);
 

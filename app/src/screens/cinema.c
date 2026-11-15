@@ -436,6 +436,26 @@ static void mini(const struct raster *r)
 	}
 }
 
+/* Attract mode: play the first clip once, then let the shell move on. */
+static void attract_start(void)
+{
+	if (n_clips > 0 && open_clip < 0) {
+		open_player(0);
+		overlay_until = k_uptime_get_32() + 1500;
+	}
+}
+
+static bool attract_busy(void)
+{
+	struct player_status st;
+
+	if (open_clip < 0) {
+		return false;
+	}
+	player_get_status(&st);
+	return st.playing;
+}
+
 const struct screen screen_cinema = {
 	.title = "Cinema",
 	.blurb = "Video with sound",
@@ -443,4 +463,7 @@ const struct screen screen_cinema = {
 	.tick = tick,
 	.hide = hide,
 	.mini = mini,
+	.attract_secs = 3,
+	.attract_start = attract_start,
+	.attract_busy = attract_busy,
 };

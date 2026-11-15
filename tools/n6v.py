@@ -78,6 +78,8 @@ def cmd_encode(a: argparse.Namespace) -> None:
                         "-q:v", str(a.q), "-an", str(t / "%06d.jpg")], check=True)
         if a.audio_lavfi:
             asrc = ["-f", "lavfi", "-i", a.audio_lavfi]
+        elif a.audio:
+            asrc = ["-i", a.audio]
         else:
             asrc = [*src]
         r = subprocess.run([*base, *asrc, *cut, "-vn", "-ac", "2", "-ar", "48000", "-f", "s16le",
@@ -154,6 +156,7 @@ def main() -> None:
     e.add_argument("--start", type=float)
     e.add_argument("--duration", type=float)
     e.add_argument("--lavfi", action="store_true", help="input is an ffmpeg lavfi graph")
+    e.add_argument("--audio", help="take audio from this file instead (a WAV keeps it lossless)")
     e.add_argument("--audio-lavfi", help="take audio from this lavfi source instead")
     e.set_defaults(fn=cmd_encode)
     i = sub.add_parser("info"); i.add_argument("files", nargs="+"); i.set_defaults(fn=cmd_info)

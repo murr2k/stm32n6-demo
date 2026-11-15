@@ -293,6 +293,15 @@ class Writer:
             sys.exit("ffmpeg failed")
 
 
+def remux_audio(mp4: Path, wav: Path) -> None:
+    """Give an existing master a new soundtrack without rendering the picture again."""
+    tmp = mp4.with_name(mp4.stem + ".remux.mp4")
+    subprocess.run([ffmpeg_exe(), "-hide_banner", "-loglevel", "error", "-y", "-i", str(mp4), "-i", str(wav),
+                    "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "256k", "-shortest",
+                    str(tmp)], check=True)
+    tmp.replace(mp4)
+
+
 def write_wav(path: Path, stereo: np.ndarray, rate: int = 48000) -> None:
     import wave
 

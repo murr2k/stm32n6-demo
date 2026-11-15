@@ -130,9 +130,7 @@ static void plot_draw(lv_event_t *e)
 			/* translucent body with crisp edges: a dense signal reads as a
 			 * band with structure instead of a solid block
 			 */
-			raster_envelope(&r, r.box.x1, lo_q, hi_q, PW, ch_color[ch], 4, 85);
-			raster_trace(&r, r.box.x1, lo_q, PW, ch_color[ch], 9, 255);
-			raster_trace(&r, r.box.x1, hi_q, PW, ch_color[ch], 9, 255);
+			raster_band(&r, r.box.x1, lo_q, hi_q, PW, ch_color[ch], 4, 85, 9);
 		} else {
 			/* zoomed past one sample per pixel: interpolate, then mark the samples */
 			for (int x = 0; x < PW; x++) {
@@ -481,4 +479,5 @@ const struct screen screen_explorer = {
 	.tick = tick,
 	.show = show,
 	.mini = mini,
+	.attract_secs = 24, /* long enough for its own tour of the zoom levels */
 };

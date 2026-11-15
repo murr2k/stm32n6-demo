@@ -24,19 +24,30 @@ def hz(midi: float) -> float:
     return 440.0 * 2 ** ((midi - 69) / 12)
 
 
+RELEASE = 0.005  # s, fade applied to the end of every voice by add()
+
+
 def tt(dur: float) -> np.ndarray:
     return np.arange(int(dur * SR)) / SR
 
 
 def add(mix: np.ndarray, sig: np.ndarray, at: float, gain: float = 1.0, pan: float = 0.0) -> None:
-    """Mix a mono signal in at time `at` with constant-power panning (-1..1)."""
+    """Mix a mono signal in at time `at` with constant-power panning (-1..1).
+
+    The last RELEASE seconds are faded out. A voice that simply stops is a
+    step in the waveform wherever it was in its cycle, and a step is a click:
+    the bass used to end at up to 7 % of full scale, every bar.
+    """
     i = int(at * SR)
     n = min(len(sig), mix.shape[0] - i)
     if n <= 0:
         return
+    sig = sig[:n].copy()
+    r = min(n, int(RELEASE * SR))
+    sig[n - r:] *= 0.5 * (1 + np.cos(np.pi * np.arange(1, r + 1) / r))
     a = (pan + 1) * np.pi / 4
-    mix[i:i + n, 0] += sig[:n] * gain * np.cos(a)
-    mix[i:i + n, 1] += sig[:n] * gain * np.sin(a)
+    mix[i:i + n, 0] += sig * gain * np.cos(a)
+    mix[i:i + n, 1] += sig * gain * np.sin(a)
 
 
 def band_noise(dur: float, lo: float, hi: float) -> np.ndarray:
@@ -65,14 +76,16 @@ def pluck(freq: float) -> np.ndarray:
 
 def bass_note(freq: float, dur: float) -> np.ndarray:
     t = tt(dur)
-    env = np.minimum(t / 0.01, 1.0) * np.exp(-t / (dur * 0.9))
+    # the decay alone leaves a third of the level at the end: release over 40 ms (three cycles)
+    env = np.minimum(t / 0.01, 1.0) * np.exp(-t / (dur * 0.9)) * np.minimum((dur - t) / 0.04, 1.0)
     return (np.sin(2 * np.pi * freq * t) + 0.25 * np.sin(4 * np.pi * freq * t)) * env
 
 
 def kick() -> np.ndarray:
     t = tt(0.32)
     f = 42 + 80 * np.exp(-t / 0.035)
-    return np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t / 0.13) + 0.25 * band_noise(0.32, 2000, 7000) * np.exp(-t / 0.004)
+    body = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t / 0.13) * np.minimum((0.32 - t) / 0.03, 1.0)
+    return body + 0.25 * band_noise(0.32, 2000, 7000) * np.exp(-t / 0.004)
 
 
 def hat() -> np.ndarray:

@@ -8,9 +8,9 @@ rules are: lock to the panel refresh, no fake data, and show the measurements.
 > **Status: eight screens, video playback and audio output work on hardware.**
 > Every screen holds the panel's 59.98 Hz with no dropped frames in the
 > automated run, a 48 s original film plays from flash at 30 fps with stereo
-> sound, and touch, motion, colour and sound have been checked by hand. Not
-> built yet: microphone input, SD card media library, screen transitions.
-> See [Status](#status).
+> sound, and touch, motion, colour and sound have been checked by hand. Left
+> alone for 90 seconds it tours itself. Not built yet: microphone input, SD
+> card media library. See [Status](#status).
 
 | | |
 |---|---|
@@ -116,7 +116,7 @@ The firmware listens on these ports (trusted LAN only, no authentication):
 | Port | Purpose | Host tool |
 |---|---|---|
 | tcp/5555 | One frame of the display, captured at a frame boundary | `tools/shot.py` |
-| tcp/5556 | Text commands: switch screen, frame statistics, inject touches, audio and video status | `tools/ctl.py` |
+| tcp/5556 | Text commands: switch screen, start attract mode, frame statistics, inject touches, audio and video status | `tools/ctl.py` |
 | udp/5557 | Host telemetry in, echo out | `host/companion.py` |
 
 ```powershell
@@ -128,7 +128,9 @@ The firmware listens on these ports (trusted LAN only, no authentication):
 `tour.py` is the regression check: it visits each screen, measures frame time
 and dropped frames over five seconds, saves screenshots to `captures/tour/`,
 then drives Touch Lab and Explorer with injected multi-touch (three contacts,
-a pinch, a flick, an edge swipe).
+a pinch, a flick, an edge swipe), makes ten screen changes, plays the film and
+runs one lap of attract mode. About four minutes; a screenshot costs the UI
+one frame (an 18 ms copy to PSRAM), so none is taken inside a measured window.
 
 ## Layout
 
@@ -158,22 +160,49 @@ captures/               screenshots and logs pulled off the board (not committed
 
 | Screen | What it shows | Frame time, avg / worst |
 |---|---|---|
-| Home | A tile per screen; each thumbnail is drawn live by that screen's code | 4.9 / 5.9 ms |
-| Flight Deck | Frame time, CPU share per thread, heaps, Ethernet rates: the board measuring itself | 2.6 / 6.2 ms |
-| Signal Lab | Triggered scope, log-frequency spectrum with peak hold and cursor, waterfall; one 1024-point Helium FFT per frame (about 220 us) | 7.5 / 9.4 ms |
-| Explorer | 2^20 samples x 4 channels with a min/max pyramid in PSRAM; pan, pinch, cursor, auto tour | 2.8 / 12.8 ms |
-| Touch Lab | Five contacts with trails, crosshairs, distance, report rate, touch-to-swap time | 1.5 / 2.1 ms |
+| Home | A tile per screen; each thumbnail is drawn live by that screen's code | 4.5 / 5.5 ms |
+| Flight Deck | Frame time, CPU share per thread, heaps, Ethernet rates: the board measuring itself | 2.6 / 6.9 ms |
+| Signal Lab | Triggered scope, log-frequency spectrum with peak hold and cursor, waterfall; one 1024-point Helium FFT per frame (about 220 us) | 8.2 / 9.9 ms |
+| Explorer | 2^20 samples x 4 channels with a min/max pyramid in PSRAM; pan, pinch, cursor, auto tour | 9.0 / 13.5 ms while it zooms, 3 ms at rest |
+| Touch Lab | Five contacts with trails, crosshairs, distance, report rate, touch-to-swap time | 1.5 / 2.3 ms |
 | Host Link | A PC's per-core CPU load as a scrolling heat map, memory, network throughput and datagram round-trip time, pushed over UDP by `run.cmd` | updates at 10 Hz |
 | Cinema | Clips from flash, full screen, with overlay controls, scrubbing and a stats panel. Hardware JPEG decode about 9 ms a frame, DMA2D conversion 4.8 ms, video slaved to the audio clock | 30 fps video, no drops |
-| Specimen | Type scale, colour tokens, motion test | 1.8 / 2.7 ms |
+| Specimen | Type scale, colour tokens, motion test | 1.9 / 2.8 ms |
 
 Frame time is all UI-thread work for a frame (screen logic, layout, render),
 measured on the board over five seconds per screen by `tools/tour.py`. The
-budget at 59.98 Hz is 16.67 ms.
+budget at 59.98 Hz is 16.67 ms. The same run makes ten screen changes and one
+100 s lap of attract mode: no dropped frame in either, worst frame 13.5 ms.
+
+Explorer is the screen closest to the budget, and it was over it until the
+build was told about the FPU: the N657's Cortex-M55 has double precision, but
+Zephyr 4.4.0 builds for single precision, so every `double` in the per-column
+position maths was a library call (2 to 5 ms a frame). `app/Kconfig` selects
+the double-precision FPU; the sample markers also stopped taking a square
+root per pixel.
 
 Signal Lab's source is a built-in signal generator and Explorer's dataset is
 synthetic; both are labelled as such on screen. Everything on Flight Deck is
 measured.
+
+### Navigation, transitions, attract mode
+
+Swipe in from the left or right edge to step between screens, tap a Home tile
+to jump, tap the wordmark and title at the left of the bar to go back. The
+USER button toggles a frame-time overlay.
+
+A screen change is a 110 ms fade out, the swap, then a 200 ms fade in while
+the new screen settles upwards by 10 px. The fade is not rendered: it is the
+LTDC layer's constant alpha, reloaded at the vertical blank, over a
+background colour that matches the theme. The frame that builds the new
+screen is therefore drawn while the display is dark, and a transition costs
+no frame time (blending a veil in software dropped a frame on every one).
+
+After 90 seconds without a touch the demo runs itself: it steps through the
+screens, lets Explorer finish its zoom tour, plays the film once in Cinema,
+and skips screens that would show nothing (Host Link without a companion,
+Touch Lab without fingers). The title bar says so while it does, and any
+touch hands control back. `ctl.py attract` starts it immediately.
 
 ## Video and audio
 
@@ -183,16 +212,20 @@ XSPI flash at `0x7042_0000`.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install skia-python     # once, for the film renderer
-.\.venv\Scripts\python.exe media\film\n6_film.py          # render the 48 s film + soundtrack
+.\.venv\Scripts\python.exe media\film\n6_film.py          # render the 48 s film + soundtrack (about 12 minutes)
+.\.venv\Scripts\python.exe media\film\n6_film.py --score-only   # new soundtrack, same picture (seconds)
 .\.venv\Scripts\python.exe media\film\extras.py           # "Flow" and the A/V sync check
-.\.venv\Scripts\python.exe tools\n6v.py encode any.mp4 -o media\out\clip.n6v --title "My clip"
+.\.venv\Scripts\python.exe tools\n6v.py encode any.mp4 -o media\out\clip.n6v --title "My clip" [--audio sound.wav]
 .\.venv\Scripts\python.exe tools\n6v.py pack media\out\n6_film.n6v media\out\flow.n6v media\out\sync.n6v -o media\out\media.bin
 .\.venv\Scripts\python.exe tools\n6v.py flash media\out\media.bin   # about 8 minutes for 84 MB over SWD
 ```
 
 The three clips are original: motion graphics drawn with Skia in the demo's
 own design language and a soundtrack synthesised with numpy
-(`media/film/`). `n6v.py encode` accepts anything ffmpeg can read.
+(`media/film/`). `n6v.py encode` accepts anything ffmpeg can read. The
+original clips take their sound from the rendered WAV (`--audio`), so the PCM
+in flash is bit-identical to what the score produced; the MP4 masters carry
+AAC and are only for viewing on a PC.
 
 How playback works:
 
@@ -210,6 +243,14 @@ the codec has to be told it is the clock target; and the DMA's buffer has to
 live in AHBSRAM1, because CPU write bursts into AXI RAM starve the DMA long
 enough to underrun the 83 us SAI FIFO.
 
+A fourth fault was not in the playback at all. Clicks at fixed places in the
+film (6.24 s, 9.6 s and every four bars after) were in the soundtrack: the
+score ended bass notes wherever they happened to be in their cycle, a step of
+up to 7 % of full scale. Every voice now ends in a release ramp
+(`media/film/score.py`). The check that settled it is worth repeating before
+blaming hardware: extract the PCM from the `.n6v`, compare it with the WAV,
+and look for isolated steps in both.
+
 ## Status
 
 | Item | State |
@@ -226,7 +267,10 @@ enough to underrun the 83 us SAI FIFO.
 | Host Link | Working: 340 of 340 datagrams answered in the test run, 1.4 to 2.9 ms round trip as timed by the host |
 | Web remote, firmware update over the network | Not started |
 | SD card media library | Not started (a card is fitted) |
-| Screen transitions, attract mode, soak test | Not started |
+| Screen transitions | Working: hardware fade, no frame dropped in the automated run |
+| Attract mode | Working: starts after 90 s idle, one lap is about 95 s |
+| Soak test | Not started |
+
 ## License
 
 Apache-2.0 for the sources in this repository, matching Zephyr (see [LICENSE](LICENSE)). The IBM Plex fonts under `assets/fonts/src` and the bitmap fonts generated from them are under the SIL Open Font License 1.1 (`assets/fonts/src/OFL.txt`).

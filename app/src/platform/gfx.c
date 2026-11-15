@@ -16,6 +16,9 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include <soc.h>
+#include <stm32n6xx_hal.h>
+
 #include "gfx.h"
 
 LOG_MODULE_REGISTER(gfx, LOG_LEVEL_INF);
@@ -169,6 +172,9 @@ int gfx_init(void)
 	lv_display_set_flush_cb(disp, flush_cb);
 
 	t_last_present = win_start_us = t_frame_start = gfx_now_us();
+	/* what shows through when the layer is faded: the theme's screen colour (0x080C12) */
+	LTDC->BCCR = 0x080C12;
+	LTDC->SRCR = LTDC_SRCR_VBR;
 	display_blanking_off(panel);
 	return 0;
 }
@@ -217,6 +223,12 @@ const uint8_t *gfx_snapshot(void)
 const struct gfx_stats *gfx_stats(void)
 {
 	return &stats;
+}
+
+void gfx_set_fade(uint8_t alpha)
+{
+	LTDC_Layer1->CACR = alpha;
+	LTDC->SRCR = LTDC_SRCR_VBR; /* load the shadow register at the next vertical blank */
 }
 
 uint32_t gfx_last_present_us(void)

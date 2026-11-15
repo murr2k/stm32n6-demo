@@ -115,4 +115,5 @@ const struct screen screen_specimen = {
 	.blurb = "Type and colour",
 	.create = create,
 	.mini = mini,
+	.attract_skip = true,
 };

@@ -76,6 +76,8 @@ static int handle(char *line, char *out, size_t out_len)
 		post(CTL_SCREEN, a[0]);
 	} else if (!strcmp(cmd, "hud")) {
 		post(CTL_HUD, 0);
+	} else if (!strcmp(cmd, "attract")) {
+		post(CTL_ATTRACT, 0);
 	} else if (!strcmp(cmd, "reset")) {
 		gfx_stats_reset_worst();
 	} else if (!strcmp(cmd, "tap") && n >= 3) {

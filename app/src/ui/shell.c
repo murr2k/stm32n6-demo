@@ -251,11 +251,169 @@ static void home_cb(lv_event_t *e)
 	shell_goto(0);
 }
 
+/* ---- transitions and attract mode --------------------------------------- */
+
+#define FADE_OUT_MS       110
+#define FADE_IN_MS        200
+#define FADE_HOLD_MS      34
+#define ATTRACT_IDLE_MS   90000
+#define ATTRACT_DWELL_MS  12000
+#define ATTRACT_MAX_MS    75000   /* upper bound on a "busy" stay */
+
+static lv_obj_t *bar_demo;
+static bool fading;
+static int fade_target = -1, queued = -1;
+static bool attract;
+static uint32_t last_input_ms, attract_next_ms, attract_enter_ms, seen_reports;
+
+static void switch_to(int index);
+
+/* The fade is done by the display controller (layer alpha), so it costs no
+ * render time; the frame that swaps the screens and the new screen's first
+ * full render both happen while the display is dark.
+ */
+static void fade_exec(void *var, int32_t v)
+{
+	ARG_UNUSED(var);
+	gfx_set_fade((uint8_t)v);
+}
+
+static void rise(void *obj, int32_t v)
+{
+	lv_obj_set_y(obj, UI_CONTENT_Y + v);
+}
+
+static void fade_in_done(lv_anim_t *a)
+{
+	ARG_UNUSED(a);
+	fading = false;
+	gfx_set_fade(255);
+	if (queued >= 0 && queued != current) {
+		int q = queued;
+
+		queued = -1;
+		shell_goto(q);
+	}
+	queued = -1;
+}
+
+static void fade_out_done(lv_anim_t *a)
+{
+	lv_anim_t in;
+
+	ARG_UNUSED(a);
+	switch_to(fade_target);
+
+	/* fade back in while the new screen settles upwards by a few pixels */
+	lv_anim_init(&in);
+	lv_anim_set_var(&in, &fading);
+	lv_anim_set_exec_cb(&in, fade_exec);
+	lv_anim_set_values(&in, 0, 255);
+	lv_anim_set_duration(&in, FADE_IN_MS);
+	lv_anim_set_delay(&in, FADE_HOLD_MS);
+	lv_anim_set_path_cb(&in, lv_anim_path_ease_out);
+	lv_anim_set_completed_cb(&in, fade_in_done);
+	lv_anim_start(&in);
+
+	lv_anim_init(&in);
+	lv_anim_set_var(&in, roots[current]);
+	lv_anim_set_exec_cb(&in, rise);
+	lv_anim_set_values(&in, 10, 0);
+	lv_anim_set_duration(&in, FADE_IN_MS);
+	lv_anim_set_delay(&in, FADE_HOLD_MS);
+	lv_anim_set_path_cb(&in, lv_anim_path_ease_out);
+	lv_anim_start(&in);
+	lv_obj_set_y(roots[current], UI_CONTENT_Y + 10);
+}
+
 void shell_goto(int index)
 {
+	lv_anim_t out;
+
 	if (index < 0 || index >= n_screens || index == current) {
 		return;
 	}
+	if (current < 0) {
+		switch_to(index);
+		return;
+	}
+	if (fading) {
+		queued = index; /* go there once this transition has finished */
+		return;
+	}
+	fading = true;
+	fade_target = index;
+	lv_anim_init(&out);
+	lv_anim_set_var(&out, &fading);
+	lv_anim_set_exec_cb(&out, fade_exec);
+	lv_anim_set_values(&out, 255, 0);
+	lv_anim_set_duration(&out, FADE_OUT_MS);
+	lv_anim_set_path_cb(&out, lv_anim_path_ease_in);
+	lv_anim_set_completed_cb(&out, fade_out_done);
+	lv_anim_start(&out);
+}
+void shell_note_input(void)
+{
+	last_input_ms = k_uptime_get_32();
+	if (attract) {
+		attract = false;
+		lv_obj_add_flag(bar_demo, LV_OBJ_FLAG_HIDDEN);
+	}
+}
+
+void shell_start_attract(void)
+{
+	attract = true;
+	attract_next_ms = k_uptime_get_32();
+	lv_obj_remove_flag(bar_demo, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_align_to(bar_demo, bar_title, LV_ALIGN_OUT_RIGHT_MID, 12, 0);
+}
+
+bool shell_in_attract(void)
+{
+	return attract;
+}
+
+static void update_attract(uint32_t now)
+{
+	struct touch_state ts;
+
+	touch_get(&ts);
+	if (ts.reports != seen_reports) {
+		seen_reports = ts.reports;
+		shell_note_input();
+	}
+	if (!attract) {
+		if (now - last_input_ms > ATTRACT_IDLE_MS) {
+			shell_start_attract();
+		}
+		return;
+	}
+	if (fading || (int32_t)(now - attract_next_ms) < 0) {
+		return;
+	}
+	const struct screen *cur = screens[current];
+
+	if (cur->attract_busy && cur->attract_busy() && now - attract_enter_ms < ATTRACT_MAX_MS) {
+		attract_next_ms = now + 500;
+		return;
+	}
+	for (int step = 1; step <= n_screens; step++) {
+		int i = (current + step) % n_screens;
+		const struct screen *s = screens[i];
+
+		if (s->attract_skip || (s->available && !s->available())) {
+			continue;
+		}
+		attract_enter_ms = now;
+		attract_next_ms = now + (s->attract_secs ? s->attract_secs * 1000 : ATTRACT_DWELL_MS);
+		shell_goto(i);
+		return;
+	}
+}
+
+static void switch_to(int index)
+{
 	if (current >= 0) {
 		if (screens[current]->hide) {
 			screens[current]->hide();
@@ -269,6 +427,12 @@ void shell_goto(int index)
 	lv_label_set_text(bar_title, screens[current]->title);
 	if (screens[current]->show) {
 		screens[current]->show();
+	}
+	if (attract) {
+		lv_obj_align_to(bar_demo, bar_title, LV_ALIGN_OUT_RIGHT_MID, 12, 0);
+		if (screens[current]->attract_start) {
+			screens[current]->attract_start();
+		}
 	}
 }
 
@@ -320,8 +484,12 @@ void shell_init(const struct screen *const *list, int count)
 		lv_obj_add_flag(roots[i], LV_OBJ_FLAG_HIDDEN);
 		screens[i]->create(roots[i]);
 	}
+
 	build_bar(scr);
 	build_hud();
+	bar_demo = ui_label(bar_obj, &font_mono_12, C_AZURE, "DEMO  TOUCH TO TAKE OVER");
+	lv_obj_set_style_text_letter_space(bar_demo, 1, 0);
+	lv_obj_add_flag(bar_demo, LV_OBJ_FLAG_HIDDEN);
 
 	/* the wordmark and title are the way home: a generous invisible button */
 	lv_obj_t *home = ui_box(scr, 0, 0, 240, UI_BAR_H + 8);
@@ -339,6 +507,7 @@ void shell_tick(void)
 		shell_toggle_hud();
 	}
 	update_edge_swipe();
+	update_attract(now);
 	update_bar(now);
 	update_hud(now);
 	for (int i = 0; i < n_screens; i++) {

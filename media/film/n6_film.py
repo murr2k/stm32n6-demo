@@ -318,6 +318,8 @@ def render_frame(t: float, out, sa, sb) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--preview", type=float, nargs="*", help="write PNG stills at these times and exit")
+    ap.add_argument("--score-only", action="store_true",
+                    help="render the soundtrack again and keep the existing picture (seconds instead of minutes)")
     a = ap.parse_args()
     out, sa, sb = new_surface(), new_surface(), new_surface()
 
@@ -331,17 +333,23 @@ def main() -> None:
         print(f"{len(times)} stills in {OUT / 'stills'}")
         return
 
-    wav = OUT / "n6_film.wav"
+    wav, mp4 = OUT / "n6_film.wav", OUT / "n6_film.mp4"
     write_wav(wav, score.render(TOTAL, T[2:-1], T[1]))
-    w = Writer(OUT / "n6_film.mp4", wav)
-    n = int(TOTAL * FPS)
-    for f in range(n):
-        render_frame(f / FPS, out, sa, sb)
-        w.write(out)
-        if f % 150 == 0:
-            print(f"frame {f}/{n}", flush=True)
-    w.close()
-    subprocess.run([sys.executable, str(ROOT / "tools" / "n6v.py"), "encode", str(OUT / "n6_film.mp4"), "-o",
+    if a.score_only:
+        if not mp4.exists():
+            sys.exit(f"{mp4} does not exist: render the film once without --score-only")
+        remux_audio(mp4, wav)
+    else:
+        w = Writer(mp4, wav)
+        n = int(TOTAL * FPS)
+        for f in range(n):
+            render_frame(f / FPS, out, sa, sb)
+            w.write(out)
+            if f % 150 == 0:
+                print(f"frame {f}/{n}", flush=True)
+        w.close()
+    # the clip takes its sound from the WAV, not from the master's AAC track
+    subprocess.run([sys.executable, str(ROOT / "tools" / "n6v.py"), "encode", str(mp4), "--audio", str(wav), "-o",
                     str(OUT / "n6_film.n6v"), "--title", "N6: the film", "--q", "4"], check=True)
 
 

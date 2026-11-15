@@ -253,4 +253,5 @@ const struct screen screen_hostlink = {
 	.create = create,
 	.tick = tick,
 	.mini = mini,
+	.available = hostlink_online,
 };

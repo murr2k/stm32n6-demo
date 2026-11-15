@@ -309,4 +309,5 @@ const struct screen screen_touchlab = {
 	.create = create,
 	.tick = tick,
 	.mini = mini,
+	.attract_skip = true,
 };
