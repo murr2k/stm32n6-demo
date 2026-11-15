@@ -161,9 +161,9 @@ not to be modified from here.
 - Touch, navigation, motion and colour were checked on the panel by the user on 2026-11-14 (all good). The repository is public: keep host names, serial numbers and personal paths out of committed files.
 - Audio out works and is underrun-free in the automated checks; the sample
   clock is PLL2 (HSI-based), measured 47.6 to 47.7 kHz. Video is slaved to it.
-- The user reported a crackle at the same place in the film on every run
-  (2026-11-15). The soundtrack's note-end clicks were fixed and reflashed the
-  same day; not yet confirmed by ear that this was the crackle they meant.
+- The film's crackle (same place every run) was the soundtrack's note-end
+  clicks; fixed and confirmed by ear by the user on 2026-11-15, along with
+  transitions and attract mode ("sound is excellent, graphics smooth and crisp").
 - A formatted 32 GB microSD card is in the slot (2026-11-15). Plan: media
   library on the card with upload over Ethernet (needs the `fatfs` module and
   a read-ahead buffer in the player). Writing 84 MB of clips to the XSPI flash
