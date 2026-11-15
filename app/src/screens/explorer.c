@@ -476,7 +476,7 @@ static void mini(const struct raster *r)
 
 const struct screen screen_explorer = {
 	.title = "Explorer",
-	.blurb = "A million samples, zoomable",
+	.blurb = "A million samples",
 	.create = create,
 	.tick = tick,
 	.show = show,

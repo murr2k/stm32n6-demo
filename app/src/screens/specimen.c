@@ -112,7 +112,7 @@ static void mini(const struct raster *r)
 
 const struct screen screen_specimen = {
 	.title = "Specimen",
-	.blurb = "Type, colour, motion",
+	.blurb = "Type and colour",
 	.create = create,
 	.mini = mini,
 };

@@ -305,7 +305,7 @@ static void mini(const struct raster *r)
 
 const struct screen screen_touchlab = {
 	.title = "Touch Lab",
-	.blurb = "Five-point multi-touch",
+	.blurb = "Five-point touch",
 	.create = create,
 	.tick = tick,
 	.mini = mini,

@@ -438,7 +438,7 @@ static void mini(const struct raster *r)
 
 const struct screen screen_cinema = {
 	.title = "Cinema",
-	.blurb = "Video, decoded in hardware",
+	.blurb = "Video with sound",
 	.create = create,
 	.tick = tick,
 	.hide = hide,

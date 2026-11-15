@@ -453,7 +453,7 @@ static void mini(const struct raster *r)
 
 const struct screen screen_deck = {
 	.title = "Flight Deck",
-	.blurb = "The board measuring itself",
+	.blurb = "The board, measured",
 	.create = create,
 	.tick = tick,
 	.mini = mini,

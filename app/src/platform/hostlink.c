@@ -1,0 +1,92 @@
+/*
+ * Host link receiver. See hostlink.h.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+#include <string.h>
+
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/net/socket.h>
+#include <zephyr/sys/byteorder.h>
+
+#include "hostlink.h"
+#include "net.h"
+
+LOG_MODULE_REGISTER(hostlink, LOG_LEVEL_INF);
+
+#define HL_PORT 5557
+#define HL_HDR  24
+
+static struct hl_state st;
+static uint32_t last_seq;
+
+const struct hl_state *hostlink_state(void)
+{
+	return &st;
+}
+
+bool hostlink_online(void)
+{
+	return st.last_ms != 0 && k_uptime_get_32() - st.last_ms < 2000;
+}
+
+static void hostlink_thread(void *p1, void *p2, void *p3)
+{
+	struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(HL_PORT)};
+	static uint8_t buf[HL_HDR + HL_MAX_CORES + 8];
+	int s;
+
+	net_wait_ip();
+	s = zsock_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (s < 0 || zsock_bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+		LOG_ERR("socket setup failed (%d)", errno);
+		return;
+	}
+	LOG_INF("host link on udp/%d", HL_PORT);
+	for (;;) {
+		struct sockaddr_in from;
+		socklen_t from_len = sizeof(from);
+		ssize_t n = zsock_recvfrom(s, buf, sizeof(buf), 0, (struct sockaddr *)&from, &from_len);
+
+		if (n < HL_HDR || memcmp(buf, "N6HL", 4) != 0) {
+			continue;
+		}
+		uint32_t seq = sys_get_le32(buf + 4);
+		uint8_t cores = MIN(buf[23], HL_MAX_CORES);
+
+		if (n < HL_HDR + cores) {
+			continue;
+		}
+		/* answer first: the reply is what the host times */
+		uint8_t reply[8] = {'N', '6', 'H', 'R'};
+
+		sys_put_le32(seq, reply + 4);
+		zsock_sendto(s, reply, sizeof(reply), 0, (struct sockaddr *)&from, from_len);
+
+		if (st.packets > 0 && seq > last_seq + 1) {
+			st.lost += seq - last_seq - 1;
+		} else if (seq < last_seq) {
+			st.lost = 0; /* the companion restarted */
+		}
+		last_seq = seq;
+		st.packets++;
+		st.rtt_us = sys_get_le32(buf + 8);
+		st.rx_bps = sys_get_le32(buf + 12);
+		st.tx_bps = sys_get_le32(buf + 16);
+		st.cpu_x10 = sys_get_le16(buf + 20);
+		st.mem_pct = buf[22];
+		st.n_cores = cores;
+		net_addr_ntop(AF_INET, &from.sin_addr, st.host_ip, sizeof(st.host_ip));
+
+		uint16_t h = st.head;
+
+		memset(st.core_hist[h], 0, HL_MAX_CORES);
+		memcpy(st.core_hist[h], buf + HL_HDR, cores);
+		st.cpu_hist[h] = st.cpu_x10;
+		st.rtt_hist[h] = st.rtt_us;
+		st.head = (h + 1) % HL_HISTORY;
+		st.last_ms = k_uptime_get_32();
+	}
+}
+K_THREAD_DEFINE(hostlink, 3072, hostlink_thread, NULL, NULL, NULL, 8, 0, 0);

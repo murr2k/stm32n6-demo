@@ -52,9 +52,9 @@ static void create(lv_obj_t *root)
 		minis[i] = ui_box(t, 16, 16, tw - 32, th - 96);
 		lv_obj_add_event_cb(minis[i], mini_draw, LV_EVENT_DRAW_MAIN, (void *)(intptr_t)(i + 1));
 
-		lv_obj_t *title = ui_label(t, &font_head_28, C_TEXT, s->title);
+		lv_obj_t *title = ui_label(t, cols > 3 ? &font_head_20 : &font_head_28, C_TEXT, s->title);
 
-		lv_obj_set_pos(title, 16, th - 74);
+		lv_obj_set_pos(title, 16, cols > 3 ? th - 66 : th - 74);
 		lv_obj_t *blurb = ui_label(t, &font_text_14, C_TEXT2, s->blurb ? s->blurb : "");
 
 		lv_obj_set_pos(blurb, 16, th - 38);

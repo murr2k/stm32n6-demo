@@ -5,12 +5,12 @@ real-time data visualization, and full-screen video with sound, built on
 Zephyr 4.4.0 and LVGL 9.5. The audience is engineers and UX designers, so the
 rules are: lock to the panel refresh, no fake data, and show the measurements.
 
-> **Status: seven screens, video playback and audio output work on hardware.**
+> **Status: eight screens, video playback and audio output work on hardware.**
 > Every screen holds the panel's 59.98 Hz with no dropped frames in the
 > automated run, a 48 s original film plays from flash at 30 fps with stereo
 > sound, and touch, motion, colour and sound have been checked by hand. Not
-> built yet: the host-link screen, microphone input, SD card media library,
-> screen transitions. See [Status](#status).
+> built yet: microphone input, SD card media library, screen transitions.
+> See [Status](#status).
 
 | | |
 |---|---|
@@ -94,14 +94,30 @@ target supply, so `STM32_Programmer_CLI --power off/on` does it without a
 finger on the board. The loader has the mirror-image problem: it only works
 against the boot ROM's idle state, not against running firmware.
 
+## Host Link
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install psutil    # once
+.\run.cmd                                           # or: run.cmd --host <board ip>
+```
+
+`run.cmd` starts `host/companion.py`, which sends this PC's per-core CPU
+load, memory use and network throughput to the board ten times a second and
+times the board's reply to each datagram. Only those aggregate numbers leave
+the PC: no process names, no host name. It opens no listening port (replies
+return on the socket it sends from), so there is no firewall prompt. Without
+the companion the Host Link screen says it is waiting; it does not show
+placeholder data.
+
 ## Remote control and automated review
 
-The firmware listens on two TCP ports (trusted LAN only, no authentication):
+The firmware listens on these ports (trusted LAN only, no authentication):
 
 | Port | Purpose | Host tool |
 |---|---|---|
-| 5555 | One frame of the display, captured at a frame boundary | `tools/shot.py` |
-| 5556 | Text commands: switch screen, frame statistics, inject touches | `tools/ctl.py` |
+| tcp/5555 | One frame of the display, captured at a frame boundary | `tools/shot.py` |
+| tcp/5556 | Text commands: switch screen, frame statistics, inject touches, audio and video status | `tools/ctl.py` |
+| udp/5557 | Host telemetry in, echo out | `host/companion.py` |
 
 ```powershell
 .\.venv\Scripts\python.exe tools\ctl.py "screen 2" stats
@@ -126,6 +142,7 @@ app/                    Zephyr application (also the west manifest repo)
   src/screens/          one file per screen
 assets/                 font sources (IBM Plex, OFL)
 media/film/             the original film, companion clips and soundtrack, as code
+host/companion.py       PC telemetry sender for the Host Link screen (run.cmd)
 tools/
   n6.py                 build / flash / run / console
   shot.py, ctl.py       screenshot and remote-control clients
@@ -146,6 +163,7 @@ captures/               screenshots and logs pulled off the board (not committed
 | Signal Lab | Triggered scope, log-frequency spectrum with peak hold and cursor, waterfall; one 1024-point Helium FFT per frame (about 220 us) | 7.5 / 9.4 ms |
 | Explorer | 2^20 samples x 4 channels with a min/max pyramid in PSRAM; pan, pinch, cursor, auto tour | 2.8 / 12.8 ms |
 | Touch Lab | Five contacts with trails, crosshairs, distance, report rate, touch-to-swap time | 1.5 / 2.1 ms |
+| Host Link | A PC's per-core CPU load as a scrolling heat map, memory, network throughput and datagram round-trip time, pushed over UDP by `run.cmd` | updates at 10 Hz |
 | Cinema | Clips from flash, full screen, with overlay controls, scrubbing and a stats panel. Hardware JPEG decode about 9 ms a frame, DMA2D conversion 4.8 ms, video slaved to the audio clock | 30 fps video, no drops |
 | Specimen | Type scale, colour tokens, motion test | 1.8 / 2.7 ms |
 
@@ -205,7 +223,8 @@ enough to underrun the 83 us SAI FIFO.
 | Audio out | 48 kHz stereo to the headphone jack, zero underruns in the automated run, checked by ear. The sample clock comes from the HSI-fed PLL2 and measures 47.6 to 47.7 kHz (0.7 % low) |
 | Stand-alone boot (BOOT1 = L) | Not tested, needs a hand on the switch |
 | Microphone as Signal Lab source | Not started (generator only) |
-| Host companion, Host Link screen, web remote, OTA | Not started |
+| Host Link | Working: 340 of 340 datagrams answered in the test run, 1.4 to 2.9 ms round trip as timed by the host |
+| Web remote, firmware update over the network | Not started |
 | SD card media library | Not started (a card is fitted) |
 | Screen transitions, attract mode, soak test | Not started |
 ## License

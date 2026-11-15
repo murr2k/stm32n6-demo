@@ -319,7 +319,7 @@ static void mini(const struct raster *r)
 
 const struct screen screen_siglab = {
 	.title = "Signal Lab",
-	.blurb = "Scope, spectrum, waterfall",
+	.blurb = "Scope and spectrum",
 	.create = create,
 	.tick = tick,
 	.hide = hide,
