@@ -29,6 +29,7 @@ static const struct screen *const screens[] = {
 	&screen_coremap,
 	&screen_cinema,
 	&screen_specimen,
+	&screen_hood,
 };
 
 int main(void)

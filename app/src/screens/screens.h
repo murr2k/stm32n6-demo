@@ -20,6 +20,7 @@ extern const struct screen screen_cinema;
 extern const struct screen screen_hostlink;
 extern const struct screen screen_coremap;
 extern const struct screen screen_specimen;
+extern const struct screen screen_hood;
 
 /* Home: add n placeholder tiles after the real ones, to try the panning with
  * more tiles than there are screens (remote control, tools/tour.py); 0 takes

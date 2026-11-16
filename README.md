@@ -5,7 +5,7 @@ real-time data visualization, and full-screen video with sound, built on
 Zephyr 4.4.0 and LVGL 9.5. The audience is engineers and UX designers, so the
 rules are: lock to the panel refresh, no fake data, and show the measurements.
 
-> **Status: nine screens, video playback and audio output work on hardware.**
+> **Status: ten screens, video playback and audio output work on hardware.**
 > Every screen holds the panel's 59.98 Hz with no dropped frames in the
 > automated run, a 48 s original film plays at 30 fps with stereo sound from
 > flash or from a microSD card, clips upload to the card over Ethernet at
@@ -210,6 +210,7 @@ captures/               screenshots and logs pulled off the board (not committed
 | Core Map | The same PC's logical processors as posts on a floor plan of its chip (P-cores, E-cores, SMT threads), height and colour by load. Drag to orbit, pinch to zoom and pan, tap a post, double tap to reset. Software 3D: projected in floating point, filled as anti-aliased quads, no depth buffer | 6.8 / 7.7 ms; 12 ms with every post at 100 % |
 | Cinema | Clips from flash and from the microSD card in a gallery that scrolls sideways; full screen with overlay controls, scrubbing (the picture follows the finger, the sound is cross-faded 85 ms pieces of the clip) and a stats panel (decode and conversion time, bit rate, seek time, read-ahead). Hardware JPEG decode about 10 ms a frame, DMA2D conversion 4.8 ms, video slaved to the audio clock | 30 fps video, no drops; a video frame costs the UI 6.2 ms, 9.2 ms with the controls up, 9.9 ms while scrubbing |
 | Specimen | Type scale, colour tokens, motion test | 1.9 / 3.1 ms |
+| Under the Hood | This firmware, measured live from Zephyr's own statistics: a 3D plot with one ridge per thread showing its share of the CPU over the last 12 s (drag to orbit, pinch to zoom, tap a ridge, tap SCALE to stretch the height down to 1 %), every thread with its CPU share and stack high-water mark, and the static RAM, LVGL pool, kernel heap and PSRAM in use. Interrupt time counts to the thread it interrupted | 7.2 / 11.1 ms |
 
 Frame time is all UI-thread work for a frame (screen logic, layout, render),
 measured on the board over five seconds per screen by `tools/tour.py`. The
@@ -378,6 +379,7 @@ and look for isolated steps in both.
 | Web remote, firmware update over the network | Not started |
 | microSD media library | Working: FAT32/exFAT, upload over Ethernet at 2 to 4 MB/s with CRC, streamed playback with 0 stalls in the automated run. Checked by measurement and screenshots, not yet by eye and ear on the panel. Not built: noticing a card put in after boot without `n6v.py mount` (untested with a real insertion), fast seeks in files of a gigabyte or more |
 | Core Map | Working: 22 logical processors of the test PC, no dropped frame while orbiting and zooming under full load |
+| Under the Hood | Working: no dropped frame at any of the four height scales in the automated run. The screen measures itself: with it showing, the UI thread takes about a third more of the CPU |
 | Cinema slider | A crash while scrubbing (picture frozen, a repeating noise) was reported once. Probable cause, found in a console log of real touches: Zephyr's input queue (16 events, drained by a thread at the lowest priority) dropped events, a lost release left the slider pressed, and the player then seeks to the same frame 60 times a second. Touch callbacks now run in the driver's context with no queue. Checked on the panel afterwards: five fingers on Touch Lab register and release cleanly with no event dropped, and the slider no longer hangs the film. Injected touches bypass the driver, which is why 2400 fuzzed actions never showed it. The slider's sound was rough as well (every UI frame restarted it at the finger); it is now short pieces of the clip cross-faded into each other while the finger moves and silence while it rests, measured free of steps and confirmed by ear on the panel. Other defects found on the way are fixed: a drag starting near a screen edge closed the film, seeks were counted as dropped frames and as stalls, Back could cost the UI a frame, the touch target was 44 px |
 | Screen transitions | Working: hardware fade, no frame dropped in the automated run |
 | Attract mode | Working: starts after 90 s idle, one lap is about 95 s |

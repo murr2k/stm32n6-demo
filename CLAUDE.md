@@ -108,7 +108,7 @@ not to be modified from here.
   duration: sound and picture pause, the underrun counter moves).
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
   Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
-  explorer, touchlab, hostlink, coremap, cinema, specimen. Home shows two
+  explorer, touchlab, hostlink, coremap, cinema, specimen, hood. Home shows two
   rows of four tiles; a ninth and later ones go into further columns on the
   right (same tile size) and the field pans sideways. `ctl.py "hometiles 5"`
   adds placeholder tiles to try that with (`hometiles 0` removes them). The
@@ -375,6 +375,14 @@ not to be modified from here.
   CN5 before anything else. Research on this (other owners' reports, ST's
   and third-party settings, datasheet, MDF pitfalls, ranked tests):
   `reports/STM32N6 DK microphone noise only.md`, notes in `research_notes/`.
+- **Under the Hood draws a run of equal samples as one polygon and one line**
+  (hood.c). **Why:** each `raster_poly` call costs tens of microseconds
+  whatever its size; one polygon per sample (10 ridges x 47) cost 8.3 ms a
+  frame at the stretched scales and dropped a frame. Merged, and with 36
+  samples instead of 48: 6.6 to 7.3 ms, worst 12.3 ms. Its numbers come
+  from `k_thread_runtime_stats_get` (interrupt time is charged to the
+  interrupted thread) and `k_thread_stack_space_get`, which needs
+  `CONFIG_INIT_STACKS`.
 - **Touch coordinates are panel coordinates**, not content-area coordinates:
   subtract `UI_CONTENT_Y` only when positioning objects inside a screen root.
 - **Label the origin of data on screen.** Generated or synthetic sources say
@@ -449,5 +457,12 @@ not to be modified from here.
   show it, but it has not shown a real sound yet: U13 gives noise only (see
   the invariant). Open: a known good microphone on CN5 (the PUI part needs
   `mictune 0 1 1 8 5 8 1`: 1.536 MHz, Sinc5 / 8), or a tap test on U13.
+- Unexplained, once (2026-11-15): during a tour the board stopped answering
+  the network and the debug probe could no longer see the processor at all,
+  even after the probe's own power cycle (`No STM32 target found`); the
+  user had touched the screen meanwhile. Only unplugging the board's power
+  brought it back, and the next tour passed. The console log had no fault
+  message. If it recurs, note what was attached (the camera module had just
+  been fitted) and measure the board supply before cycling it.
 - Camera (IMX335) and NPU are a later addition. Home has room now; memory is
   the question (see the budget under Architecture).
