@@ -27,7 +27,8 @@ not to be modified from here.
 .\.venv\Scripts\python.exe tools\n6v.py upload media\out\n6_film.n6v   # clip to the microSD card over Ethernet (4 MB/s); also ls, rm, df
 .\.venv\Scripts\python.exe tools\acap.py --mic --secs 3 -o captures\mic.wav   # record the microphone (24 bit), print its level
 .\.venv\Scripts\python.exe tools\dataset.py info   # Explorer's data set: must say "source flash"; pull + flash put it there
-.\run.cmd                   # host companion: live data for Host Link and Core Map
+.\run.cmd                   # host companion: live data for Host Link and Core Map; finds boards by broadcast (--host to name one)
+.\.venv\Scripts\python.exe host\companion.py --host 192.168.254.86 --cores 128   # TEST ONLY: synthetic load on 128 processors
 ```
 
 - Verify UI work by looking: `shot.py` then Read the PNG. `tour.py` must show
@@ -389,6 +390,14 @@ not to be modified from here.
   from `k_thread_runtime_stats_get` (interrupt time is charged to the
   interrupted thread) and `k_thread_stack_space_get`, which needs
   `CONFIG_INIT_STACKS`.
+- **Core Map draws at most 64 posts; a larger host is shown a post per core
+  (SMT threads averaged) or per run of processors, and the header says so.**
+  **Why:** posts overlap and overdraw each other: 64 cost 11.9 ms, 128 cost
+  21 ms (17.8 ms even as one outline polygon plus a top each) and dropped
+  every other frame. Host Link draws all 128 (7.5 ms). The datagram's core
+  count is a byte (up to 255); the board keeps 128, the core history in
+  PSRAM. Discovery: `N6HQ` to udp/5557 (broadcast) is answered with an`n  `N6HA` line of the board's services (hostlink.h); the companion asks every
+  10 s and sends to every board that answered.
 - **Touch coordinates are panel coordinates**, not content-area coordinates:
   subtract `UI_CONTENT_Y` only when positioning objects inside a screen root.
 - **Label the origin of data on screen.** Generated or synthetic sources say

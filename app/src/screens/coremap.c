@@ -26,7 +26,7 @@
 
 #define CH_Y          46 /* chart area inside the screen root */
 #define CH_H          (UI_CONTENT_H - CH_Y)
-#define MAXP          HL_MAX_CORES
+#define MAXP          64 /* posts: a larger host is shown per core, or per group (see build_groups) */
 #define MAX_ROWS      8
 #define DEG           0.017453293f
 #define PI_F          3.14159265f
@@ -58,6 +58,16 @@ struct quad {
 };
 
 static lv_obj_t *chart, *l_host, *l_cpus, *l_total, *l_sel, *l_draw, *l_wait;
+
+/* Posts and logical processors. Up to MAXP processors, one post each. Beyond
+ * that the drawing no longer fits a frame (128 posts: 17.8 ms, overlapping
+ * posts overdraw each other), so a post stands for a physical core (its SMT
+ * threads averaged) when the host told us the topology and that fits, or for
+ * a run of consecutive processors otherwise. The screen says which.
+ */
+static int grp_n;
+static uint8_t grp_first[MAXP], grp_cnt[MAXP];
+static bool grp_by_core, grouped;
 
 /* floor plan */
 static struct post posts[MAXP];
@@ -133,6 +143,58 @@ static uint32_t plan_signature(const struct hl_state *s)
  * per SMT thread at the back; short rows are centred. Otherwise a plain grid
  * about twice as wide as deep.
  */
+static void build_groups(const struct hl_state *s)
+{
+	int n = MIN(s->n_cores, HL_MAX_CORES);
+
+	grouped = n > MAXP;
+	grp_by_core = false;
+	grp_n = 0;
+	if (!grouped) {
+		for (int i = 0; i < n; i++) {
+			grp_first[grp_n] = i;
+			grp_cnt[grp_n++] = 1;
+		}
+		return;
+	}
+	if (s->topo) {
+		int g = 0;
+
+		for (int i = 0; i < n; i++) {
+			g += i == 0 || s->core_id[i] != s->core_id[i - 1] ||
+			     HL_KIND_TYPE(s->core_kind[i]) != HL_KIND_TYPE(s->core_kind[i - 1]);
+		}
+		if (g <= MAXP) {
+			for (int i = 0; i < n; i++) {
+				if (i == 0 || s->core_id[i] != s->core_id[i - 1] ||
+				    HL_KIND_TYPE(s->core_kind[i]) != HL_KIND_TYPE(s->core_kind[i - 1])) {
+					grp_first[grp_n] = i;
+					grp_cnt[grp_n++] = 0;
+				}
+				grp_cnt[grp_n - 1]++;
+			}
+			grp_by_core = true;
+			return;
+		}
+	}
+	int k = (n + MAXP - 1) / MAXP;
+
+	for (int i = 0; i < n; i += k) {
+		grp_first[grp_n] = i;
+		grp_cnt[grp_n++] = MIN(k, n - i);
+	}
+}
+
+/* "CPU 5" or "CPU 4-5": the logical processors behind post g */
+static void group_label(int g, char *buf, size_t len)
+{
+	if (grp_cnt[g] <= 1) {
+		snprintf(buf, len, "CPU %u", grp_first[g]);
+	} else {
+		snprintf(buf, len, "CPU %u-%u", grp_first[g], grp_first[g] + grp_cnt[g] - 1);
+	}
+}
+
 static void build_plan(const struct hl_state *s)
 {
 	static const struct {
@@ -141,14 +203,18 @@ static void build_plan(const struct hl_state *s)
 		    {HL_CORE_E, 1},     {HL_CORE_P, 0},     {HL_CORE_P, 1},   {HL_CORE_P, 2},   {HL_CORE_P, 3}};
 	static uint8_t row_lp[MAX_ROWS][MAXP];
 	uint8_t type[MAXP], thread[MAXP], core[MAXP], ord[MAXP], row_n[MAX_ROWS] = {0};
-	int n = MIN(s->n_cores, MAXP), rows = 0, cores_of[4] = {0}, lps_of[4] = {0};
+	int n, rows = 0, cores_of[4] = {0}, lps_of[4] = {0};
 
+	build_groups(s);
+	n = grp_n;
 	plan_hybrid = false;
 	plan_smt = false;
 	for (int i = 0; i < n; i++) {
-		type[i] = s->topo ? HL_KIND_TYPE(s->core_kind[i]) : HL_CORE_PLAIN;
-		thread[i] = s->topo ? HL_KIND_THREAD(s->core_kind[i]) : 0;
-		core[i] = s->topo ? s->core_id[i] : i;
+		int lp = grp_first[i];
+
+		type[i] = s->topo ? HL_KIND_TYPE(s->core_kind[lp]) : HL_CORE_PLAIN;
+		thread[i] = s->topo && !grouped ? HL_KIND_THREAD(s->core_kind[lp]) : 0;
+		core[i] = s->topo ? s->core_id[lp] : i;
 		plan_hybrid |= type[i] != HL_CORE_PLAIN;
 		plan_smt |= thread[i] != 0;
 	}
@@ -227,6 +293,14 @@ static void build_plan(const struct hl_state *s)
 		}
 	} else {
 		snprintf(summary, sizeof(summary), "%d", n);
+	}
+	if (grouped) {
+		if (s->n_host_cores > s->n_cores) {
+			snprintf(summary, sizeof(summary), "%d: FIRST %d, %d PER POST", s->n_host_cores, s->n_cores, grp_cnt[0]);
+		} else {
+			snprintf(summary, sizeof(summary), "%d, A POST PER %s", s->n_cores,
+				 grp_by_core ? "CORE" : grp_cnt[0] == 2 ? "PAIR" : "GROUP");
+		}
 	}
 	if (selected >= n) {
 		selected = -1;
@@ -346,6 +420,47 @@ static void wall(const struct raster *r, const struct cam *c, const float v[4][3
 	}
 }
 
+/* Convex hull of n points (n <= 8), counter-clockwise on screen; returns the
+ * number of corners. A box's outline from any viewpoint has at most six.
+ */
+static int hull(const float *px, const float *py, int n, float *hx, float *hy)
+{
+	int idx[8], h[16], k = 0;
+
+	for (int i = 0; i < n; i++) {
+		int j = i;
+
+		for (; j > 0 && (px[idx[j - 1]] > px[i] || (px[idx[j - 1]] == px[i] && py[idx[j - 1]] > py[i])); j--) {
+			idx[j] = idx[j - 1];
+		}
+		idx[j] = i;
+	}
+	for (int pass = 0; pass < 2; pass++) {
+		int start = k;
+
+		for (int m = 0; m < n; m++) {
+			int i = pass == 0 ? idx[m] : idx[n - 1 - m];
+
+			while (k >= start + 2) {
+				int a = h[k - 2], b = h[k - 1];
+				float cross = (px[b] - px[a]) * (py[i] - py[a]) - (py[b] - py[a]) * (px[i] - px[a]);
+
+				if (cross > 0.0f) {
+					break;
+				}
+				k--;
+			}
+			h[k++] = i;
+		}
+		k--; /* the last point is the first of the other half */
+	}
+	for (int i = 0; i < k && i < 8; i++) {
+		hx[i] = px[h[i]];
+		hy[i] = py[h[i]];
+	}
+	return MIN(k, 8);
+}
+
 static void scene_draw(const struct raster *r, lv_layer_t *layer, const lv_area_t *view, float yaw, float pitch,
 		       float zoom, bool full)
 {
@@ -355,7 +470,7 @@ static void scene_draw(const struct raster *r, lv_layer_t *layer, const lv_area_
 	uint8_t *order = full ? draw_order : thumb_order; /* the thumbnail must not disturb hit testing */
 	struct cam c;
 	struct quad q;
-	char buf[32];
+	char buf[48];
 
 	if (n_posts == 0) {
 		return;
@@ -414,6 +529,48 @@ static void scene_draw(const struct raster *r, lv_layer_t *layer, const lv_area_
 		const float top[4][3] = {{x0, h, z0}, {x1, h, z0}, {x1, h, z1}, {x0, h, z1}};
 		struct quad qx, qz;
 		int faces = 0;
+
+		/* Many posts (a large host): the polygon filler's cost goes with the
+		 * rows it covers, and two tall side faces are most of a post's rows.
+		 * Fill the whole outline in the side shade instead, mark the near
+		 * vertical edge with a line, and lay the top over it: about half the
+		 * rows. The faces are still projected for hit testing.
+		 */
+		if (n_posts > 32) {
+			float cx8[8], cy8[8], ox[8], oy[8];
+
+			for (int k = 0; k < 8; k++) {
+				proj(&c, k & 1 ? x1 : x0, k & 2 ? h : 0.0f, k & 4 ? z1 : z0, &cx8[k], &cy8[k]);
+			}
+			int no = hull(cx8, cy8, 8, ox, oy);
+
+			raster_poly(r, ox, oy, no, shade(rgb, 165), 255);
+			if (see_x && see_z) {
+				float ex, ey, tx, ty;
+
+				proj(&c, xf, 0, zf, &ex, &ey);
+				proj(&c, xf, h, zf, &tx, &ty);
+				raster_line(r, (int)(ex * RQ_ONE), (int)(ey * RQ_ONE), (int)(tx * RQ_ONE), (int)(ty * RQ_ONE),
+					    shade(rgb, 115), 8, 255);
+			}
+			if (full) {
+				if (see_x) {
+					quad_project(&c, side_x, &qx);
+					hit_q[i][faces++] = qx;
+				}
+				if (see_z) {
+					quad_project(&c, side_z, &qz);
+					hit_q[i][faces++] = qz;
+				}
+			}
+			quad_project(&c, top, &q);
+			raster_poly(r, q.x, q.y, 4, rgb, 255);
+			if (full) {
+				hit_q[i][faces++] = q;
+				hit_n[i] = faces;
+			}
+			continue;
+		}
 
 		/* Faces that share an edge would each be softened against what is
 		 * behind the post, leaving a hairline of background between them. So a
@@ -531,7 +688,10 @@ static void scene_draw(const struct raster *r, lv_layer_t *layer, const lv_area_
 		char name[12];
 
 		post_name(sel, name, sizeof(name));
-		snprintf(buf, sizeof(buf), "CPU %u  %s  %d %%", sel->lp, name, (int)(shown[sel->lp] + 0.5f));
+		char cpu[16];
+
+		group_label(sel->lp, cpu, sizeof(cpu));
+		snprintf(buf, sizeof(buf), "%s  %s  %d %%", cpu, name, (int)(shown[sel->lp] + 0.5f));
 		int w = ui_text_width(&font_mono_12, buf);
 		int bx = CLAMP(sel_x - w / 2, r->box.x1 + 8, r->box.x2 - w - 8);
 		int by = MAX(sel_y - 28, r->box.y1 + 4);
@@ -763,7 +923,17 @@ static void service(uint32_t now_ms)
 	/* heights glide to each 10 Hz sample instead of stepping; with no host they sink to zero */
 	moving = false;
 	for (int i = 0; i < MAXP; i++) {
-		float d = (online && i < s->n_cores ? (float)s->load[i] : 0.0f) - shown[i];
+		float target = 0.0f;
+
+		if (online && i < grp_n) {
+			uint32_t sum = 0;
+
+			for (int k = 0; k < grp_cnt[i]; k++) {
+				sum += s->load[grp_first[i] + k];
+			}
+			target = (float)sum / MAX(grp_cnt[i], 1);
+		}
+		float d = target - shown[i];
 
 		if (fabsf(d) > 0.05f) {
 			shown[i] += d * k;
@@ -811,7 +981,10 @@ static void tick(uint32_t now_ms)
 				char name[12];
 
 				post_name(&posts[i], name, sizeof(name));
-				snprintf(buf, sizeof(buf), "CPU %u  %s  %d %%", posts[i].lp, name, (int)(shown[selected] + 0.5f));
+				char cpu[16];
+
+				group_label(posts[i].lp, cpu, sizeof(cpu));
+				snprintf(buf, sizeof(buf), "%s  %s  %d %%", cpu, name, (int)(shown[selected] + 0.5f));
 			}
 		}
 		set_text(l_sel, buf);

@@ -9,7 +9,17 @@
  *     kind: bits 0-1 the core type (HL_CORE_*), bits 2-3 the SMT thread
  *     core: index of the physical core this logical processor belongs to
  * The board answers each one with "N6HR", u32 seq so the host can time the
- * round trip; the host reports the previous round trip in rtt_us.
+ * round trip; the host reports the previous round trip in rtt_us. n_cores is
+ * a byte, so a host can describe up to 255 logical processors; the board
+ * keeps HL_MAX_CORES of them.
+ *
+ * Discovery: a datagram "N6HQ" to udp/5557, usually broadcast, is answered
+ * (to the sender) with "N6HA" and one line of text: what the board is and
+ * where its services are, e.g.
+ *   N6HA N6DK board=STM32N6570-DK ip=192.168.254.86 mac=02:80:e1:4e:36:01
+ *        hostlink=5557 ctl=5556 shot=5555 media=5558 http=80 fw=<build>
+ * The host companion uses it to find boards without being told an address;
+ * the answer to a broadcast passes Windows' firewall as a reply.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -19,7 +29,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#define HL_MAX_CORES 32
+#define HL_MAX_CORES 128
 #define HL_HISTORY   250
 
 /* Core types of a hybrid CPU. HL_CORE_PLAIN: not hybrid, or not known. */
@@ -37,13 +47,14 @@ struct hl_state {
 	uint32_t rtt_us;        /* as measured by the host */
 	uint32_t rx_bps, tx_bps;/* the host's own network throughput, bytes/s */
 	uint16_t cpu_x10;
-	uint8_t mem_pct, n_cores;
+	uint8_t mem_pct, n_cores;  /* n_cores: the ones kept, at most HL_MAX_CORES */
+	uint8_t n_host_cores;      /* what the host has (up to 255) */
 	bool topo;              /* core_kind and core_id are from the host */
 	uint8_t core_kind[HL_MAX_CORES];
 	uint8_t core_id[HL_MAX_CORES];
 	uint8_t load[HL_MAX_CORES]; /* the latest sample, 0..100 */
 	uint16_t head;          /* next write index of the histories */
-	uint8_t core_hist[HL_HISTORY][HL_MAX_CORES];
+	uint8_t (*core_hist)[HL_MAX_CORES]; /* HL_HISTORY rows, in PSRAM (32 KB) */
 	uint16_t cpu_hist[HL_HISTORY];
 	uint32_t rtt_hist[HL_HISTORY];
 };

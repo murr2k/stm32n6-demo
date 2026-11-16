@@ -8,8 +8,16 @@ layout (which logical processors are P-cores, E-cores, SMT siblings). No
 process names, no host name.
 
 It opens no listening port: replies come back on the socket it sends from.
+Without --host it finds boards itself: it broadcasts a query on the board's
+port and sends to every board that answers (asked again every 10 s, so a
+board that appears later is picked up). The answer to a broadcast comes back
+to the same socket, which Windows' firewall lets through without a prompt.
 
-Usage: companion.py [--host 192.168.254.86] [--rate 10]
+--cores N replaces the real load with a synthetic pattern on N processors,
+to test how the screens cope with a large CPU. The board cannot tell it
+apart from a real host: use it for tests only.
+
+Usage: companion.py [--host IP] [--rate 10] [--cores N]
 Protocol: app/src/platform/hostlink.h
 """
 from __future__ import annotations
@@ -27,7 +35,7 @@ except ImportError:
     sys.exit("psutil is missing: .venv\\Scripts\\python.exe -m pip install psutil")
 
 PORT = 5557
-MAX_CORES = 32
+MAX_CORES = 255  # the datagram's core count is a byte; the board keeps the first 128
 PLAIN, P_CORE, E_CORE, LPE_CORE = 0, 1, 2, 3
 
 
@@ -89,9 +97,37 @@ def topology(n: int) -> bytes:
     return bytes(kind) + bytes(core_of)
 
 
+def discover(s: socket.socket, wait: float = 0.6) -> dict[str, str]:
+    """Boards on the local network: {ip: their answer line}."""
+    found: dict[str, str] = {}
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+    try:
+        s.sendto(b"N6HQ", ("255.255.255.255", PORT))
+    except OSError:
+        return found
+    t_end = time.perf_counter() + wait
+    while time.perf_counter() < t_end:
+        try:
+            data, addr = s.recvfrom(512)
+        except (socket.timeout, ConnectionResetError):
+            continue
+        if data[:4] == b"N6HA":
+            found[addr[0]] = data[5:].decode("ascii", "replace")
+    return found
+
+
+def synthetic(n: int, t: float) -> list[float]:
+    """A moving pattern for --cores tests: waves that sweep across the processors."""
+    import math
+
+    return [max(0.0, min(100.0, 50 + 45 * math.sin(t * 1.3 + i * 0.37) * math.sin(t * 0.21 + i * 0.05)))
+            for i in range(n)]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--host", default=os.environ.get("N6_HOST", "192.168.254.86"))
+    ap.add_argument("--host", default=os.environ.get("N6_HOST"), help="board address (default: find boards by broadcast)")
+    ap.add_argument("--cores", type=int, help="TEST ONLY: send a synthetic load on this many processors")
     ap.add_argument("--rate", type=float, default=10.0, help="datagrams per second")
     ap.add_argument("--secs", type=float, help="stop after this long (default: run until Ctrl+C)")
     a = ap.parse_args()
@@ -101,17 +137,34 @@ def main() -> None:
     period = 1.0 / a.rate
     n_cores = min(len(psutil.cpu_percent(percpu=True)), MAX_CORES)  # also primes the counters
     topo = topology(n_cores)
+    if a.cores:
+        n_cores, topo = min(a.cores, MAX_CORES), b""
+    boards: list[str] = [a.host] if a.host else []
+    t_discover = 0.0
     net0, t_net = psutil.net_io_counters(), time.perf_counter()
     seq, rtt_us, replies = 0, 0, 0
     t_end = time.time() + a.secs if a.secs else None
     next_t = time.perf_counter()
-    print(f"sending to {a.host}:{PORT} at {a.rate:g}/s, Ctrl+C to stop")
+    print(f"sending to {a.host}:{PORT}" if a.host else "looking for boards (broadcast on udp/5557)",
+          f"at {a.rate:g}/s, Ctrl+C to stop")
     try:
         while t_end is None or time.time() < t_end:
             next_t += period
             time.sleep(max(0.0, next_t - time.perf_counter()))
 
+            if not a.host and time.perf_counter() - t_discover > (10.0 if boards else 2.0):
+                t_discover = time.perf_counter()
+                found = discover(s)
+                for ip, line in found.items():
+                    if ip not in boards:
+                        print(f"found {ip}: {line}")
+                boards = list(found) or boards  # keep sending to the last ones if a query goes unanswered
+                next_t = time.perf_counter()
+            if not boards:
+                continue
             cores = psutil.cpu_percent(percpu=True)[:MAX_CORES]
+            if a.cores:
+                cores = synthetic(n_cores, time.perf_counter())
             mem = psutil.virtual_memory().percent
             net1, t1 = psutil.net_io_counters(), time.perf_counter()
             dt = max(t1 - t_net, 1e-3)
@@ -126,7 +179,8 @@ def main() -> None:
             if len(cores) == n_cores:
                 pkt += topo
             t_send = time.perf_counter()
-            s.sendto(pkt, (a.host, PORT))
+            for ip in boards:
+                s.sendto(pkt, (ip, PORT))
             try:
                 while True:
                     data, _ = s.recvfrom(64)

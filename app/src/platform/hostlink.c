@@ -3,15 +3,18 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+#include <stdio.h>
 #include <string.h>
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/net/net_if.h>
 #include <zephyr/net/socket.h>
 #include <zephyr/sys/byteorder.h>
 
 #include "hostlink.h"
 #include "net.h"
+#include "psram.h"
 
 LOG_MODULE_REGISTER(hostlink, LOG_LEVEL_INF);
 
@@ -35,9 +38,15 @@ bool hostlink_online(void)
 static void hostlink_thread(void *p1, void *p2, void *p3)
 {
 	struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(HL_PORT)};
-	static uint8_t buf[HL_HDR + 3 * HL_MAX_CORES + 8];
+	static uint8_t buf[HL_HDR + 3 * 255 + 8];
 	int s;
 
+	st.core_hist = psram_alloc(HL_HISTORY * HL_MAX_CORES, 32);
+	if (st.core_hist == NULL) {
+		LOG_ERR("no memory for the history");
+		return;
+	}
+	memset(st.core_hist, 0, HL_HISTORY * HL_MAX_CORES);
 	net_wait_ip();
 	s = zsock_socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (s < 0 || zsock_bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
@@ -50,6 +59,21 @@ static void hostlink_thread(void *p1, void *p2, void *p3)
 		socklen_t from_len = sizeof(from);
 		ssize_t n = zsock_recvfrom(s, buf, sizeof(buf), 0, (struct sockaddr *)&from, &from_len);
 
+		if (n >= 4 && memcmp(buf, "N6HQ", 4) == 0) {
+			static char answer[200];
+			struct net_status ns;
+			struct net_linkaddr *mac = net_if_get_link_addr(net_if_get_default());
+
+			net_get_status(&ns);
+			int len = snprintf(answer, sizeof(answer),
+					   "N6HA N6DK board=STM32N6570-DK ip=%s mac=%02x:%02x:%02x:%02x:%02x:%02x "
+					   "hostlink=%d ctl=5556 shot=5555 media=5558 http=80 fw=%s %s",
+					   ns.ip, mac->addr[0], mac->addr[1], mac->addr[2], mac->addr[3], mac->addr[4],
+					   mac->addr[5], HL_PORT, __DATE__, __TIME__);
+
+			zsock_sendto(s, answer, MIN(len, (int)sizeof(answer) - 1), 0, (struct sockaddr *)&from, from_len);
+			continue;
+		}
 		if (n < HL_HDR || memcmp(buf, "N6HL", 4) != 0) {
 			continue;
 		}
@@ -78,6 +102,7 @@ static void hostlink_thread(void *p1, void *p2, void *p3)
 		st.cpu_x10 = sys_get_le16(buf + 20);
 		st.mem_pct = buf[22];
 		st.n_cores = cores;
+		st.n_host_cores = buf[23];
 		net_addr_ntop(AF_INET, &from.sin_addr, st.host_ip, sizeof(st.host_ip));
 
 		/* the topology follows the loads when the host knows it (and all of it fits) */
