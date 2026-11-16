@@ -434,6 +434,14 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 - **Under the Hood resets its view on every visit; its zoom stops at 1.8.**
   **Why:** a view left zoomed in by earlier touches made the ribbons fill the
   screen: 18 ms frames and 7 dropped per attract visit.
+- **Face signatures, names and anything else that identifies a person stay
+  in the DK's own non-volatile storage (the microSD card in its slot) and are
+  never committed, pushed or sent off the board.** The user's rule,
+  2026-11-15. So: no control command, web page or status JSON gives out
+  signatures or names (counts only); deleting them happens on the board;
+  test images and screenshots of faces stay in `captures/` (ignored); the
+  ignore patterns in .gitignore cover signature files copied to the PC by
+  mistake. Check `git status` for them before every commit.
 - **Touch coordinates are panel coordinates**, not content-area coordinates:
   subtract `UI_CONTENT_Y` only when positioning objects inside a screen root.
 - **Label the origin of data on screen.** Generated or synthetic sources say

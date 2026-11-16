@@ -41,5 +41,11 @@ Thumbs.db
 .env
 *.secret.*
 
+# Face signatures and other personal data: they live on the board's card only
+# (CLAUDE.md), never here
+*.n6face
+/faces/
+**/faces.db
+
 # Node tooling for font generation
 /tools/fontconv/node_modules/
