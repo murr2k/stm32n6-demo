@@ -22,6 +22,9 @@
 
 LOG_MODULE_REGISTER(camera, LOG_LEVEL_INF);
 
+/* DCMIPP, newest, the UI's, the NPU's. CONFIG_VIDEO_BUFFER_POOL_NUM_MAX
+ * limits it: a fifth needs that raised too. The readers hold a frame only
+ * while they copy or crop it, so the DCMIPP is rarely left without one. */
 #define NBUF       4
 #define FRAME_SIZE (CAM_W * CAM_H * 2)
 
@@ -33,9 +36,11 @@ static bool configured;
 static volatile bool running;
 static struct camera_status status;
 static struct k_spinlock lock;
-static struct video_buffer *newest, *held;
+static struct video_buffer *newest, *held, *held_nn;
+static uint32_t newest_seq;
 static bool newest_seen;
 static K_SEM_DEFINE(go, 0, 1);
+static K_SEM_DEFINE(nn_frame, 0, 1);
 
 static void give_back(struct video_buffer *vb)
 {
@@ -136,7 +141,7 @@ static void do_stop(void)
 	}
 	k_spinlock_key_t key = k_spin_lock(&lock);
 
-	newest = held = NULL;
+	newest = held = held_nn = NULL;
 	status.running = false;
 	k_spin_unlock(&lock, key);
 }
@@ -162,8 +167,42 @@ void camera_release(void)
 	struct video_buffer *vb = held;
 
 	held = NULL;
-	if (vb == newest) {
-		vb = NULL; /* still the newest: the capture thread gives it back when the next one arrives */
+	if (vb == newest || vb == held_nn) {
+		vb = NULL; /* the capture thread or the other reader gives it back */
+	}
+	k_spin_unlock(&lock, key);
+	if (vb && running) {
+		give_back(vb);
+	}
+}
+
+int camera_wait_frame(k_timeout_t timeout)
+{
+	return k_sem_take(&nn_frame, timeout);
+}
+
+const uint16_t *camera_acquire_nn(uint32_t *seq)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	const uint16_t *p = NULL;
+
+	held_nn = newest;
+	if (held_nn) {
+		p = (const uint16_t *)held_nn->buffer;
+	}
+	*seq = newest_seq;
+	k_spin_unlock(&lock, key);
+	return p;
+}
+
+void camera_release_nn(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+	struct video_buffer *vb = held_nn;
+
+	held_nn = NULL;
+	if (vb == newest || vb == held) {
+		vb = NULL;
 	}
 	k_spin_unlock(&lock, key);
 	if (vb && running) {
@@ -213,14 +252,16 @@ static void capture_thread(void *p1, void *p2, void *p3)
 
 		old = newest;
 		newest = vb;
+		newest_seq++;
 		newest_seen = false;
-		if (old == held) {
-			old = NULL; /* the UI thread gives it back in camera_release() */
+		if (old == held || old == held_nn) {
+			old = NULL; /* its reader gives it back when it lets go */
 		}
 		k_spin_unlock(&lock, key);
 		if (old) {
 			give_back(old);
 		}
+		k_sem_give(&nn_frame);
 
 		uint32_t now = gfx_now_us();
 

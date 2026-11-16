@@ -1,0 +1,9 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/* MCUboot's view of the image slots: the same as the application's (app/boards/stm32n6570_dk.overlay). */
+&slot0_partition {
+	reg = <0x00010000 DT_SIZE_M(2)>;
+};
+
+&slot1_partition {
+	reg = <0x00210000 DT_SIZE_M(2)>;
+};

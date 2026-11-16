@@ -29,6 +29,12 @@ not to be modified from here.
 Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself (also / and /status.json)
 .\.venv\Scripts\python.exe tools\ctl.py netcfg     # the board's address; "netcfg static IP MASK GW" or "netcfg dhcp" changes it now
 .\.venv\Scripts\python.exe tools\dataset.py info   # Explorer's data set: must say "source flash"; pull + flash put it there
+.\.venv\Scripts\python.exe tools\nn.py fetch; generate; testimg; flash   # NPU networks into build-nn/ (ignored), weights into the flash
+.\.venv\Scripts\python.exe tools\nn.py check       # both networks on the board against the original models on the PC
+.\.venv\Scripts\python.exe tools\nn.py trace 0     # time per epoch block against the converter's estimate
+.\.venv\Scripts\python.exe tools\nn.py inputs      # what the hand tracker's networks last saw, as PNGs in build-nn/test
+.\.venv\Scripts\python.exe tools\ctl.py nn "nn hands" "nn bench 20 1"   # NPU and tracker status; times (net 0 palm, 1 hand)
+.\.venv\Scripts\python.exe tools\ctl.py "screen 11" "nn hands 2"   # track the built-in thumbs-up picture: gesture=7 expected
 .\run.cmd                   # host companion: live data for Host Link and Core Map; finds boards by broadcast (--host to name one)
 .\.venv\Scripts\python.exe host\companion.py --host 192.168.254.86 --cores 128   # TEST ONLY: synthetic load on 128 processors
 ```
@@ -72,17 +78,24 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   (no LV_USE_OS).
 - Memory: app RAM is 840 KB at 0x3400_0000; frame buffers A/B at 0x340D_2000
   and 0x3424_9000 (internal SRAM); PSRAM is a bump allocator (`psram_alloc`),
-  first 2 MB reserved for the screenshot copy. Budget, measured 2026-11-15:
-  internal RAM 771 of 840 KB (LVGL pool 256 KB, heap 64 KB, the card's two
-  32 KB I/O buffers, stacks), all screens' LVGL objects are built at boot and
-  kept; PSRAM 11.6 of 32 MB and never freed: the player 7.0 MB (4 MB
-  read-ahead window, three 576 KB decode buffers, 1 MB index), Cinema 2.4 MB,
-  screenshot 2 MB (25.6 MB when Explorer's data set has to be generated
-  because the flash holds no copy); code 0.89 MB in a 1.5 MB slot of a 128 MB
-  flash. A new demo with buffers needs a place in this before it is written.
+  starting after the linker's own PSRAM section (`__PSRAM_end`: the video
+  layer's pool, the NPU runtime's blob copies); the screenshot copy is taken
+  from it at boot; the top 4 MB (from `PSRAM_NPU_BASE`, 0x91C0_0000) are the
+  NPU's spill memory, which the converter addresses directly and
+  `psram_alloc` never hands out. Budget, measured 2026-11-15: internal RAM
+  815 of 840 KB (LVGL pool 256 KB, heap 64 KB, the card's two 32 KB I/O
+  buffers, stacks; the NPU's thread 8 KB), all screens' LVGL objects are
+  built at boot and kept; PSRAM 13.4 of 28 MB and never freed: the player
+  7.0 MB (4 MB read-ahead window, three 576 KB decode buffers, 1 MB index),
+  Cinema 2.4 MB, camera 2.1 MB, screenshot 1.5 MB (14 MB more when Explorer's
+  data set has to be generated because the flash holds no copy); code
+  1.77 MB in a 2 MB slot of a 128 MB flash. A new demo with buffers needs a place in this before it is written.
 - Flash map (128 MB at 0x7000_0000): MCUboot and the two image slots up to
-  0x7041_0000, media partition 0x7042_0000 to 0x7700_0000 (108 MB, 84 MB
-  used), Explorer's data set 0x7700_0000 to the end (16 MB, 14 MB used).
+  0x7041_0000, media partition 0x7042_0000 to 0x7580_0000 (84 MB, 83.7 MB
+  used: full, more clips go on the card), the NPU's weights 0x7580_0000 to
+  0x7700_0000 (24 MB: palm detector at 0x7580_0000, hand landmarks at
+  0x75A0_0000, written by `tools/nn.py flash`), Explorer's data set
+  0x7700_0000 to the end (16 MB, 14 MB used).
   Read-only data belongs in flash and is used in place; `tools/dataset.py`
   (pull, flash, info, erase) is the pattern for getting it there.
 - Media: a clip is either in the flash media partition (read in place) or a
@@ -113,11 +126,28 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   app/CMakeLists.txt (`SHIELD st_b_cams_imx_mb1854`). The DCMIPP demosaics and
   scales 2592 x 1944 to 592 x 444 RGB565 (`video_set_compose_format`: the
   driver wants the compose rectangle first) into four PSRAM buffers imported
-  with `video_import_buffer` (the video layer's own pool is in internal RAM
-  and kept at its minimum). ST's ISP middleware (west module`n  `zephyr-stm32-mw-isp` v0.4.0, fetched under `/st/`) hooks into the driver
+  with `video_import_buffer` (the video layer's own pool is kept at its
+  minimum; `CONFIG_VIDEO_BUFFER_POOL_NUM_MAX=4` also caps the imports). ST's ISP middleware (west module
+  `zephyr-stm32-mw-isp` v0.4.0, fetched under `/st/`) hooks into the driver
   and runs exposure and white balance. The capture thread hands the newest
   frame to the screen, which copies it with DMA2D (`dma2d_rgb565` in
-  jpegdec.c, UI thread only like the JPEG conversion).
+  jpegdec.c, UI thread only like the JPEG conversion), and to the NPU's
+  thread (`camera_wait_frame`, `camera_acquire_nn`).
+- NPU (nn/npu.c, nn/hands.c): ST's runtime (`ll_aton`, compiled from the ST
+  Edge AI install) and the networks `tools/nn.py` converts into `build-nn/`
+  (palm detector and hand landmarks, Google MediaPipe, Apache-2.0). Working
+  memory is frame buffer B, which the display lends while the Camera screen
+  shows (`gfx_lend_back_buffer`, `gfx_borrow_begin`/`end`): the display then
+  runs single-buffered from A; inputs are placed there by the converter too;
+  what does not fit spills to the PSRAM block at 0x91C0_0000; weights are
+  read in place from the flash at 0x7580_0000. The `nn` thread (priority 5)
+  serves `ctl.py nn ...` requests and runs `hands_step` per camera frame:
+  palm detector on the letterboxed picture until a hand is found (about
+  65 ms), then only the 224 x 224 crop turned upright around the hand and
+  the landmarks (about 22 ms), the next crop following the landmarks;
+  gestures from joint angles, points smoothed by a one-euro filter.
+  Measured on the board, both networks agree with the original models on
+  the PC (`nn.py check`).
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
   Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
   explorer, touchlab, hostlink, coremap, cinema, specimen, hood, settings, camera. Home shows two
@@ -283,7 +313,7 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   missing or damaged and 14 MB of PSRAM are gone again (the firmware falls
   back by itself, and the log says so). After a change to the generator or
   to DS_N: `dataset.py erase`, start, `pull`, `flash`.
-- **PSRAM in use: 11.6 of 32 MB** (`ctl.py media`, `psram_kb`), 12.2 once
+- **PSRAM in use: 13.4 of 28 MB** (`ctl.py media`, `psram_kb`), 13.9 once
   `acap` has been used (its 576 KB buffer is taken on first use). The
   read-ahead window was cut from 8 to 4 MB when PSRAM was nearly full; that
   reason is gone, the 4 MB have been enough (0 stalls).
@@ -407,7 +437,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   21 ms (17.8 ms even as one outline polygon plus a top each) and dropped
   every other frame. Host Link draws all 128 (7.5 ms). The datagram's core
   count is a byte (up to 255); the board keeps 128, the core history in
-  PSRAM. Discovery: `N6HQ` to udp/5557 (broadcast) is answered with an`n  `N6HA` line of the board's services (hostlink.h); the companion asks every
+  PSRAM. Discovery: `N6HQ` to udp/5557 (broadcast) is answered with an
+  `N6HA` line of the board's services (hostlink.h); the companion asks every
   10 s and sends to every board that answered.
 - **A change of the board's address goes through `netcfg_apply()`, which
   hands it to the `netcfg_save` thread; `net_use_config()` waits for DHCP to
@@ -423,10 +454,14 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   moves, every visible tile redraws its live thumbnail each frame; with ten
   screens that reached 15.7 ms and dropped a frame. Dragging by hand
   measured 13.6 ms worst.
-- **`/st/` (ST's ISP middleware) is never committed.** **Why:** its licence
-  (SLA0044) allows use on ST devices and redistribution but forbids putting it
-  under open-source terms, and this repository is public and Apache-2.0.
-  `west update` fetches it; `.gitignore` keeps it out.
+- **`/st/` (ST's ISP middleware), `build-nn/` (the converted networks) and
+  ST's NPU runtime are never committed.** **Why:** their licence (SLA0044)
+  allows use on ST devices and redistribution but forbids putting them under
+  open-source terms, and this repository is public and Apache-2.0.
+  `west update` fetches the ISP; `tools/nn.py fetch` and `generate` make
+  `build-nn/`; the runtime is compiled from the ST Edge AI install
+  (`STEDGEAI_CORE_DIR`, default `C:\ST\STEdgeAI\4.0`). Without them the app
+  builds with the NPU left out (`APP_HAS_NPU` undefined).
 - **The camera starts and stops on its capture thread** (`camera_start` and
   `camera_stop` only ask). **Why:** both talk to the sensor over I2C and wait
   for the pipe; on the UI thread each opening or closing of the screen cost
@@ -442,6 +477,39 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   test images and screenshots of faces stay in `captures/` (ignored); the
   ignore patterns in .gitignore cover signature files copied to the PC by
   mistake. Check `git status` for them before every commit.
+- **The NPU's networks run only between `gfx_borrow_begin()` and
+  `gfx_borrow_end()`: their working memory and inputs are frame buffer B.**
+  **Why:** with all working memory in PSRAM the palm detector took 938 ms and
+  the hand landmarks 350 ms (the converter's own model underestimates PSRAM
+  about 6 times for large feature maps; `nn.py trace` shows it per epoch
+  block); in the lent buffer they take about 65 and 22 ms. `NPU_RAM` in
+  tools/nn.py and `GFX_FB_B` must agree (a BUILD_ASSERT checks). After a change
+  to the converter's options or memory: `nn.py generate`, rebuild, and
+  `nn.py flash` if the weights' CRCs changed (the firmware checks them and
+  `ctl.py nn` says so).
+- **While frame buffer B is lent the display is single-buffered: every frame
+  starts at the top of the panel's refresh (`wait_refresh_start` in gfx.c),
+  the camera view is drawn first, by DMA2D, and answers
+  `LV_EVENT_COVER_CHECK`.** **Why:** LVGL then draws into the buffer the panel
+  scans; the picture stays ahead of the scanout only if nothing is painted
+  under it first and the copy starts at the top. Lending and returning happen
+  in `show()`/`hide()`, under the transition fade; the return waits for the
+  NPU to let go. The tour checks 0 dropped frames through these switches.
+- **Image slots are 2 MB, in app/boards/stm32n6570_dk.overlay and in
+  app/sysbuild/mcuboot.overlay; the two must agree, and MCUboot is reflashed
+  after a change (`n6.cmd flash` without `--app-only`).** **Why:** the
+  networks' epoch controller programs (about 460 KB) overflowed the board's
+  1.5 MB slot; slot 0 grew into the gap before slot 1, slot 1 up to the
+  storage partition.
+- **Take register addresses from build/app/zephyr/zephyr.dts or the CMSIS
+  header, never by arithmetic from memory.** **Why:** a `dump` of 0x580B_FC00
+  (AHB5 assumed at 0x5800_0000; it is 0x5802_0000, so the NPU cache is at
+  0x580D_FC00) hung the bus without a fault message, and only a power cycle
+  brought the board back.
+- **Nothing at fixed PSRAM addresses: buffers come from `psram_alloc`.**
+  **Why:** the linker puts its own PSRAM section (the video layer's pool, the
+  NPU runtime's blob copies) at 0x9000_0000, where the screenshot copy used to
+  be: every screenshot overwrote the video pool's heap.
 - **Touch coordinates are panel coordinates**, not content-area coordinates:
   subtract `UI_CONTENT_Y` only when positioning objects inside a screen root.
 - **Label the origin of data on screen.** Generated or synthetic sources say
@@ -523,9 +591,15 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   brought it back, and the next tour passed. The console log had no fault
   message. If it recurs, note what was attached (the camera module had just
   been fitted) and measure the board supply before cycling it.
-- Camera: live (see Architecture). Next: NPU inference on its picture, hands
-  first, then faces; the plan with model numbers, memory and flash layout and
-  steps N1 to N4 is the section "The NPU on the camera picture" in
-  docs/plan.html. ST's NPU runtime is not part of Zephyr 4.4.
+- NPU, hands first, then faces: plan and steps N1 to N4 in docs/plan.html
+  ("The NPU on the camera picture"). N1 done: runtime on Zephyr, both hand
+  networks verified against the PC. N2 built: hand tracking on the Camera
+  screen, checked end to end with the built-in test picture (`nn hands 2`:
+  Thumbs up, presence 92 %), not yet with a real hand in front of the
+  camera. Open: the crop costs about 10 ms of CPU a frame (reading the
+  camera frame from PSRAM), so tracking may run below the camera's 30 fps;
+  the palm detector varies 58 to 102 ms; the handedness output of ST's
+  quantized landmark model is a flat 0.5 on the board and on the PC alike,
+  so left and right are not shown. Faces (N3) and the soak test (N4) next.
 - The shell holds 12 screens and all 12 are used: a thirteenth needs
   `MAX_SCREENS` raised in shell.c.

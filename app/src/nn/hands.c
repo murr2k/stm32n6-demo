@@ -1,0 +1,643 @@
+/*
+ * Hand tracking. See hands.h.
+ *
+ * The geometry follows MediaPipe's hand pipeline (checked against it on the
+ * PC by tools/nn.py testimg and check): the palm detector sees the whole
+ * picture letterboxed to 192 x 192; its box, turned so that the wrist is
+ * below the middle finger's knuckle, shifted half a box towards the fingers
+ * and enlarged 2.6 times, is the 224 x 224 crop for the landmarks. While
+ * tracking, the next crop comes from the landmarks themselves (their box
+ * around wrist and knuckles, turned the same way, 2 times, shifted a tenth).
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+#include <math.h>
+#include <stdio.h>
+#include <string.h>
+
+#include <zephyr/cache.h>
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+
+#include "hands.h"
+#include "media/camera.h"
+#include "npu.h"
+#include "platform/gfx.h"
+#include "platform/psram.h"
+
+LOG_MODULE_REGISTER(hands, LOG_LEVEL_INF);
+
+#define PALM_N      192
+#define HAND_N      224
+#define ANCHORS     2016
+#define PALM_STRIDE 18 /* box (4) and 7 key points (14) per anchor */
+#define PRESENCE    0.5f
+#define PI_F        3.14159265f
+/* Of the landmark network's two single values, the one that is the hand's
+ * presence, in the converter's output order (tools/nn.py check shows both). */
+#define HANDS_PRESENCE_OUTPUT 0
+
+const uint8_t hand_bones[][2] = {
+	{0, 1}, {1, 2}, {2, 3}, {3, 4},         /* thumb */
+	{0, 5}, {5, 6}, {6, 7}, {7, 8},         /* index */
+	{5, 9}, {9, 10}, {10, 11}, {11, 12},    /* middle */
+	{9, 13}, {13, 14}, {14, 15}, {15, 16},  /* ring */
+	{13, 17}, {0, 17}, {17, 18}, {18, 19}, {19, 20}, /* pinky, palm edge */
+};
+const int hand_n_bones = ARRAY_SIZE(hand_bones);
+
+struct roi {
+	float cx, cy, size, rot; /* camera pixels, radians */
+};
+
+static atomic_t want, simulate;
+static uint16_t *sim_frame;
+static struct k_spinlock lock;
+static struct hands_result result; /* published copy */
+static struct hands_result work;   /* the nn thread's */
+static bool tracking;
+static struct roi roi;
+
+/* gesture debouncing and landmark smoothing */
+static enum hand_gesture shown_gesture, cand_gesture;
+static int cand_count;
+static float fx[HAND_POINTS], fy[HAND_POINTS], fdx[HAND_POINTS], fdy[HAND_POINTS];
+static uint32_t last_t_us;
+static uint32_t rate_t0, rate_n;
+
+void hands_enable(bool on)
+{
+	if (on) {
+		k_spinlock_key_t key = k_spin_lock(&lock);
+
+		result.valid = false; /* nothing from an earlier visit */
+		k_spin_unlock(&lock, key);
+	}
+	atomic_set(&want, on);
+}
+
+void hands_simulate(bool on)
+{
+	atomic_set(&simulate, on);
+}
+
+/* The palm detector's 192 x 192 test picture, scaled into the middle 444 x 444
+ * of a camera frame (nearest pixel), sides black. */
+static const uint16_t *sim_picture(void)
+{
+	const uint8_t *t = npu_test_input(NPU_PALM);
+
+	if (t == NULL) {
+		return NULL;
+	}
+	if (sim_frame == NULL) {
+		sim_frame = psram_alloc(CAM_W * CAM_H * 2, 64);
+		if (sim_frame == NULL) {
+			return NULL;
+		}
+		int x0 = (CAM_W - CAM_H) / 2;
+
+		for (int y = 0; y < CAM_H; y++) {
+			for (int x = 0; x < CAM_W; x++) {
+				int u = (x - x0) * PALM_N / CAM_H, v = y * PALM_N / CAM_H;
+				uint16_t p = 0;
+
+				if (u >= 0 && u < PALM_N) {
+					const uint8_t *s = t + (v * PALM_N + u) * 3;
+
+					p = ((s[0] >> 3) << 11) | ((s[1] >> 2) << 5) | (s[2] >> 3);
+				}
+				sim_frame[y * CAM_W + x] = p;
+			}
+		}
+		sys_cache_data_flush_range(sim_frame, CAM_W * CAM_H * 2);
+	}
+	return sim_frame;
+}
+
+bool hands_enabled(void)
+{
+	return atomic_get(&want) != 0;
+}
+
+void hands_get(struct hands_result *out)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+
+	*out = result;
+	k_spin_unlock(&lock, key);
+}
+
+static void publish(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+
+	work.seq++;
+	result = work;
+	k_spin_unlock(&lock, key);
+}
+
+/* --- pixels ---------------------------------------------------------------- */
+
+/* An RGB565 pixel spread over a word, green at bit 21, red at 11, blue at 0,
+ * each with at least five free bits above it: one multiply by a 5-bit weight
+ * then scales all three channels at once. */
+#define SPREAD_MASK 0x07E0F81Fu
+
+static inline uint32_t spread(uint16_t p)
+{
+	uint32_t v = p;
+
+	return (v | (v << 16)) & SPREAD_MASK;
+}
+
+static inline uint32_t blend(uint32_t a, uint32_t b, uint32_t w)
+{
+	return ((a * (32 - w) + b * w) >> 5) & SPREAD_MASK;
+}
+
+/* Bilinear sample at 16.16 fixed-point pixel coordinates (pixel centres at
+ * .5), weights to 1/32 of a pixel, black outside the picture. */
+static inline void sample(const uint16_t *f, int32_t x16, int32_t y16, uint8_t *o)
+{
+	x16 -= 0x8000;
+	y16 -= 0x8000;
+	int x0 = x16 >> 16, y0 = y16 >> 16;
+
+	if ((unsigned int)x0 >= CAM_W - 1 || (unsigned int)y0 >= CAM_H - 1) {
+		o[0] = o[1] = o[2] = 0;
+		return;
+	}
+	uint32_t ax = (x16 >> 11) & 31, ay = (y16 >> 11) & 31;
+	const uint16_t *p = f + y0 * CAM_W + x0;
+	uint32_t v = blend(blend(spread(p[0]), spread(p[1]), ax), blend(spread(p[CAM_W]), spread(p[CAM_W + 1]), ax),
+			   ay);
+	uint32_t r = (v >> 11) & 31, g = (v >> 21) & 63, b = v & 31;
+
+	o[0] = (r << 3) | (r >> 2);
+	o[1] = (g << 2) | (g >> 4);
+	o[2] = (b << 3) | (b >> 2);
+}
+
+/* The whole picture letterboxed into the palm detector's 192 x 192 input. */
+#define LB_SCALE ((float)PALM_N / CAM_W)
+#define LB_PAD   ((PALM_N - (int)(CAM_H * LB_SCALE + 0.5f)) / 2)
+
+static void palm_input(const uint16_t *f, uint8_t *in)
+{
+	int32_t step = (int32_t)(65536.0f / LB_SCALE);
+
+	for (int v = 0; v < PALM_N; v++) {
+		uint8_t *o = in + v * PALM_N * 3;
+		int32_t y16 = (int32_t)(((v - LB_PAD) + 0.5f) / LB_SCALE * 65536.0f);
+
+		if (v < LB_PAD || v >= PALM_N - LB_PAD) {
+			memset(o, 0, PALM_N * 3);
+			continue;
+		}
+		int32_t x16 = step / 2;
+
+		for (int u = 0; u < PALM_N; u++, x16 += step, o += 3) {
+			sample(f, x16, y16, o);
+		}
+	}
+}
+
+/* A HAND_N x HAND_N crop of the picture around a turned square. */
+static void hand_input(const uint16_t *f, const struct roi *q, uint8_t *in)
+{
+	float c = cosf(q->rot), s = sinf(q->rot), k = q->size / HAND_N;
+	int32_t du_x = (int32_t)(k * c * 65536.0f), du_y = (int32_t)(k * s * 65536.0f);
+	int32_t dv_x = (int32_t)(-k * s * 65536.0f), dv_y = (int32_t)(k * c * 65536.0f);
+	float a = (0.5f / HAND_N - 0.5f) * q->size; /* offset of the first sample from the centre */
+	int32_t x0 = (int32_t)((q->cx + a * c - a * s) * 65536.0f);
+	int32_t y0 = (int32_t)((q->cy + a * s + a * c) * 65536.0f);
+
+	for (int v = 0; v < HAND_N; v++, x0 += dv_x, y0 += dv_y) {
+		uint8_t *o = in + v * HAND_N * 3;
+		int32_t x = x0, y = y0;
+
+		for (int u = 0; u < HAND_N; u++, x += du_x, y += du_y, o += 3) {
+			sample(f, x, y, o);
+		}
+	}
+}
+
+/* --- geometry -------------------------------------------------------------- */
+
+static float norm_angle(float a)
+{
+	while (a > PI_F) {
+		a -= 2 * PI_F;
+	}
+	while (a < -PI_F) {
+		a += 2 * PI_F;
+	}
+	return a;
+}
+
+/* Centre of anchor i: 24 x 24 cells with 2 anchors, then 12 x 12 with 6. */
+static void anchor(int i, float *ax, float *ay)
+{
+	int c, n;
+
+	if (i < 1152) {
+		c = i / 2, n = 24;
+	} else {
+		c = (i - 1152) / 6, n = 12;
+	}
+	*ax = ((c % n) + 0.5f) / n;
+	*ay = ((c / n) + 0.5f) / n;
+}
+
+/* Best palm, merged with the detections overlapping it (MediaPipe's weighted
+ * suppression), as a crop for the landmarks. False if no score passes 0.5. */
+static bool palm_roi(const float *score, const float *box, struct roi *q)
+{
+	int best = -1;
+
+	for (int i = 0; i < ANCHORS; i++) {
+		if (score[i] > 0.0f && (best < 0 || score[i] > score[best])) { /* logit 0 = 0.5 */
+			best = i;
+		}
+	}
+	if (best < 0) {
+		return false;
+	}
+	float ax, ay, b[PALM_STRIDE], sum = 0, d[PALM_STRIDE] = {0};
+
+	anchor(best, &ax, &ay);
+	float bx = box[best * PALM_STRIDE] / PALM_N + ax, by = box[best * PALM_STRIDE + 1] / PALM_N + ay;
+	float bw = box[best * PALM_STRIDE + 2] / PALM_N, bh = box[best * PALM_STRIDE + 3] / PALM_N;
+
+	for (int i = 0; i < ANCHORS; i++) {
+		if (score[i] <= 0.0f) {
+			continue;
+		}
+		const float *r = box + i * PALM_STRIDE;
+
+		anchor(i, &ax, &ay);
+		for (int k = 0; k < PALM_STRIDE; k++) {
+			b[k] = r[k] / PALM_N + ((k == 2 || k == 3) ? 0 : (k & 1) ? ay : ax);
+		}
+		/* overlap with the best box */
+		float ix = MIN(bx + bw / 2, b[0] + b[2] / 2) - MAX(bx - bw / 2, b[0] - b[2] / 2);
+		float iy = MIN(by + bh / 2, b[1] + b[3] / 2) - MAX(by - bh / 2, b[1] - b[3] / 2);
+		float inter = MAX(ix, 0.0f) * MAX(iy, 0.0f);
+
+		if (inter / (bw * bh + b[2] * b[3] - inter) < 0.3f) {
+			continue;
+		}
+		float w = 1.0f / (1.0f + expf(-score[i]));
+
+		for (int k = 0; k < PALM_STRIDE; k++) {
+			d[k] += w * b[k];
+		}
+		sum += w;
+	}
+	for (int k = 0; k < PALM_STRIDE; k++) {
+		d[k] /= sum;
+	}
+	/* letterbox to camera pixels: x * CAM_W, y * CAM_W - padding */
+	float pad = LB_PAD / LB_SCALE;
+	float cx = d[0] * CAM_W, cy = d[1] * CAM_W - pad, w = d[2] * CAM_W, h = d[3] * CAM_W;
+	float wx = d[4] * CAM_W, wy = d[5] * CAM_W - pad;  /* key point 0: wrist */
+	float mx = d[8] * CAM_W, my = d[9] * CAM_W - pad;  /* key point 2: middle finger knuckle */
+
+	q->rot = norm_angle(PI_F / 2 - atan2f(-(my - wy), mx - wx));
+	q->cx = cx + 0.5f * h * sinf(q->rot);
+	q->cy = cy - 0.5f * h * cosf(q->rot);
+	q->size = MAX(w, h) * 2.6f;
+	return true;
+}
+
+/* The next crop from this frame's landmarks (camera pixels). */
+static void landmark_roi(const float *x, const float *y, struct roi *q)
+{
+	static const uint8_t subset[] = {0, 1, 2, 3, 5, 6, 9, 10, 13, 14, 17, 18};
+	float x1 = ((x[5] + x[13]) / 2 + x[9]) / 2, y1 = ((y[5] + y[13]) / 2 + y[9]) / 2;
+	float rot = norm_angle(PI_F / 2 - atan2f(-(y1 - y[0]), x1 - x[0]));
+	float c = cosf(rot), s = sinf(rot);
+	float lo_u = 1e9f, hi_u = -1e9f, lo_v = 1e9f, hi_v = -1e9f;
+
+	for (int i = 0; i < ARRAY_SIZE(subset); i++) {
+		/* into the turned frame */
+		float u = x[subset[i]] * c + y[subset[i]] * s, v = -x[subset[i]] * s + y[subset[i]] * c;
+
+		lo_u = MIN(lo_u, u), hi_u = MAX(hi_u, u);
+		lo_v = MIN(lo_v, v), hi_v = MAX(hi_v, v);
+	}
+	float cu = (lo_u + hi_u) / 2, cv = (lo_v + hi_v) / 2, w = hi_u - lo_u, h = hi_v - lo_v;
+
+	q->rot = rot;
+	q->cx = cu * c - cv * s;
+	q->cy = cu * s + cv * c;
+	/* shift a tenth of the height towards the fingers, square, twice the size */
+	q->cx += 0.1f * h * s;
+	q->cy -= 0.1f * h * c;
+	q->size = MAX(w, h) * 2.0f;
+}
+
+/* --- gestures -------------------------------------------------------------- */
+
+static float dist3(const float *p, int a, int b)
+{
+	float dx = p[a * 3] - p[b * 3], dy = p[a * 3 + 1] - p[b * 3 + 1], dz = p[a * 3 + 2] - p[b * 3 + 2];
+
+	return sqrtf(dx * dx + dy * dy + dz * dz);
+}
+
+/* How far a chain of joints bends: the sum of the turns at its inner joints, degrees. */
+static float bend(const float *p, int a, int b, int c, int d)
+{
+	const int j[4] = {a, b, c, d};
+	float total = 0;
+
+	for (int i = 1; i < 3; i++) {
+		float ux = p[j[i] * 3] - p[j[i - 1] * 3], uy = p[j[i] * 3 + 1] - p[j[i - 1] * 3 + 1];
+		float uz = p[j[i] * 3 + 2] - p[j[i - 1] * 3 + 2];
+		float vx = p[j[i + 1] * 3] - p[j[i] * 3], vy = p[j[i + 1] * 3 + 1] - p[j[i] * 3 + 1];
+		float vz = p[j[i + 1] * 3 + 2] - p[j[i] * 3 + 2];
+		float cosv = (ux * vx + uy * vy + uz * vz) /
+			     (sqrtf(ux * ux + uy * uy + uz * uz) * sqrtf(vx * vx + vy * vy + vz * vz) + 1e-6f);
+
+		total += acosf(CLAMP(cosv, -1.0f, 1.0f)) * (180.0f / PI_F);
+	}
+	return total;
+}
+
+/* From the crop's 3-D points (rotation does not matter: only angles and
+ * distance ratios) and, for the thumb's direction, the picture's. */
+static enum hand_gesture classify(const float *p, const float *x, const float *y, int *n_ext)
+{
+	static const uint8_t fingers[4][4] = {{5, 6, 7, 8}, {9, 10, 11, 12}, {13, 14, 15, 16}, {17, 18, 19, 20}};
+	float palm = dist3(p, 0, 9) + 1e-6f;
+	bool ext[5];
+
+	ext[0] = bend(p, 1, 2, 3, 4) < 50.0f && dist3(p, 4, 5) > 0.55f * palm && dist3(p, 4, 17) > dist3(p, 2, 17);
+	for (int f = 0; f < 4; f++) {
+		const uint8_t *j = fingers[f];
+
+		ext[f + 1] = bend(p, j[0], j[1], j[2], j[3]) < 60.0f && dist3(p, 0, j[3]) > dist3(p, 0, j[1]);
+	}
+	int n = 0, mask = 0;
+
+	for (int i = 0; i < 5; i++) {
+		n += ext[i];
+		mask |= ext[i] << i;
+	}
+	*n_ext = n;
+	/* thumb and index tips together, the other three up */
+	if (dist3(p, 4, 8) < 0.35f * palm && ext[2] && ext[3] && ext[4]) {
+		return G_OK;
+	}
+	switch (mask) {
+	case 0x00:
+		return G_FIST;
+	case 0x1F:
+		return G_OPEN;
+	case 0x02:
+		return G_POINT;
+	case 0x06:
+		return G_VICTORY;
+	case 0x0E:
+		return G_THREE;
+	case 0x1E:
+		return G_FOUR;
+	case 0x12:
+		return G_ROCK;
+	case 0x11:
+		return G_CALL;
+	case 0x01: {
+		/* which way the thumb points in the picture */
+		float dx = x[4] - x[2], dy = y[4] - y[2], len = sqrtf(dx * dx + dy * dy) + 1e-6f;
+
+		return dy < -0.6f * len ? G_THUMBS_UP : dy > 0.6f * len ? G_THUMBS_DOWN : G_THUMB;
+	}
+	default:
+		return G_OTHER;
+	}
+}
+
+const char *hands_gesture_name(enum hand_gesture g, int fingers)
+{
+	static const char *const names[] = {
+		[G_NONE] = "-", [G_FIST] = "Fist", [G_OPEN] = "Open hand", [G_POINT] = "Pointing",
+		[G_VICTORY] = "Victory", [G_THREE] = "Three", [G_FOUR] = "Four", [G_THUMBS_UP] = "Thumbs up",
+		[G_THUMBS_DOWN] = "Thumbs down", [G_THUMB] = "Thumb out", [G_OK] = "OK", [G_ROCK] = "Rock on",
+		[G_CALL] = "Call me",
+	};
+	static const char *const counts[] = {"No fingers", "One finger", "Two fingers", "Three fingers",
+					     "Four fingers", "Five fingers"};
+
+	if (g == G_OTHER) {
+		return counts[CLAMP(fingers, 0, 5)];
+	}
+	return g < ARRAY_SIZE(names) ? names[g] : "?";
+}
+
+/* --- smoothing: a one-euro filter per coordinate --------------------------- */
+
+static float euro_alpha(float cutoff_hz, float dt)
+{
+	float tau = 1.0f / (2 * PI_F * cutoff_hz);
+
+	return 1.0f / (1.0f + tau / dt);
+}
+
+static void smooth(const float *x, const float *y, float dt, bool reset)
+{
+	const float min_cutoff = 1.2f, beta = 0.015f, d_cutoff = 1.0f;
+
+	for (int i = 0; i < HAND_POINTS; i++) {
+		if (reset) {
+			fx[i] = x[i], fy[i] = y[i], fdx[i] = fdy[i] = 0;
+			continue;
+		}
+		float ad = euro_alpha(d_cutoff, dt);
+
+		fdx[i] += ad * ((x[i] - fx[i]) / dt - fdx[i]);
+		fdy[i] += ad * ((y[i] - fy[i]) / dt - fdy[i]);
+		float speed = sqrtf(fdx[i] * fdx[i] + fdy[i] * fdy[i]);
+		float a = euro_alpha(min_cutoff + beta * speed, dt);
+
+		fx[i] += a * (x[i] - fx[i]);
+		fy[i] += a * (y[i] - fy[i]);
+	}
+}
+
+/* --- one frame ------------------------------------------------------------- */
+
+static void lose(void)
+{
+	tracking = false;
+	work.valid = false;
+	work.gesture = shown_gesture = cand_gesture = G_NONE;
+	cand_count = 0;
+}
+
+/* The landmark network's outputs: two single values (presence, handedness)
+ * and two sets of 63 (points in crop pixels, points in metres). The pixel
+ * set is the one with values beyond a few units. */
+static bool read_landmarks(float *pts, float *presence)
+{
+	const float *one[2] = {NULL, NULL}, *sets[2] = {NULL, NULL};
+	int n1 = 0, n63 = 0;
+
+	for (int i = 0; i < 4; i++) {
+		uint32_t n;
+		const float *o = npu_output(NPU_HAND, i, &n);
+
+		if (o == NULL) {
+			continue;
+		}
+		if (n == 1 && n1 < 2) {
+			one[n1++] = o;
+		} else if (n == 63 && n63 < 2) {
+			sets[n63++] = o;
+		}
+	}
+	if (n1 < 1 || n63 < 2) {
+		return false;
+	}
+	float m0 = 0, m1 = 0;
+
+	for (int i = 0; i < 63; i++) {
+		m0 = MAX(m0, fabsf(sets[0][i]));
+		m1 = MAX(m1, fabsf(sets[1][i]));
+	}
+	memcpy(pts, m0 > m1 ? sets[0] : sets[1], 63 * sizeof(float));
+	*presence = *one[MIN(HANDS_PRESENCE_OUTPUT, n1 - 1)];
+	return true;
+}
+
+static void release(bool sim)
+{
+	if (!sim) {
+		camera_release_nn();
+	}
+}
+
+void hands_step(void)
+{
+	uint32_t seq, t0, us;
+	struct roi q;
+	bool from_palm = false;
+
+	bool sim = atomic_get(&simulate) != 0;
+
+	if (sim) {
+		k_msleep(33);
+	} else if (camera_wait_frame(K_MSEC(100)) != 0) {
+		return;
+	}
+	if (!gfx_borrow_begin()) {
+		return; /* the display has not lent its buffer yet, or is taking it back */
+	}
+	if (npu_prepare() != 0) {
+		work.error = npu_error();
+		publish();
+		gfx_borrow_end();
+		k_msleep(500);
+		return;
+	}
+	work.error = NULL;
+	const uint16_t *f = sim ? sim_picture() : camera_acquire_nn(&seq);
+
+	if (f == NULL) {
+		if (!sim) {
+			camera_release_nn();
+		}
+		gfx_borrow_end();
+		return;
+	}
+	if (!sim) {
+		sys_cache_data_invd_range((void *)f, CAM_W * CAM_H * 2);
+	}
+	if (!tracking) {
+		/* look for a palm in the whole picture */
+		t0 = k_cycle_get_32();
+		palm_input(f, npu_input(NPU_PALM));
+		work.prep_us = k_cyc_to_us_floor32(k_cycle_get_32() - t0);
+		if (npu_infer(NPU_PALM, &us) != 0) {
+			release(sim);
+			gfx_borrow_end();
+			return;
+		}
+		work.palm_us = us;
+		work.searches++;
+		uint32_t n;
+		const float *score = npu_output(NPU_PALM, 0, &n);
+		const float *box = npu_output(NPU_PALM, 1, &n);
+
+		if (!palm_roi(score, box, &q)) {
+			release(sim);
+			gfx_borrow_end();
+			lose();
+			publish();
+			return;
+		}
+		from_palm = true;
+	} else {
+		q = roi;
+	}
+	t0 = k_cycle_get_32();
+	hand_input(f, &q, npu_input(NPU_HAND));
+	work.prep_us = k_cyc_to_us_floor32(k_cycle_get_32() - t0);
+	release(sim);
+
+	float pts[63], presence = 0, x[HAND_POINTS], y[HAND_POINTS];
+	int r = npu_infer(NPU_HAND, &us);
+
+	if (r == 0) {
+		work.hand_us = us;
+		r = read_landmarks(pts, &presence) ? 0 : -EIO;
+	}
+	gfx_borrow_end();
+	if (r != 0 || presence < PRESENCE) {
+		work.presence = presence;
+		lose();
+		publish();
+		return;
+	}
+	/* crop pixels to camera pixels */
+	float c = cosf(q.rot), s = sinf(q.rot);
+
+	for (int i = 0; i < HAND_POINTS; i++) {
+		float a = (pts[i * 3] / HAND_N - 0.5f) * q.size, b = (pts[i * 3 + 1] / HAND_N - 0.5f) * q.size;
+
+		x[i] = q.cx + a * c - b * s;
+		y[i] = q.cy + a * s + b * c;
+	}
+	landmark_roi(x, y, &roi);
+	tracking = true;
+
+	uint32_t now = gfx_now_us();
+	float dt = MAX((now - last_t_us) / 1e6f, 0.005f);
+
+	smooth(x, y, dt, from_palm || !work.valid);
+	last_t_us = now;
+	memcpy(work.x, fx, sizeof(fx));
+	memcpy(work.y, fy, sizeof(fy));
+
+	int nf;
+	enum hand_gesture g = classify(pts, x, y, &nf);
+
+	if (g == cand_gesture) {
+		if (++cand_count >= 3) {
+			shown_gesture = g;
+		}
+	} else {
+		cand_gesture = g;
+		cand_count = 1;
+	}
+	work.gesture = shown_gesture;
+	work.fingers = nf;
+	work.presence = presence;
+	work.valid = true;
+	if (++rate_n >= 15) {
+		work.fps_x10 = (uint32_t)((uint64_t)rate_n * 10000000 / MAX(now - rate_t0, 1u));
+		rate_t0 = now, rate_n = 0;
+	}
+	publish();
+}

@@ -63,4 +63,24 @@ uint32_t gfx_last_present_us(void);
 /* Microseconds since boot, from the 800 MHz cycle counter. */
 uint32_t gfx_now_us(void);
 
+/*
+ * Lending frame buffer B (GFX_FB_B, 1.5 MB in the SRAM banks beside the NPU)
+ * to the NPU while a recognition view is on screen. The display then runs
+ * single-buffered from frame buffer A, rendering from the top of each refresh
+ * (the camera picture, drawn first and by DMA2D, stays ahead of the scanout).
+ *
+ * gfx_lend_back_buffer(true) and (false) are called by a screen's show() and
+ * hide() (UI thread, under the transition fade). The switch completes over
+ * the next frames: lending once frame buffer A is on the panel, returning
+ * once the borrower has let go. The borrower brackets every use with
+ * gfx_borrow_begin(), which fails while the buffer is not lent, and
+ * gfx_borrow_end().
+ */
+#define GFX_FB_B 0x34249000u
+
+void gfx_lend_back_buffer(bool lend);
+bool gfx_borrow_begin(void);
+void gfx_borrow_end(void);
+bool gfx_back_buffer_lent(void);
+
 #endif

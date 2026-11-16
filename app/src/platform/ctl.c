@@ -23,6 +23,7 @@
 #include "gfx.h"
 #include "mic.h"
 #include "net.h"
+#include "nn/npu.h"
 #include "netcfg.h"
 #include "psram.h"
 #include "screens/screens.h"
@@ -112,6 +113,8 @@ static int handle(char *line, char *out, size_t out_len)
 			len += snprintf(out + len, out_len - len, "%08x", (unsigned int)w[i]);
 		}
 		return len + snprintf(out + len, out_len - len, "\n");
+	} else if (!strcmp(cmd, "nn")) {
+		return npu_ctl(line, out, out_len);
 	} else if (!strcmp(cmd, "mic")) {
 		struct mic_status m;
 

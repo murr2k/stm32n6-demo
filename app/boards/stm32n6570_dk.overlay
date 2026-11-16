@@ -25,6 +25,24 @@
  * AXISRAM3..6 are powered down and unclocked out of reset. Enabling the nodes
  * makes the stm32n6_axisram driver switch them on before the kernel starts.
  */
+/*
+ * Image slots of 2 MB instead of the board's 1.5 MB: the NPU's networks bring
+ * their epoch-controller programs into the image. Slot 0 grows into the gap
+ * the board leaves before slot 1, slot 1 up to the storage partition at
+ * 0x41_0000. MCUboot must see the same table: app/sysbuild/mcuboot.overlay.
+ */
+&slot0_partition {
+	reg = <0x00010000 DT_SIZE_M(2)>;
+};
+
+&slot1_partition {
+	reg = <0x00210000 DT_SIZE_M(2)>;
+};
+/* The NPU: Zephyr's driver clocks and resets it and enables its cache. */
+&npu {
+	status = "okay";
+};
+
 &axisram3 {
 	status = "okay";
 };

@@ -20,14 +20,15 @@
 #include <stm32n6xx_hal.h>
 
 #include "gfx.h"
+#include "psram.h"
 
 LOG_MODULE_REGISTER(gfx, LOG_LEVEL_INF);
 
 /* See the memory map in boards/stm32n6570_dk.overlay. */
 #define FB_A ((uint8_t *)0x340D2000)
-#define FB_B ((uint8_t *)0x34249000)
-/* Stable copy for screenshots: first 1.5 MB of the PSRAM. */
-#define FB_SNAPSHOT ((uint8_t *)0x90000000)
+#define FB_B ((uint8_t *)GFX_FB_B)
+/* Stable copy for screenshots, in PSRAM (taken from psram_alloc in gfx_init). */
+static uint8_t *snapshot;
 
 BUILD_ASSERT((uintptr_t)FB_B - (uintptr_t)FB_A == GFX_FB_BYTES);
 BUILD_ASSERT((uintptr_t)FB_B + GFX_FB_BYTES == 0x343C0000);
@@ -43,6 +44,13 @@ static bool presented;            /* a frame was presented in this gfx_run_frame
 static bool streak;               /* previous frame slot also presented */
 
 static uint32_t win_frames, win_render_us, win_start_us;
+
+/* lending frame buffer B: see gfx.h */
+enum lend_state { DOUBLE, ENTERING, SINGLE, RETURNING };
+static enum lend_state lend_state = DOUBLE; /* UI thread only */
+static bool lend_want;                      /* UI thread only */
+static atomic_t lent;                       /* FB B may be used by the borrower */
+static atomic_t in_use;                     /* the borrower holds it right now */
 
 static atomic_t snap_request;
 static K_SEM_DEFINE(snap_done, 0, 1);
@@ -97,6 +105,33 @@ static void account_frame(uint32_t render_us, uint32_t now)
 	}
 }
 
+/* Single-buffered pacing: sleep until shortly before the LTDC's line counter
+ * wraps (start of vertical sync, the same point the double-buffered swap
+ * waits for), then watch it wrap. The position before the sleep is the
+ * reference: if a cooperative thread kept the UI asleep past the wrap, it
+ * returns at once instead of waiting a whole refresh (a dropped frame). */
+static void wait_refresh_start(void)
+{
+	uint32_t total = (LTDC->TWCR & LTDC_TWCR_TOTALH) + 1;
+	uint32_t y = LTDC->CPSR & LTDC_CPSR_CYPOS;
+	uint32_t line_us = MAX(stats.period_us / total, 1u);
+	uint32_t left_us = (total - MIN(y, total)) * line_us;
+
+	if (left_us > 1500) {
+		k_usleep(left_us - 1000);
+	}
+	uint32_t prev = y;
+
+	for (uint32_t t0 = gfx_now_us(); gfx_now_us() - t0 < 20000;) {
+		uint32_t cur = LTDC->CPSR & LTDC_CPSR_CYPOS;
+
+		if (cur < prev) {
+			return;
+		}
+		prev = cur;
+	}
+}
+
 static void flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *px_map)
 {
 	ARG_UNUSED(area);
@@ -111,6 +146,15 @@ static void flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *px_map)
 		/* Blocks until the LTDC has switched to this buffer. */
 		display_write(panel, 0, 0, &desc, px_map);
 		front = px_map;
+		if (lend_state == ENTERING && front == FB_A) {
+			/* the panel scans A, LVGL draws into A: B is free */
+			lend_state = SINGLE;
+			atomic_set(&lent, 1);
+		} else if (lend_state == SINGLE || lend_state == RETURNING) {
+			/* the buffer did not change, so nothing waited for the refresh:
+			 * start the next frame at the top of the next one */
+			wait_refresh_start();
+		}
 		presented = true;
 		account_frame(render_us, gfx_now_us());
 	}
@@ -153,6 +197,10 @@ int gfx_init(void)
 		return -ENODEV;
 	}
 
+	snapshot = psram_alloc(GFX_FB_BYTES, 64);
+	if (snapshot == NULL) {
+		return -ENOMEM;
+	}
 	memset(FB_A, 0, GFX_FB_BYTES);
 	memset(FB_B, 0, GFX_FB_BYTES);
 	measure_refresh();
@@ -183,14 +231,78 @@ static void service_snapshot(void)
 {
 	if (atomic_cas(&snap_request, 1, 0)) {
 		/* Between frames the front buffer is not being drawn into. */
-		memcpy(FB_SNAPSHOT, front, GFX_FB_BYTES);
+		memcpy(snapshot, front, GFX_FB_BYTES);
 		k_sem_give(&snap_done);
 	}
+}
+
+/* Called at the start of every frame, before LVGL runs: moves the lending
+ * state machine on. */
+static void lend_step(void)
+{
+	lv_obj_t *scr = lv_screen_active();
+
+	switch (lend_state) {
+	case DOUBLE:
+		if (lend_want) {
+			/* draw everything into A; the flush shows A, then B is free */
+			lv_display_set_buffers(disp, FB_A, NULL, GFX_FB_BYTES, LV_DISPLAY_RENDER_MODE_DIRECT);
+			lv_obj_invalidate(scr);
+			lend_state = ENTERING;
+		}
+		break;
+	case ENTERING:
+	case SINGLE:
+		if (!lend_want) {
+			atomic_set(&lent, 0); /* no new borrowing */
+			lend_state = RETURNING;
+		}
+		break;
+	case RETURNING:
+		if (lend_want) {
+			atomic_set(&lent, 1);
+			lend_state = SINGLE;
+		} else if (atomic_get(&in_use) == 0) {
+			/* B holds whatever the NPU left: draw all of it, show it, and LVGL
+			 * then copies it to A as it does for every frame */
+			lv_display_set_buffers(disp, FB_B, FB_A, GFX_FB_BYTES, LV_DISPLAY_RENDER_MODE_DIRECT);
+			lv_obj_invalidate(scr);
+			lend_state = DOUBLE;
+		}
+		break;
+	}
+}
+
+void gfx_lend_back_buffer(bool lend)
+{
+	lend_want = lend;
+}
+
+bool gfx_borrow_begin(void)
+{
+	atomic_inc(&in_use);
+	if (!atomic_get(&lent)) {
+		atomic_dec(&in_use);
+		return false;
+	}
+	return true;
+}
+
+void gfx_borrow_end(void)
+{
+	atomic_dec(&in_use);
+}
+
+bool gfx_back_buffer_lent(void)
+{
+	return atomic_get(&lent) != 0;
 }
 
 void gfx_run_frame(void)
 {
 	uint32_t t0 = gfx_now_us();
+
+	lend_step();
 
 	presented = false;
 	lv_timer_handler();
@@ -217,7 +329,7 @@ const uint8_t *gfx_snapshot(void)
 	atomic_set(&snap_request, 1);
 	k_sem_take(&snap_done, K_MSEC(500));
 	k_mutex_unlock(&snap_lock);
-	return FB_SNAPSHOT;
+	return snapshot;
 }
 
 const struct gfx_stats *gfx_stats(void)

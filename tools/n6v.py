@@ -42,7 +42,7 @@ PIECE = 8192
 W, H = 800, 480
 JPEG_PAD = 8
 MEDIA_FLASH_ADDR = 0x70420000
-MEDIA_MAX = 0x77000000 - MEDIA_FLASH_ADDR  # up to Explorer's data set (tools/dataset.py), the last 16 MB of the flash
+MEDIA_MAX = 0x75800000 - MEDIA_FLASH_ADDR  # up to the NPU's weights (tools/nn.py), then Explorer's data set
 HEADER = struct.Struct("<4sHHHHIIHHII32s")
 assert HEADER.size == 64
 

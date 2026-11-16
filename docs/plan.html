@@ -192,7 +192,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
 
   <div class="scroll"><table>
     <tr><th>Resource</th><th>Plan</th></tr>
-    <tr><td class="k">Working memory</td><td>One 4 MB block at the top of PSRAM, reused by whichever network runs (largest: 2.61 MB). The SRAM banks beside the NPU stay with the two display frame buffers.</td></tr>
+    <tr><td class="k">Working memory</td><td>The display's second frame buffer, 1.5 MB in the SRAM banks beside the NPU, lent to the NPU while the Camera screen shows; the display runs single-buffered meanwhile and every other screen keeps double buffering. What does not fit spills to a 4 MB block at the top of PSRAM. Measured in step N1: with all working memory in PSRAM the palm detector took 938 ms and the hand landmarks 350 ms; in the lent buffer, 65 and 22 ms.</td></tr>
     <tr><td class="k">Weights</td><td>About 15.8 MB for all five networks, in a 24 MB flash region at <code>0x7580_0000</code>, between the clips (84 MB used) and Explorer's data set at <code>0x7700_0000</code>. Written by a tool like <code>dataset.py</code>.</td></tr>
     <tr><td class="k">Network input</td><td>The DCMIPP's spare pipe produces a square frame for the networks alongside the 592x444 display picture. The CPU only crops, rotates and aligns the second-stage inputs.</td></tr>
     <tr><td class="k">NPU runtime</td><td>ST's <code>ll_aton</code>, which already has a Zephyr layer. Its licence is ST's SLA0044: fetched at build time like the ISP, never committed.</td></tr>
@@ -201,14 +201,14 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
 
   <div class="scroll"><table class="phase">
     <tr><th>Step</th><th>Work</th><th>Done when</th></tr>
-    <tr><td>N1</td><td>ST's NPU runtime on Zephyr; the palm detector run on one test image</td><td>Correct detections against the PC's result, inference time measured with working memory in PSRAM, UI frame budget kept.</td></tr>
-    <tr><td>N2</td><td>Hands: second camera stream, both networks, rotation crop, gestures, overlay</td><td>Live on the Camera screen with frame rate and NPU times shown; gestures checked by hand on the panel.</td></tr>
+    <tr><td>N1</td><td><span class="pill ok">done</span> ST's NPU runtime on Zephyr; the palm detector run on one test image</td><td>Correct detections against the PC's result, inference time measured with working memory in PSRAM, UI frame budget kept.</td></tr>
+    <tr><td>N2</td><td><span class="pill warn">built</span> Hands: both networks on the camera picture, rotation crop, tracking, gestures, overlay</td><td>Live on the Camera screen with frame rate and NPU times shown; gestures checked by hand on the panel.</td></tr>
     <tr><td>N3</td><td>Faces: BlazeFace, mesh, alignment, SFace, LEARN with names, card storage, recognition</td><td>Accuracy measured on public pairs before the board; a taught face is named live, an untaught one is "unknown"; nothing personal leaves the board.</td></tr>
     <tr><td>N4</td><td>Proof</td><td>The tour passes; a long soak test with camera, display and NPU running together shows no fault.</td></tr>
   </table></div>
   <div class="callout">
     <h3>Risks</h3>
-    <p>ST's forum has an unresolved report of NPU bus faults when camera, display and NPU run together on the N6570-DK, which is this combination: the soak test in N4 is there for it. Working memory in PSRAM is slower than the SRAM banks ST's own applications use; step N1 measures by how much before anything else is built on it.</p>
+    <p>ST's forum has an unresolved report of NPU bus faults when camera, display and NPU run together on the N6570-DK, which is this combination: the soak test in N4 is there for it. Working memory in PSRAM turned out 14 to 16 times slower than in the SRAM banks (step N1), so the NPU borrows the second frame buffer while it runs; a camera frame read by the CPU for the crop costs about 10 ms, which may hold tracking below the camera's 30 fps.</p>
   </div>
 </section>
 

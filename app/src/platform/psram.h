@@ -15,6 +15,10 @@
 #include <stdint.h>
 
 /* Returns NULL when the PSRAM is exhausted. align must be a power of two. */
+/* Working memory of the NPU's networks: from here to the end of PSRAM, never
+ * handed out by psram_alloc (the converter places activations here). */
+#define PSRAM_NPU_BASE 0x91C00000u
+
 void *psram_alloc(size_t bytes, size_t align);
 size_t psram_used(void);
 size_t psram_size(void);

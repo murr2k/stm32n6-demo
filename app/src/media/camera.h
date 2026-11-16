@@ -15,6 +15,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <zephyr/kernel.h>
+
 #define CAM_W 592 /* 2592 x 1944 scaled by 4.38: 4:3, a whole number of 16-byte lines */
 #define CAM_H 444
 
@@ -38,5 +40,13 @@ void camera_get_status(struct camera_status *st);
  */
 const uint16_t *camera_acquire(bool *fresh);
 void camera_release(void);
+
+/* The same for one other reader (the NPU's thread): wait for a frame newer
+ * than the last one it took, hold it while reading, let go. The CPU reads it,
+ * so the reader invalidates its data cache over the frame first.
+ */
+int camera_wait_frame(k_timeout_t timeout);
+const uint16_t *camera_acquire_nn(uint32_t *seq);
+void camera_release_nn(void);
 
 #endif

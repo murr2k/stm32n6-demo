@@ -24,4 +24,13 @@ config APP_FPU_DOUBLE
 	default y
 	select CPU_HAS_FPU_DOUBLE_PRECISION
 
+# The NPU: ST's runtime (built only when build-nn/ holds converted networks,
+# see tools/nn.py) maintains the NPU cache through the HAL and installs its
+# interrupt handlers at run time.
+config APP_NPU
+	bool "NPU runtime support"
+	default y
+	select USE_STM32_HAL_CACHEAXI
+	select DYNAMIC_INTERRUPTS
+
 source "Kconfig.zephyr"
