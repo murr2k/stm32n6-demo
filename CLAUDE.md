@@ -523,7 +523,9 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   brought it back, and the next tour passed. The console log had no fault
   message. If it recurs, note what was attached (the camera module had just
   been fitted) and measure the board supply before cycling it.
-- Camera: live (see Architecture). NPU inference on its picture is the next
-  step; ST's runtime for the NPU is not part of Zephyr 4.4.
+- Camera: live (see Architecture). Next: NPU inference on its picture, hands
+  first, then faces; the plan with model numbers, memory and flash layout and
+  steps N1 to N4 is the section "The NPU on the camera picture" in
+  docs/plan.html. ST's NPU runtime is not part of Zephyr 4.4.
 - The shell holds 12 screens and all 12 are used: a thirteenth needs
   `MAX_SCREENS` raised in shell.c.

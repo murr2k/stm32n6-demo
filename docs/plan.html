@@ -157,6 +157,62 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
 </section>
 
 <section>
+  <span class="eyebrow">Next &middot; decided 2026-11-15</span>
+  <h2>The NPU on the camera picture: hands, then faces</h2>
+  <p>The Camera screen (IMX335 at 30 fps, ST's ISP) gets two recognition modes, run on the N6's Neural-ART NPU: <b>hand tracking with gestures</b> (any orientation, either hand), then <b>face detection with recognition of faces it has been taught</b>. Hands come first. The numbers below come from converting each model with ST Edge AI 4.0 for this chip, with its working memory placed in PSRAM; times on the board are measured in step 1.</p>
+  <div class="scroll"><table>
+    <tr><th>Network</th><th>Job</th><th>Licence</th><th>Work per run</th><th>Working memory</th><th>Weights</th><th>On the NPU</th></tr>
+    <tr><td class="k">Palm detector, 192x192</td><td>find hands, any rotation</td><td>Apache-2.0 (Google MediaPipe)</td><td class="num">346 M MAC</td><td class="num">1.69 MB</td><td class="num">1.1 MB</td><td>134 of 138 steps</td></tr>
+    <tr><td class="k">Hand landmarks, 224x224</td><td>21 points per hand</td><td>Apache-2.0 (Google MediaPipe)</td><td class="num">371 M MAC</td><td class="num">2.61 MB</td><td class="num">4.6 MB</td><td>59 of 63 steps</td></tr>
+    <tr><td class="k">BlazeFace, 128x128</td><td>find faces</td><td>Apache-2.0 (Google)</td><td class="num">43 M MAC</td><td class="num">0.5 MB</td><td class="num">122 KB</td><td>all 77 steps</td></tr>
+    <tr><td class="k">Face landmarks, 192x192</td><td>468 points: alignment and a face mesh</td><td>Apache-2.0 (Google)</td><td class="num">54 M MAC</td><td class="num">0.7 MB</td><td class="num">463 KB</td><td>77 of 78 steps</td></tr>
+    <tr><td class="k">SFace, 112x112</td><td>a 128-number signature per face</td><td>Apache-2.0 (OpenCV)</td><td class="num">680 M MAC</td><td class="num">1.9 MB</td><td class="num">9.5 MB</td><td>65 of 69 steps</td></tr>
+  </table></div>
+  <p class="muted">The four Google models are the ones ST ships in its N6 hand and face applications. SFace as published ran almost half its steps on the CPU, because the NPU has no PReLU activation: each PReLU is rewritten exactly as a&middot;x + (1&minus;a)&middot;ReLU(x) from operators the NPU runs (outputs equal to within 10<sup>&minus;6</sup>), then the model is re-quantized to per-channel int8. The few CPU steps left in each network are input scaling and quantization at its edges.</p>
+
+  <div class="two">
+    <div>
+      <h3>Hands</h3>
+      <ul>
+        <li>The palm detector finds hands and their rotation; the landmark model places 21 points on each, from a crop the CPU rotates upright.</li>
+        <li>Gestures are ours, from joint angles, so they hold at any rotation and for either hand: fingers extended, finger count, point, thumbs up, V, OK, fist, open palm. Fingertip paths are tracked over time.</li>
+        <li>On screen: the skeleton over the live picture, the gesture's name, each network's time on the NPU.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Faces</h3>
+      <ul>
+        <li>Every frame: BlazeFace, then the 468-point mesh for each face (precise eyes for alignment; the mesh can be drawn).</li>
+        <li>Identification when a face first appears, about once a second to confirm, and when a better view arrives. Faces are followed between frames, so names stay on them.</li>
+        <li>LEARN takes about five good aligned views and averages their signatures; matching is cosine similarity against a threshold calibrated on public same-person and different-person pairs. Below it: "unknown".</li>
+        <li>Quantization is calibrated with public face crops kept on the PC; the int8 model is checked against the float one (signature agreement, verification accuracy) before it reaches the board.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="scroll"><table>
+    <tr><th>Resource</th><th>Plan</th></tr>
+    <tr><td class="k">Working memory</td><td>One 4 MB block at the top of PSRAM, reused by whichever network runs (largest: 2.61 MB). The SRAM banks beside the NPU stay with the two display frame buffers.</td></tr>
+    <tr><td class="k">Weights</td><td>About 15.8 MB for all five networks, in a 24 MB flash region at <code>0x7580_0000</code>, between the clips (84 MB used) and Explorer's data set at <code>0x7700_0000</code>. Written by a tool like <code>dataset.py</code>.</td></tr>
+    <tr><td class="k">Network input</td><td>The DCMIPP's spare pipe produces a square frame for the networks alongside the 592x444 display picture. The CPU only crops, rotates and aligns the second-stage inputs.</td></tr>
+    <tr><td class="k">NPU runtime</td><td>ST's <code>ll_aton</code>, which already has a Zephyr layer. Its licence is ST's SLA0044: fetched at build time like the ISP, never committed.</td></tr>
+    <tr><td class="k">Personal data</td><td>Face signatures and names stay in the board's own non-volatile storage (its microSD card), are never committed, pushed or sent off the board, and are deleted on the board. Interfaces report counts only.</td></tr>
+  </table></div>
+
+  <div class="scroll"><table class="phase">
+    <tr><th>Step</th><th>Work</th><th>Done when</th></tr>
+    <tr><td>N1</td><td>ST's NPU runtime on Zephyr; the palm detector run on one test image</td><td>Correct detections against the PC's result, inference time measured with working memory in PSRAM, UI frame budget kept.</td></tr>
+    <tr><td>N2</td><td>Hands: second camera stream, both networks, rotation crop, gestures, overlay</td><td>Live on the Camera screen with frame rate and NPU times shown; gestures checked by hand on the panel.</td></tr>
+    <tr><td>N3</td><td>Faces: BlazeFace, mesh, alignment, SFace, LEARN with names, card storage, recognition</td><td>Accuracy measured on public pairs before the board; a taught face is named live, an untaught one is "unknown"; nothing personal leaves the board.</td></tr>
+    <tr><td>N4</td><td>Proof</td><td>The tour passes; a long soak test with camera, display and NPU running together shows no fault.</td></tr>
+  </table></div>
+  <div class="callout">
+    <h3>Risks</h3>
+    <p>ST's forum has an unresolved report of NPU bus faults when camera, display and NPU run together on the N6570-DK, which is this combination: the soak test in N4 is there for it. Working memory in PSRAM is slower than the SRAM banks ST's own applications use; step N1 measures by how much before anything else is built on it.</p>
+  </div>
+</section>
+
+<section>
   <span class="eyebrow">Survey</span>
   <h2>What is on the bench today</h2>
   <p>Checked on this host before planning. One tool is missing and needs your install; nothing else blocks the start.</p>
