@@ -309,7 +309,12 @@ void gfx_run_frame(void)
 	service_snapshot();
 
 	if (presented) {
+		uint32_t tail = gfx_now_us() - t_last_present;
+
 		streak = true;
+		if (tail > stats.worst_tail_us) {
+			stats.worst_tail_us = tail;
+		}
 	} else {
 		streak = false;
 		/* Nothing to draw: idle part of a frame slot so timers and input keep
@@ -352,6 +357,7 @@ void gfx_stats_reset_worst(void)
 {
 	stats.worst_render_us = 0;
 	stats.worst_period_us = 0;
+	stats.worst_tail_us = 0;
 }
 
 lv_display_t *gfx_display(void)

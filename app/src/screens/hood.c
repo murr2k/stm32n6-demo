@@ -127,6 +127,11 @@ static int g_prev;
 static float g_lx, g_ly, g_ld, g_lmx, g_lmy, g_vyaw, g_moved;
 static uint32_t g_down_ms, g_tap_ms, g_touch_ms, g_last_ms;
 static uint32_t draw_us;
+/* Ticks since show(), up to 2. The side panel (3.4 ms) is left out of the
+ * frame that builds the whole screen: with it that frame took up to 15.8 ms,
+ * and with the switch's own work after the previous present (closing a
+ * playing film) it missed a refresh on about one switch in three. */
+static uint8_t side_wait = 2;
 
 /* what the last frame drew, for hit testing: each ridge's outline on screen */
 static float hit_tx[ROWS][HIST + 1], hit_ty[ROWS][HIST + 1], hit_by[ROWS][HIST + 1];
@@ -626,7 +631,7 @@ static void side_draw(lv_event_t *e)
 	int idx[MAXT], n = 0;
 	char buf[48];
 
-	if (!raster_begin(&r, e)) {
+	if (side_wait < 2 || !raster_begin(&r, e)) {
 		return;
 	}
 	uint32_t ts0 = gfx_now_us();
@@ -930,7 +935,11 @@ static void tick(uint32_t now_ms)
 
 	gestures(now_ms);
 	lv_obj_invalidate(chart); /* the ridges scroll continuously */
-	if (now_ms - side_t0 >= 500) {
+	if (side_wait < 2 && ++side_wait == 2) {
+		/* the frame that built the screen is drawn: now the side panel */
+		side_t0 = now_ms;
+		lv_obj_invalidate(side);
+	} else if (now_ms - side_t0 >= 500) {
 		side_t0 = now_ms;
 		lv_obj_invalidate(side);
 	}
@@ -972,7 +981,7 @@ static void show(void)
 	resetting = false;
 	g_touch_ms = k_uptime_get_32() - IDLE_ORBIT_MS + 3000;
 	g_prev = 0;
-	lv_obj_invalidate(side);
+	side_wait = 0;
 }
 
 /* Home tile: the busiest ridges as stacked lines, newest at the right. */

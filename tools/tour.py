@@ -254,18 +254,35 @@ def card_playback(host: str, m: dict[str, int], index: int) -> None:
               f"dropped {int(g1['dropped'] - g0['dropped'])}, still on {where(host)[0]}")
 
 
-def transition_test(host: str) -> None:
-    """Screen changes: the fade is done by the LTDC, so none may cost a frame."""
+def transition_test(host: str, film: int = 6) -> None:
+    """Screen changes: the fade is done by the LTDC, so none may cost a frame.
+
+    Every screen is entered at least once (the Camera screen lends and takes
+    back a frame buffer on the way), and Under the Hood also straight from a
+    playing film: the switch itself (closing the player) runs after a present,
+    outside the next frame's render time but inside its budget, and the frame
+    that builds Under the Hood is among the heaviest. Attract mode makes that
+    switch on every lap; it dropped a frame on about one in three.
+    """
+    cinema, hood = SCREENS.index("cinema"), SCREENS.index("hood")
     send(host, ["screen 0"])
     time.sleep(1.5)
     send(host, ["reset"])
     before = stats(host)
-    order = [1, 2, 3, 5, 6, 0, 7, 4, 1, 0]
+    order = [1, 2, 3, 5, 6, 0, 7, 4, 1, 0, 8, 9, 10, 11, 0]
     for i in order:
         send(host, [f"screen {i}"])
         time.sleep(0.9)
+    for _ in range(film):
+        send(host, [f"screen {cinema}"])
+        time.sleep(1.0)
+        send(host, ["play 0"])
+        time.sleep(3.0)
+        send(host, [f"screen {hood}"])
+        time.sleep(1.0)
     s = stats(host)
-    print(f"transitions: {len(order)} screen changes, frame worst {s['render_worst_us'] / 1000:.2f} ms, "
+    print(f"transitions: {len(order) + 2 * film} screen changes ({film} from a playing film into Under the Hood), "
+          f"frame worst {s['render_worst_us'] / 1000:.2f} ms, switch tail worst {s.get('tail_worst_us', 0) / 1000:.2f} ms, "
           f"dropped {int(s['dropped'] - before['dropped'])}")
 
 
@@ -451,7 +468,7 @@ def run(a: argparse.Namespace) -> None:
     if not a.no_attract:
         attract_test(a.host, a.attract)
     ds = dict(re.findall(r"(\w+)=(\S+)", send(a.host, ["ds"])[0]))
-    print(f"memory: PSRAM in use {media(a.host)['psram_kb'] / 1000:.1f} of 32 MB; Explorer's data set from "
+    print(f"memory: PSRAM in use {media(a.host)['psram_kb'] / 1000:.1f} of 28 MB; Explorer's data set from "
           f"{ds['source']}" + ("" if ds["source"] == "flash" else " (14 MB of PSRAM: tools/dataset.py puts it in the flash)"))
     send(a.host, ["screen 0"])
 

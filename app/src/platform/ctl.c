@@ -285,10 +285,10 @@ static int handle(char *line, char *out, size_t out_len)
 
 		return snprintf(out, out_len,
 				"frames=%u fps=%u.%u render_avg_us=%u render_last_us=%u "
-				"render_worst_us=%u period_worst_us=%u dropped=%u refresh_mhz=%u\n",
+				"render_worst_us=%u period_worst_us=%u tail_worst_us=%u dropped=%u refresh_mhz=%u\n",
 				g->frames, g->fps_x10 / 10, g->fps_x10 % 10, g->avg_render_us,
-				g->last_render_us, g->worst_render_us, g->worst_period_us, g->dropped,
-				g->refresh_uhz / 1000);
+				g->last_render_us, g->worst_render_us, g->worst_period_us, g->worst_tail_us,
+				g->dropped, g->refresh_uhz / 1000);
 	} else {
 		return snprintf(out, out_len, "err unknown: %s\n", cmd);
 	}

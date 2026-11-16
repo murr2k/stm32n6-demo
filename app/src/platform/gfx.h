@@ -28,7 +28,11 @@ struct gfx_stats {
 	uint32_t last_period_us;
 	uint32_t worst_render_us; /* since the last gfx_stats_reset_worst() */
 	uint32_t worst_period_us;
-	uint32_t fps_x10;       /* presented frames per second, 1 s window */
+	/* UI thread time after a present and before the next frame starts (LVGL
+	 * timers that run after the display's, such as animation callbacks):
+	 * not in render_us, but in the next frame's budget. Since the reset. */
+	uint32_t worst_tail_us;
+	uint32_t fps_x10;      /* presented frames per second, 1 s window */
 	uint32_t avg_render_us; /* 1 s window */
 	uint16_t head;          /* next write index in the rings below */
 	uint16_t render_us[GFX_HISTORY]; /* saturated at 65535 */

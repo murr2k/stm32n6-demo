@@ -232,6 +232,20 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   area dropped one frame on every transition; the hardware fade costs nothing
   and hides the frame that builds the new screen. `LTDC->BCCR` must stay equal
   to `C_BG0` or the fade flashes a different colour.
+- **A screen switch is work done after a present, inside the budget of the
+  frame that builds the new screen: keep `show()`/`hide()` short and a
+  screen's first frame well under 15 ms.** `switch_to` (the old screen's
+  `hide()`, the new one's `show()`) runs in the fade-out's animation
+  callback, and LVGL's animation timer runs after the display's refresh
+  timer, so that time is not in `render_us`; `ctl.py stats` reports it as
+  `tail_worst_us`. **Why:** Under the Hood's first frame (chart and side
+  panel at once, up to 15.8 ms) after closing a playing film (a tail of about
+  1 ms) missed a refresh on about one attract lap in three (5 drops in 16
+  switches); its side panel now waits one frame (0 in 16). The miss falls in
+  the black hold of the fade, so nobody sees it, but the counter on Deck does.
+  Deck's own first frame is 13 to 15 ms with a 0.8 ms tail: about 1 ms of
+  margin, one drop in 45 minutes of attract mode. The tour's transition test
+  enters every screen and makes the film to Under the Hood switch six times.
 - **A screenshot (`shot.py`, tcp/5555) costs the UI one frame.** **Why:** the
   1.5 MB copy to PSRAM takes about 18 ms. Never grab inside a window whose
   dropped-frame count is being measured (tour.py reads the stats first).
@@ -598,7 +612,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   Thumbs up, presence 92 %), not yet with a real hand in front of the
   camera. Open: the crop costs about 10 ms of CPU a frame (reading the
   camera frame from PSRAM), so tracking may run below the camera's 30 fps;
-  the palm detector varies 58 to 102 ms; the handedness output of ST's
+  the palm detector varies 58 to 165 ms (142 to 165 in attract laps, cause
+  not known; it only delays finding a hand); the handedness output of ST's
   quantized landmark model is a flat 0.5 on the board and on the PC alike,
   so left and right are not shown. Faces (N3) and the soak test (N4) next.
 - The shell holds 12 screens and all 12 are used: a thirteenth needs
