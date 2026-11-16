@@ -2,9 +2,11 @@
  * Under the Hood: the firmware itself, measured live.
  *
  * Left, an interactive 3D plot: one ridge per thread, the share of the CPU it
- * took in each third of a second over the last twelve, the newest at the right
+ * took in each 0.4 s over the last twelve, the newest at the right
  * end of each ridge. Drag to orbit, pinch to zoom, tap a ridge to read
- * it, double tap to reset, tap SCALE to stretch the height. On the right, every thread with its CPU share and stack
+ * it, double tap to reset. The height is logarithmic by default, 0.01 % to
+ * 100 %, so a thread at a twentieth of a per cent shows as clearly as the UI
+ * thread at forty; tap SCALE for linear ones. On the right, every thread with its CPU share and stack
  * high-water mark, and the memory pools.
  *
  * The numbers are Zephyr's own: thread runtime statistics (cycles per
@@ -13,7 +15,8 @@
  * allocator and the network statistics. Nothing is estimated.
  *
  * Drawn like Core Map: projected in floating point, filled as anti-aliased
- * convex quads straight into the frame buffer, ridges far to near. The ridges
+ * convex quads straight into the frame buffer, ridges far to near. Each ridge
+ * is a ribbon: a band under its top edge and a line on the floor. The ridges
  * stand in parallel planes, so that order is exact.
  *
  * SPDX-License-Identifier: Apache-2.0
@@ -41,13 +44,15 @@
 #define SIDE_X        (CH_W + 4)
 #define SIDE_W        (GFX_W - SIDE_X - UI_PAD)
 
-#define HIST          36      /* samples per ridge */
-#define SAMPLE_MS     333     /* 12 s of history */
+#define HIST          30      /* samples per ridge */
+#define SAMPLE_MS     400     /* 12 s of history */
 #define MAXT          40      /* threads tracked */
-#define ROWS          10      /* ridges shown: the busiest threads */
+#define ROWS          8       /* ridges shown: the busiest threads */
 #define W_X           12.0f   /* world width of the time axis */
 #define ROW_DZ        1.0f    /* world distance between ridges */
 #define BOX_H         4.5f    /* world height of 100 % */
+#define RIBBON        0.09f   /* depth of the band under each ridge, share of BOX_H: a full
+                                * curtain down to the floor overdrew the view several times */
 
 #define DEG           0.017453293f
 #define PI_F          3.14159265f
@@ -69,8 +74,8 @@ struct thr {
 	const struct k_thread *tid;
 	const char *name;
 	uint64_t last;            /* execution cycles at the last sample */
-	uint16_t hist[HIST];      /* per mille of the CPU, ring indexed like h_head */
-	uint32_t mean;            /* per mille over the history */
+	uint16_t hist[HIST];      /* hundredths of a per cent of the CPU (10000 = all of it), ring like h_head */
+	uint32_t mean;            /* the same unit, over the history */
 	size_t stack_size, stack_unused;
 	bool alive, seen;
 };
@@ -83,11 +88,22 @@ struct cam {
 
 static lv_obj_t *chart, *side, *l_cpu, *l_frame, *l_threads, *l_up, *l_sel, *l_draw, *l_scale;
 
-/* full height of the box as a share of the CPU: most threads take well under
- * one per cent, so the scale can be stretched (the ridges are cut at the top)
+/* The height axis. The UI thread takes tens of per cent and most others well
+ * under one, so a linear axis shows one wall and flat lines: the default is
+ * logarithmic, 0.01 % on the floor to 100 % at the top, a decade per grid
+ * line. The linear scales (full height = 100, 25, 5 or 1 %, ridges cut at the
+ * top) are a tap away. Unit: hundredths of a per cent; 0 means logarithmic.
  */
-static const uint16_t scales[] = {1000, 250, 50, 10}; /* per mille */
+static const uint16_t scales[] = {0, 10000, 2500, 500, 100};
 static int scale_i;
+
+static float level(uint32_t u)
+{
+	if (scales[scale_i] == 0) {
+		return u == 0 ? 0.0f : CLAMP(log10f((float)u) * 0.25f, 0.0f, 1.0f);
+	}
+	return MIN(u / (float)scales[scale_i], 1.0f);
+}
 
 /* data */
 static struct thr th[MAXT];
@@ -170,8 +186,19 @@ static void pick_rows(void)
 	}
 }
 
+static uint32_t t_sample_max, t_stack_max, t_net_max, t_side_max;
+
+void hood_timing(uint32_t out[4], bool clear)
+{
+	out[0] = t_sample_max, out[1] = t_stack_max, out[2] = t_net_max, out[3] = t_side_max;
+	if (clear) {
+		t_sample_max = t_stack_max = t_net_max = t_side_max = 0;
+	}
+}
+
 static void sample(uint32_t now_ms)
 {
+	uint32_t t0 = gfx_now_us(), t1;
 	uint64_t total = 0;
 	uint64_t delta[MAXT];
 
@@ -203,12 +230,12 @@ static void sample(uint32_t now_ms)
 	n_samples = MIN(n_samples + 1, HIST);
 	sample_ms = now_ms;
 	for (int i = 0; i < n_th; i++) {
-		uint32_t pm = (uint32_t)(delta[i] * 1000 / total);
+		uint32_t pm = (uint32_t)(delta[i] * 10000 / total); /* hundredths of a per cent */
 		uint32_t sum = 0;
 
 		th[i].hist[h_head] = (uint16_t)pm;
 		if (is_idle(&th[i])) {
-			busy_hist[h_head] = (uint16_t)(1000 - MIN(pm, 1000u));
+			busy_hist[h_head] = (uint16_t)(10000 - MIN(pm, 10000u));
 		}
 		for (int k = 0; k < HIST; k++) {
 			sum += th[i].hist[k];
@@ -216,6 +243,8 @@ static void sample(uint32_t now_ms)
 		th[i].mean = sum / HIST;
 	}
 
+	t1 = gfx_now_us();
+	t_sample_max = MAX(t_sample_max, t1 - t0);
 	/* one stack a sample: painting is read back word by word */
 	for (int k = 0; k < n_th; k++) {
 		struct thr *t = &th[(stack_rr + k) % n_th];
@@ -232,6 +261,8 @@ static void sample(uint32_t now_ms)
 		}
 	}
 
+	t_stack_max = MAX(t_stack_max, gfx_now_us() - t1);
+	t1 = gfx_now_us();
 	/* network throughput, once a second */
 	if (now_ms - net_ms >= 1000) {
 		struct net_stats ns;
@@ -248,6 +279,7 @@ static void sample(uint32_t now_ms)
 		}
 		net_ms = now_ms;
 	}
+	t_net_max = MAX(t_net_max, gfx_now_us() - t1);
 
 	static uint32_t pick_ms;
 
@@ -321,10 +353,12 @@ static void cam_make(struct cam *c, const lv_area_t *view, float yaw, float pitc
 		x0 = MIN(x0, sx), x1 = MAX(x1, sx);
 		y0 = MIN(y0, sy), y1 = MAX(y1, sy);
 	}
-	float fit = MIN(0.86f * lv_area_get_width(view) / (x1 - x0), 0.80f * lv_area_get_height(view) / (y1 - y0));
+	/* room for the scale labels on the left and the time labels below, at either end of the idle swing */
+	float fit = MIN(0.74f * lv_area_get_width(view) / (x1 - x0), 0.72f * lv_area_get_height(view) / (y1 - y0));
 
 	c->cx = 0.5f * (view->x1 + view->x2 + 1) - fit * 0.5f * (x0 + x1);
-	c->cy = 0.5f * (view->y1 + view->y2 + 1) - fit * 0.5f * (y0 + y1) + 6.0f;
+	c->cx += 0.05f * lv_area_get_width(view); /* the scale labels hang off the left edge of the box */
+	c->cy = 0.5f * (view->y1 + view->y2 + 1) - fit * 0.5f * (y0 + y1) - 4.0f;
 	if (remember) {
 		view_cx = c->cx;
 		view_cy = c->cy;
@@ -409,11 +443,11 @@ static void scene_draw(const struct raster *r, lv_layer_t *layer, const lv_area_
 			}
 		}
 		/* time grid on the floor: one line a second, moving with the data */
-		for (int s = 0; s <= 12; s++) {
-			float x = hx - (s * 3 + frac) * dx;
+		for (int s = 0; s <= 6; s++) {
+			float x = hx - (s * 5 + frac) * dx; /* every 2 s */
 
 			if (x >= -hx) {
-				line3(r, &c, x, 0, -hz, x, 0, hz, s % 4 == 0 ? C_LINE2 : C_LINE, 255);
+				line3(r, &c, x, 0, -hz, x, 0, hz, s % 3 == 0 ? C_LINE2 : C_LINE, 255);
 			}
 		}
 		line3(r, &c, -hx, 0, -hz, hx, 0, -hz, C_LINE2, 255);
@@ -435,12 +469,12 @@ static void scene_draw(const struct raster *r, lv_layer_t *layer, const lv_area_
 		/* points from the newest (right) to the oldest (left), scrolling by frac */
 		for (int k = -1; k < n_samples && np <= HIST; k++) {
 			float x = k < 0 ? hx : hx - (k + frac) * dx;
-			float v = MIN(hist_at(i, MAX(k, 0)) / (float)scales[scale_i], 1.0f);
+			float v = level(hist_at(i, MAX(k, 0)));
 
 			if (x < -hx) {
 				/* cut the last segment at the left edge */
 				float xp = hx - (k - 1 + frac) * dx;
-				float vp = MIN(hist_at(i, MAX(k - 1, 0)) / (float)scales[scale_i], 1.0f);
+				float vp = level(hist_at(i, MAX(k - 1, 0)));
 				float t = (xp - (-hx)) / (xp - x);
 
 				x = -hx;
@@ -462,6 +496,9 @@ static void scene_draw(const struct raster *r, lv_layer_t *layer, const lv_area_
 		}
 		hit_n[row] = np;
 
+		/* where the ridge stands: a line on the floor */
+		line3(r, &c, -hx, 0, z, hx, 0, z, shade(col, 110), 255);
+
 		/* A run of equal samples is one straight piece of wall: one polygon and
 		 * one line instead of one for each sample. Each polygon costs tens of
 		 * microseconds whatever its size, and most threads idle at a steady
@@ -476,8 +513,8 @@ static void scene_draw(const struct raster *r, lv_layer_t *layer, const lv_area_
 			if (vv[k] > 0.0f || vv[e] > 0.0f) {
 				float qx[4], qy[4];
 
-				proj(&c, xs[k], 0, z, &qx[0], &qy[0]);
-				proj(&c, xs[e], 0, z, &qx[1], &qy[1]);
+				proj(&c, xs[k], MAX(vv[k] - RIBBON, 0.0f) * BOX_H, z, &qx[0], &qy[0]);
+				proj(&c, xs[e], MAX(vv[e] - RIBBON, 0.0f) * BOX_H, z, &qx[1], &qy[1]);
 				qx[2] = px[e], qy[2] = py[e];
 				qx[3] = px[k], qy[3] = py[k];
 				quad_fill(r, qx, qy, fill);
@@ -519,12 +556,15 @@ static void scene_draw(const struct raster *r, lv_layer_t *layer, const lv_area_
 		float tx, ty;
 
 		proj(&c, c.r[0] > 0 ? -hx : hx, BOX_H * k / 4, c.pos[2] > 0 ? -hz : hz, &tx, &ty);
-		uint32_t pm = scales[scale_i] * k / 4; /* per mille */
+		static const char *const decade[] = {"0.01", "0.1", "1", "10", "100 %"};
+		uint32_t u = scales[scale_i] * k / 4; /* hundredths of a per cent */
 
-		if (pm % 10 == 0) {
-			snprintf(buf, sizeof(buf), k == 4 ? "%u %%" : "%u", pm / 10);
+		if (scales[scale_i] == 0) {
+			snprintf(buf, sizeof(buf), "%s", decade[k]);
+		} else if (u % 100 == 0) {
+			snprintf(buf, sizeof(buf), k == 4 ? "%u %%" : "%u", u / 100);
 		} else {
-			snprintf(buf, sizeof(buf), k == 4 ? "%u.%u %%" : "%u.%u", pm / 10, pm % 10);
+			snprintf(buf, sizeof(buf), k == 4 ? "%u.%02u %%" : "%u.%02u", u / 100, u % 100);
 		}
 		ui_draw_text(layer, &font_mono_12, C_TEXT3, (int)tx - 8 - ui_text_width(&font_mono_12, buf), (int)ty - 7, buf);
 	}
@@ -589,6 +629,7 @@ static void side_draw(lv_event_t *e)
 	if (!raster_begin(&r, e)) {
 		return;
 	}
+	uint32_t ts0 = gfx_now_us();
 	int x0 = r.box.x1, y = r.box.y1;
 
 	ui_draw_text(layer, &font_mono_12, C_TEXT3, x0, y, "THREAD");
@@ -617,7 +658,7 @@ static void side_draw(lv_event_t *e)
 
 		snprintf(buf, sizeof(buf), "%.15s", nice_name(t));
 		ui_draw_text(layer, &font_mono_12, col, x0, y, buf);
-		snprintf(buf, sizeof(buf), "%u.%u", pm / 10, pm % 10);
+		snprintf(buf, sizeof(buf), "%u.%02u", pm / 100, pm % 100);
 		ui_draw_text(layer, &font_mono_12, col, x0 + 168 - ui_text_width(&font_mono_12, buf), y, buf);
 		if (t->stack_size) {
 			uint32_t used = (uint32_t)(t->stack_size - t->stack_unused);
@@ -651,6 +692,7 @@ static void side_draw(lv_event_t *e)
 	y += 28;
 	snprintf(buf, sizeof(buf), "NET  IN %u KB/s  OUT %u KB/s", net_rx_bps / 1024, net_tx_bps / 1024);
 	ui_draw_text(layer, &font_mono_12, C_TEXT2, x0, y, buf);
+	t_side_max = MAX(t_side_max, gfx_now_us() - ts0);
 }
 
 /* ---- interaction ---------------------------------------------------------- */
@@ -790,7 +832,7 @@ static bool gestures(uint32_t now_ms)
 			}
 		} else if (shell_in_attract() || now_ms - g_touch_ms > IDLE_ORBIT_MS) {
 			/* swing gently between two views instead of turning round to the back */
-			v_yaw = YAW0 + 0.45f * sinf((now_ms - g_touch_ms) * 0.001f * ORBIT_RATE * 2.0f);
+			v_yaw = YAW0 + 0.30f * sinf((now_ms - g_touch_ms) * 0.001f * ORBIT_RATE * 2.0f);
 		}
 	}
 	g_prev = n;
@@ -815,10 +857,10 @@ static void scale_click(lv_event_t *e)
 	ARG_UNUSED(e);
 	scale_i = (scale_i + 1) % ARRAY_SIZE(scales);
 	pm = scales[scale_i];
-	if (pm % 10 == 0) {
-		lv_label_set_text_fmt(l_scale, "SCALE  %u %%", pm / 10);
+	if (pm == 0) {
+		lv_label_set_text(l_scale, "SCALE  LOG");
 	} else {
-		lv_label_set_text_fmt(l_scale, "SCALE  %u.%u %%", pm / 10, pm % 10);
+		lv_label_set_text_fmt(l_scale, "SCALE  %u %%", pm / 100);
 	}
 }
 
@@ -855,7 +897,7 @@ static void create(lv_obj_t *root)
 
 	chart = ui_box(root, 0, CH_Y, CH_W, CH_H);
 	lv_obj_add_event_cb(chart, chart_draw, LV_EVENT_DRAW_MAIN, NULL);
-	l_scale = ui_label(root, &font_mono_12, C_AZURE, "SCALE  100 %");
+	l_scale = ui_label(root, &font_mono_12, C_AZURE, "SCALE  LOG");
 	lv_obj_set_style_bg_color(l_scale, ui_c(C_BG2), 0);
 	lv_obj_set_style_bg_opa(l_scale, LV_OPA_COVER, 0);
 	lv_obj_set_style_pad_hor(l_scale, 8, 0);
@@ -898,7 +940,7 @@ static void tick(uint32_t now_ms)
 		int alive = 0;
 
 		text_t0 = now_ms;
-		snprintf(buf, sizeof(buf), "%u.%u %%", busy_hist[h_head] / 10, busy_hist[h_head] % 10);
+		snprintf(buf, sizeof(buf), "%u.%u %%", busy_hist[h_head] / 100, (busy_hist[h_head] % 100) / 10);
 		set_text(l_cpu, buf);
 		snprintf(buf, sizeof(buf), "%u.%02u ms", g->avg_render_us / 1000, (g->avg_render_us % 1000) / 10);
 		set_text(l_frame, buf);
@@ -912,7 +954,7 @@ static void tick(uint32_t now_ms)
 		if (selected >= 0) {
 			uint32_t pm = hist_at(selected, 0);
 
-			snprintf(buf, sizeof(buf), "%.14s  %u.%u %%", nice_name(&th[selected]), pm / 10, pm % 10);
+			snprintf(buf, sizeof(buf), "%.14s  %u.%02u %%", nice_name(&th[selected]), pm / 100, pm % 100);
 		} else {
 			snprintf(buf, sizeof(buf), "tap a ridge");
 		}
@@ -942,7 +984,7 @@ static void mini(const struct raster *r)
 
 		for (int k = 0; k < n_samples; k += 2) {
 			int x = r->box.x2 - k * (w - 24) / HIST - (nr - 1 - n) * 3;
-			int y = base - (int)(hist_at(i, k) * (h / 2) / 1000);
+			int y = base - (int)(log10f((float)MAX(hist_at(i, k), 1u)) * 0.25f * (h / 2));
 
 			if (k) {
 				raster_line(r, prev_x * RQ_ONE, prev_y * RQ_ONE, x * RQ_ONE, y * RQ_ONE, lut_row[n % ROWS], 9, 255);

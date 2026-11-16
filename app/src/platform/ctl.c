@@ -226,6 +226,11 @@ static int handle(char *line, char *out, size_t out_len)
 				h->n_frames, h->title);
 	} else if (!strcmp(cmd, "play") && n >= 2) {
 		post(CTL_PLAY, a[0]);
+	} else if (!strcmp(cmd, "hoodt")) {
+		uint32_t t[4];
+
+		hood_timing(t, true);
+		return snprintf(out, out_len, "sample_us=%u stack_us=%u net_us=%u side_us=%u\n", t[0], t[1], t[2], t[3]);
 	} else if (!strcmp(cmd, "ds")) {
 		return ds_info(out, out_len);
 	} else if (!strcmp(cmd, "hometiles") && n >= 2) {

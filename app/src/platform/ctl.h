@@ -11,6 +11,7 @@
  *   clip <n>                   clip n: its file on the card, frames, title
  *   card <0|1>                 list the card's clips or only the flash ones
  *   play <n>                   go to Cinema and open clip n
+ *   hoodt                      Under the Hood: worst sampling, stack scan, network and side panel times, us
  *   ds                         Explorer's data set: in flash or generated, address, checksum
  *   hometiles <n>              Home: n placeholder tiles after the real ones
  *   home                       Home: tiles, pan position and range

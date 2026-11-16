@@ -30,6 +30,11 @@ void home_test_tiles(int n);
 /* Home: tiles shown, how far the field is panned and how far it can be, px. */
 void home_get_status(int *tiles, int *scroll_x, int *scroll_max);
 
+/* Under the Hood: longest sampling, stack scan, network query and side panel
+ * draw since the last call, us (bring-up aid, ctl "hoodt").
+ */
+void hood_timing(uint32_t out[4], bool clear);
+
 /* Cinema: open clip number `clip` once that screen is showing (remote control). */
 void cinema_play(int clip);
 

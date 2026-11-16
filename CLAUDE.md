@@ -375,11 +375,17 @@ not to be modified from here.
   CN5 before anything else. Research on this (other owners' reports, ST's
   and third-party settings, datasheet, MDF pitfalls, ranked tests):
   `reports/STM32N6 DK microphone noise only.md`, notes in `research_notes/`.
-- **Under the Hood draws a run of equal samples as one polygon and one line**
-  (hood.c). **Why:** each `raster_poly` call costs tens of microseconds
-  whatever its size; one polygon per sample (10 ridges x 47) cost 8.3 ms a
-  frame at the stretched scales and dropped a frame. Merged, and with 36
-  samples instead of 48: 6.6 to 7.3 ms, worst 12.3 ms. Its numbers come
+- **Under the Hood: logarithmic height by default, ribbons not curtains, and
+  a run of equal samples as one polygon** (hood.c). **Why:** on a linear axis
+  the UI thread (about 50 %) was a wall and every other thread a flat line
+  (the user: "not impressive"); 0.01 % to 100 % shows them all. On that axis
+  every ridge is tall, and curtains filled down to the floor overdrew the
+  view several times (10.4 ms a frame, dropped frames): a band under each
+  top edge plus a line on the floor costs 7.8 ms, worst 12.6 ms. Each
+  `raster_poly` call also costs tens of microseconds whatever its size, so
+  equal runs are merged; 8 ribbons of 30 samples. `ctl.py hoodt` gives the
+  worst sampling, stack scan, network query and side panel times (the side
+  panel is 3.3 ms, every 0.5 s). Its numbers come
   from `k_thread_runtime_stats_get` (interrupt time is charged to the
   interrupted thread) and `k_thread_stack_space_get`, which needs
   `CONFIG_INIT_STACKS`.
