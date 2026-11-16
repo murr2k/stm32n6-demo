@@ -5,7 +5,7 @@ real-time data visualization, and full-screen video with sound, built on
 Zephyr 4.4.0 and LVGL 9.5. The audience is engineers and UX designers, so the
 rules are: lock to the panel refresh, no fake data, and show the measurements.
 
-> **Status: eleven screens, video playback and audio output work on hardware.**
+> **Status: twelve screens, video playback and audio output work on hardware.**
 > Every screen holds the panel's 59.98 Hz with no dropped frames in the
 > automated run, a 48 s original film plays at 30 fps with stereo sound from
 > flash or from a microSD card, clips upload to the card over Ethernet at
@@ -238,6 +238,7 @@ captures/               screenshots and logs pulled off the board (not committed
 | Cinema | Clips from flash and from the microSD card in a gallery that scrolls sideways; full screen with overlay controls, scrubbing (the picture follows the finger, the sound is cross-faded 85 ms pieces of the clip) and a stats panel (decode and conversion time, bit rate, seek time, read-ahead). Hardware JPEG decode about 10 ms a frame, DMA2D conversion 4.8 ms, video slaved to the audio clock | 30 fps video, no drops; a video frame costs the UI 6.2 ms, 9.2 ms with the controls up, 9.9 ms while scrubbing |
 | Specimen | Type scale, colour tokens, motion test | 1.9 / 3.1 ms |
 | Settings | The board's address (DHCP or fixed, entered on a keypad, applied at once, kept on the card), a QR code for the board's own description at http://<board>/, and which PC is feeding Host Link and Core Map | 1.8 / 2.0 ms |
+| Camera | The IMX335 (B-CAMS-IMX module, 5 Mpx) live at 30 fps: demosaiced and scaled to 592 x 444 by the DCMIPP, auto exposure and white balance by ST's ISP middleware, copied to the display by DMA2D (3 ms); beside it the frame rate and the gain and exposure the ISP chose. The camera runs only while the screen is up | 5.0 / 7.9 ms |
 | Under the Hood | This firmware, measured live from Zephyr's own statistics: a 3D plot with one ribbon per thread (the eight busiest) showing its share of the CPU over the last 12 s on a logarithmic height axis from 0.01 % to 100 %, so a service thread at a twentieth of a per cent is as readable as the UI thread at fifty (drag to orbit, pinch to zoom, tap a ribbon, tap SCALE for linear axes), every thread with its CPU share and stack high-water mark, and the static RAM, LVGL pool, kernel heap and PSRAM in use. Interrupt time counts to the thread it interrupted | 7.8 / 12.6 ms |
 
 Frame time is all UI-thread work for a frame (screen logic, layout, render),
@@ -402,6 +403,7 @@ and look for isolated steps in both.
 | Video | 800 x 480, 30 fps from flash and from the microSD card, no dropped frames in the automated run |
 | Audio out | 48 kHz stereo to the headphone jack, zero underruns in the automated run, checked by ear. The sample clock comes from the HSI-fed PLL2 and measures 47.6 to 47.7 kHz (0.7 % low) |
 | Stand-alone boot (BOOT1 = L) | Working: with the switch at L the demo starts by itself after a reset (the console shows the boot ROM loading MCUboot from flash, then the application) |
+| Camera | Working: 30.0 fps, 0 dropped UI frames; opening and closing the screen costs no frame (the stream starts and stops on the capture thread). The image tuning is ST's ISP middleware, a west module under ST's licence SLA0044, fetched at build time and never committed here. NPU inference on the picture is not built yet |
 | Microphone as Signal Lab source | Capture path working, sound not yet: MDF1 turns the PDM stream into 48 kHz, 24 bit PCM on the DAC's own clock, a circular DMA delivers it with no errors, and a tap on Signal Lab's SOURCE label puts it on the scope, spectrum and waterfall. On this board the onboard microphone (U13) delivers only noise: 50 dB above its datasheet floor, unaffected by every capture setting, with no response to a tone or to tapping. Read at the pin, its bit stream is a healthy sigma-delta stream with nothing but that noise in the audio band, so the electronics of the part run and its transducer does not. A known good PDM microphone on connector CN5 (same pins, selected automatically) is the next step. The generator stays the default source |
 | Host Link | Working: 340 of 340 datagrams answered in the test run, 1.4 to 2.9 ms round trip as timed by the host |
 | Web remote, firmware update over the network | Not started |

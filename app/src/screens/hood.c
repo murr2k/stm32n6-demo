@@ -61,7 +61,7 @@
 #define PITCH_MIN     (6.0f * DEG)
 #define PITCH_MAX     (80.0f * DEG)
 #define ZOOM_MIN      0.6f
-#define ZOOM_MAX      2.5f
+#define ZOOM_MAX      1.8f    /* the ribbons fill more of the view as it zooms: 2.5 cost 18 ms */
 #define ORBIT_K       0.0075f
 #define IDLE_ORBIT_MS 8000
 #define ORBIT_RATE    0.08f   /* rad/s, swinging, not turning round */
@@ -966,6 +966,10 @@ static void tick(uint32_t now_ms)
 
 static void show(void)
 {
+	/* every visit starts from the default view: a view left zoomed in costs more */
+	v_yaw = YAW0, v_pitch = PITCH0, v_zoom = 1.0f;
+	v_panx = v_pany = 0.0f;
+	resetting = false;
 	g_touch_ms = k_uptime_get_32() - IDLE_ORBIT_MS + 3000;
 	g_prev = 0;
 	lv_obj_invalidate(side);

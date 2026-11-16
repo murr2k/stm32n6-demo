@@ -27,7 +27,7 @@ from shot import grab  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "captures" / "tour"
-SCREENS = ["home", "deck", "siglab", "explorer", "touchlab", "hostlink", "coremap", "cinema", "specimen", "hood", "settings"]
+SCREENS = ["home", "deck", "siglab", "explorer", "touchlab", "hostlink", "coremap", "cinema", "specimen", "hood", "settings", "camera"]
 
 
 def stats(host: str) -> dict[str, float]:

@@ -109,9 +109,18 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   settings (mic.h lists the ten values), `micprobe` and `micbits` look at
   the data pin without the MDF (`micbits` stops interrupts for its
   duration: sound and picture pause, the underrun counter moves).
+- Camera (media/camera.c, screens/camera.c): the B-CAMS-IMX shield is set in
+  app/CMakeLists.txt (`SHIELD st_b_cams_imx_mb1854`). The DCMIPP demosaics and
+  scales 2592 x 1944 to 592 x 444 RGB565 (`video_set_compose_format`: the
+  driver wants the compose rectangle first) into four PSRAM buffers imported
+  with `video_import_buffer` (the video layer's own pool is in internal RAM
+  and kept at its minimum). ST's ISP middleware (west module`n  `zephyr-stm32-mw-isp` v0.4.0, fetched under `/st/`) hooks into the driver
+  and runs exposure and white balance. The capture thread hands the newest
+  frame to the screen, which copies it with DMA2D (`dma2d_rgb565` in
+  jpegdec.c, UI thread only like the JPEG conversion).
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
   Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
-  explorer, touchlab, hostlink, coremap, cinema, specimen, hood, settings. Home shows two
+  explorer, touchlab, hostlink, coremap, cinema, specimen, hood, settings, camera. Home shows two
   rows of four tiles; a ninth and later ones go into further columns on the
   right (same tile size) and the field pans sideways. `ctl.py "hometiles 5"`
   adds placeholder tiles to try that with (`hometiles 0` removes them). The
@@ -414,6 +423,17 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   moves, every visible tile redraws its live thumbnail each frame; with ten
   screens that reached 15.7 ms and dropped a frame. Dragging by hand
   measured 13.6 ms worst.
+- **`/st/` (ST's ISP middleware) is never committed.** **Why:** its licence
+  (SLA0044) allows use on ST devices and redistribution but forbids putting it
+  under open-source terms, and this repository is public and Apache-2.0.
+  `west update` fetches it; `.gitignore` keeps it out.
+- **The camera starts and stops on its capture thread** (`camera_start` and
+  `camera_stop` only ask). **Why:** both talk to the sensor over I2C and wait
+  for the pipe; on the UI thread each opening or closing of the screen cost
+  a frame.
+- **Under the Hood resets its view on every visit; its zoom stops at 1.8.**
+  **Why:** a view left zoomed in by earlier touches made the ribbons fill the
+  screen: 18 ms frames and 7 dropped per attract visit.
 - **Touch coordinates are panel coordinates**, not content-area coordinates:
   subtract `UI_CONTENT_Y` only when positioning objects inside a screen root.
 - **Label the origin of data on screen.** Generated or synthetic sources say
@@ -495,5 +515,7 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   brought it back, and the next tour passed. The console log had no fault
   message. If it recurs, note what was attached (the camera module had just
   been fitted) and measure the board supply before cycling it.
-- Camera (IMX335) and NPU are a later addition. Home has room now; memory is
-  the question (see the budget under Architecture).
+- Camera: live (see Architecture). NPU inference on its picture is the next
+  step; ST's runtime for the NPU is not part of Zephyr 4.4.
+- The shell holds 12 screens and all 12 are used: a thirteenth needs
+  `MAX_SCREENS` raised in shell.c.

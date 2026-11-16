@@ -8,6 +8,8 @@ manifest:
   remotes:
     - name: zephyrproject-rtos
       url-base: https://github.com/zephyrproject-rtos
+    - name: stm32-hotspot
+      url-base: https://github.com/stm32-hotspot
 
   projects:
     - name: zephyr
@@ -30,6 +32,16 @@ manifest:
           - lvgl
           - littlefs
           - fatfs
+
+    # ST's camera ISP (auto exposure, white balance, colour) for the DCMIPP
+    # driver, tuned for the IMX335. Licence: ST SLA0044, use on ST devices;
+    # it must not be put under open-source terms, so it is fetched here and
+    # never copied into this repository.
+    - name: zephyr-stm32-mw-isp
+      remote: stm32-hotspot
+      revision: v0.4.0
+      path: st/lib/zephyr-stm32-mw-isp
+      submodules: true
 
   self:
     path: app

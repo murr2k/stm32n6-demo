@@ -45,4 +45,11 @@ int jpegdec_decode(const uint8_t *jpg, size_t len, uint8_t *mcu, size_t mcu_cap,
 int jpegdec_convert(const uint8_t *mcu, const struct jpeg_info *info, uint32_t *dst, int stride_px,
 		    uint32_t *us);
 
+/* Copy an RGB565 picture (e.g. a camera frame) to ARGB8888 at dst with
+ * DMA2D. Strides in pixels. UI thread only, like jpegdec_convert(): the two
+ * share the DMA2D.
+ */
+int dma2d_rgb565(const uint16_t *src, int src_stride_px, int w, int h, uint32_t *dst, int dst_stride_px,
+		 uint32_t *us);
+
 #endif

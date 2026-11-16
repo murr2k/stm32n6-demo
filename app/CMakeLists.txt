@@ -1,6 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 cmake_minimum_required(VERSION 3.20.0)
 
+# The camera module in the CSI connector: ST B-CAMS-IMX (MB1854, IMX335).
+set(SHIELD st_b_cams_imx_mb1854)
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(n6_demo)
 

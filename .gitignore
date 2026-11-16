@@ -9,6 +9,9 @@ __pycache__/
 /zephyr/
 /modules/
 /bootloader/
+# ST's ISP middleware (licence SLA0044: must not be put under open-source
+# terms, so it is never committed here; west fetches it)
+/st/
 
 # Build outputs
 /build/

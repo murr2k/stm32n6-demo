@@ -31,6 +31,7 @@ static const struct screen *const screens[] = {
 	&screen_specimen,
 	&screen_hood,
 	&screen_settings,
+	&screen_camera,
 };
 
 int main(void)

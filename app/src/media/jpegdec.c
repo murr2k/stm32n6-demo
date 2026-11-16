@@ -177,3 +177,46 @@ int jpegdec_convert(const uint8_t *mcu, const struct jpeg_info *info, uint32_t *
 	}
 	return ret;
 }
+
+int dma2d_rgb565(const uint16_t *src, int src_stride_px, int w, int h, uint32_t *dst, int dst_stride_px,
+		 uint32_t *us)
+{
+	uint32_t t0 = gfx_now_us();
+	int ret = 0;
+
+	if (w <= 0 || h <= 0) {
+		return 0;
+	}
+	hdma2d.Init.Mode = DMA2D_M2M_PFC;
+	hdma2d.Init.ColorMode = DMA2D_OUTPUT_ARGB8888;
+	hdma2d.Init.OutputOffset = dst_stride_px - w;
+	hdma2d.Init.AlphaInverted = DMA2D_REGULAR_ALPHA;
+	hdma2d.Init.RedBlueSwap = DMA2D_RB_REGULAR;
+	hdma2d.Init.BytesSwap = DMA2D_BYTES_REGULAR;
+	hdma2d.Init.LineOffsetMode = DMA2D_LOM_PIXELS;
+
+	hdma2d.LayerCfg[1].AlphaMode = DMA2D_REPLACE_ALPHA;
+	hdma2d.LayerCfg[1].InputAlpha = 0xFF;
+	hdma2d.LayerCfg[1].InputColorMode = DMA2D_INPUT_RGB565;
+	hdma2d.LayerCfg[1].ChromaSubSampling = DMA2D_NO_CSS;
+	hdma2d.LayerCfg[1].InputOffset = src_stride_px - w;
+	hdma2d.LayerCfg[1].RedBlueSwap = DMA2D_RB_REGULAR;
+	hdma2d.LayerCfg[1].AlphaInverted = DMA2D_REGULAR_ALPHA;
+
+	/* the source was written by the camera's DMA: the CPU never cached it */
+	for (int y = 0; y < h; y++) {
+		sys_cache_data_flush_and_invd_range(dst + (size_t)y * dst_stride_px, (size_t)w * 4);
+	}
+	if (HAL_DMA2D_Init(&hdma2d) != HAL_OK || HAL_DMA2D_ConfigLayer(&hdma2d, 1) != HAL_OK ||
+	    HAL_DMA2D_Start(&hdma2d, (uint32_t)src, (uint32_t)dst, w, h) != HAL_OK ||
+	    HAL_DMA2D_PollForTransfer(&hdma2d, 100) != HAL_OK) {
+		ret = -EIO;
+	}
+	for (int y = 0; y < h; y++) {
+		sys_cache_data_invd_range(dst + (size_t)y * dst_stride_px, (size_t)w * 4);
+	}
+	if (us) {
+		*us = gfx_now_us() - t0;
+	}
+	return ret;
+}
