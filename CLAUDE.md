@@ -49,6 +49,10 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   first clip from flash and from the card (`ctl.py "card 0"` hides the card's
   clips), records the sound of a drag on the slider (`discontinuities 0`), and
   uploads, plays, seeks and deletes a generated test clip.
+- `CHANGELOG.md` gets a line for every change a user of the demo or its
+  tools would notice, under the day it is committed (no tagged releases).
+  README images are the board's own screenshots; one of the Camera screen
+  must show no face (the repository is public: pick a frame with a hand only).
 - Build times: a source-only change is about 2 min; any `prj.conf`, Kconfig or
   CMake change rebuilds LVGL and takes 6 to 8 min. Batch config changes.
 

@@ -1,22 +1,26 @@
 # stm32n6-demo
 
 A multi-screen touch demo for the **STM32N6570-DK**: live dashboards, dense
-real-time data visualization, and full-screen video with sound, built on
-Zephyr 4.4.0 and LVGL 9.5. The audience is engineers and UX designers, so the
-rules are: lock to the panel refresh, no fake data, and show the measurements.
+real-time data visualization, full-screen video with sound, and a live camera
+with hand tracking on the NPU, built on Zephyr 4.4.0 and LVGL 9.5. The
+audience is engineers and UX designers, so the rules are: lock to the panel
+refresh, no fake data, and show the measurements.
 
-> **Status: twelve screens, video playback and audio output work on hardware.**
-> Every screen holds the panel's 59.98 Hz with no dropped frames in the
-> automated run, a 48 s original film plays at 30 fps with stereo sound from
-> flash or from a microSD card, clips upload to the card over Ethernet at
-> 2 to 4 MB/s while the demo runs, and touch, motion, colour and sound have been
-> checked by hand (the card path by measurement only, so far). Left alone
-> for 90 seconds it tours itself. Not built yet: microphone input. See
-> [Status](#status).
+> **Status: twelve screens, video with sound, and camera hand tracking work on
+> hardware.** Every screen holds the panel's 59.98 Hz with no dropped frames
+> in the automated run. A 48 s original film plays at 30 fps with stereo sound
+> from flash or from a microSD card, and clips upload to the card over
+> Ethernet at 2 to 4 MB/s while the demo runs. The camera runs at 30 fps, and
+> the NPU tracks a hand in it at the camera's rate: 21 points, the gesture,
+> and which hand it is. Touch, motion, colour, sound and hand tracking have
+> been checked by hand on the panel. Left alone for 90 seconds it tours
+> itself. The microphone path runs, but the board's own microphone delivers
+> only noise. See [Status](#status) and the [changelog](CHANGELOG.md).
 
 | | |
 |---|---|
-| ![Home](docs/img/home.png) | ![Signal Lab](docs/img/signal-lab.png) |
+| ![Home](docs/img/home.png) | ![Hand tracking on the NPU, over the live camera](docs/img/camera-hand.png) |
+| ![Signal Lab](docs/img/signal-lab.png) | ![Under the Hood: the firmware's threads in 3D](docs/img/under-the-hood.png) |
 | ![Explorer](docs/img/explorer.png) | ![The film playing in Cinema](docs/img/film.png) |
 | ![Core Map: a PC's processors in 3D](docs/img/core-map.png) | ![A clip playing from the microSD card, with the stats panel](docs/img/cinema-card-playing.png) |
 
@@ -34,6 +38,8 @@ The plan, with architecture, budgets, phases and risks, is in
 | Storage | microSD slot on SDMMC2, 4-bit; optional (a 32 GB FAT32 card here) |
 | Network | Gigabit Ethernet, RTL8211F PHY (RGMII) |
 | Audio | WM8904 codec to the headphone jack, MEMS microphone on MDF |
+| Camera | B-CAMS-IMX module: Sony IMX335, 5 Mpx, on MIPI CSI-2, through the DCMIPP and ST's ISP |
+| NPU | ST Neural-ART accelerator, running Google MediaPipe's hand networks (converted with ST Edge AI) |
 | Probe | On-board ST-LINK V3EC, virtual COM port (COM17 on this host) |
 
 ## Prerequisites
@@ -42,7 +48,10 @@ The plan, with architecture, budgets, phases and risks, is in
 - Zephyr SDK 1.0.1 (`arm-zephyr-eabi`)
 - STM32CubeProgrammer 2.18 or later (provides `STM32_Programmer_CLI`, the
   signing tool and the `MX66UW1G45G_STM32N6570-DK` external loader)
-- ffmpeg (video asset pipeline, later phases)
+- ffmpeg (video asset pipeline)
+- Optional, for hand tracking: ST Edge AI 4.0 (`C:\ST\STEdgeAI\4.0`, or set
+  `STEDGEAI_CORE_DIR`). Without it the firmware builds with the NPU left out:
+  the Camera screen shows the picture and says that the NPU is not in the build
 
 ## Setup
 
@@ -155,7 +164,7 @@ The firmware listens on these ports (trusted LAN only, no authentication):
 | Port | Purpose | Host tool |
 |---|---|---|
 | tcp/5555 | One frame of the display, captured at a frame boundary | `tools/shot.py` |
-| tcp/5556 | Text commands: switch screen, start attract mode, which screen is up (`where`), frame statistics, inject touches, audio, video and clip-list status, open a clip | `tools/ctl.py` |
+| tcp/5556 | Text commands: switch screen, start attract mode, which screen is up (`where`), frame statistics, inject touches, audio, video and clip-list status, open a clip, NPU and hand tracker (`nn`) | `tools/ctl.py`, `tools/nn.py` |
 | udp/5557 | Host telemetry in, echo out; `N6HQ` discovery query answered with `N6HA` | `host/companion.py` |
 | tcp/5558 | Clips to and from the list on the microSD card: put (with CRC-32), list, delete, free space | `tools/n6v.py upload`, `ls`, `rm`, `df` |
 | tcp/80 | The board describes itself: `/`, `/agent.md`, `/status.json` | a browser, `curl`, an agent |
@@ -172,8 +181,9 @@ screenshots to `captures/tour/`, pans Home with five placeholder tiles added
 (rest position, a tap on a tile that has moved, an edge swipe), then drives
 Touch Lab, Explorer and Core Map
 with injected multi-touch (three contacts, pinches, a flick, an orbit, an
-edge swipe), checks that 80 touch releases never change the screen, makes
-ten screen changes, plays the film from flash and from the card, opens and
+edge swipe), checks that 80 touch releases never change the screen, enters
+every screen through a transition (27 changes, six of them from a playing
+film into Under the Hood), plays the film from flash and from the card, opens and
 closes a clip three times, records what the DAC gets during a drag on the
 slider, a pause and a resume and counts the discontinuities in it, uploads a
 generated test clip to the card while
@@ -205,7 +215,8 @@ app/                    Zephyr application (also the west manifest repo)
   src/platform/         display (gfx), touch, network, telemetry, PSRAM, remote control
   src/ui/               design tokens, fonts, shell, direct rasteriser
   src/dsp/              signal generator + FFT, Explorer dataset + pyramid
-  src/media/            hardware JPEG decode, clip player, microSD card and upload service
+  src/media/            hardware JPEG decode, clip player, microSD card and upload service, camera
+  src/nn/               NPU runtime glue, hand tracker
   src/screens/          one file per screen
 assets/                 font sources (IBM Plex, OFL)
 media/film/             the original film, companion clips and soundtrack, as code
@@ -219,6 +230,7 @@ tools/
   dataset.py            move Explorer's data set from PSRAM into the flash
   gen_fonts.py          TTF to LVGL bitmap fonts (needs npm install in tools/fontconv)
   n6v.py                encode video clips; upload them to the card, or pack and flash them
+  nn.py                 NPU networks: fetch, convert, flash, check against the PC; watch and grab the tracker
   gdbrun.ps1            scripted ST-LINK gdbserver + GDB session for bring-up
 docs/plan.html          the plan
 captures/               screenshots and logs pulled off the board (not committed)
@@ -238,14 +250,14 @@ captures/               screenshots and logs pulled off the board (not committed
 | Cinema | Clips from flash and from the microSD card in a gallery that scrolls sideways; full screen with overlay controls, scrubbing (the picture follows the finger, the sound is cross-faded 85 ms pieces of the clip) and a stats panel (decode and conversion time, bit rate, seek time, read-ahead). Hardware JPEG decode about 10 ms a frame, DMA2D conversion 4.8 ms, video slaved to the audio clock | 30 fps video, no drops; a video frame costs the UI 6.2 ms, 9.2 ms with the controls up, 9.9 ms while scrubbing |
 | Specimen | Type scale, colour tokens, motion test | 1.9 / 3.1 ms |
 | Settings | The board's address (DHCP or fixed, entered on a keypad, applied at once, kept on the card), a QR code for the board's own description at http://<board>/, and which PC is feeding Host Link and Core Map | 1.8 / 2.0 ms |
-| Camera | The IMX335 (B-CAMS-IMX module, 5 Mpx) live at 30 fps: demosaiced and scaled to 592 x 444 by the DCMIPP, auto exposure and white balance by ST's ISP middleware, copied to the display by DMA2D (3 ms). Over it, hand tracking on the NPU: Google MediaPipe's palm detector finds a hand at any rotation, a crop turned upright around it goes to the 21-point hand landmark network, and from then on each frame's crop follows the landmarks; the 21 points and their bones are drawn on the picture and the gesture is read from the joint angles (fist, open hand, pointing, victory, thumbs up and down, OK, rock on, call me, finger counts). Beside it the NPU's time per network, the tracking rate and what the ISP chose. The camera and the NPU run only while the screen is up | 4.9 / 9.2 ms |
+| Camera | The IMX335 (B-CAMS-IMX module, 5 Mpx) live at 30 fps: demosaiced and scaled to 592 x 444 by the DCMIPP, auto exposure and white balance by ST's ISP middleware, copied to the display by DMA2D (3 ms). Over it, hand tracking on the NPU (see [Hand tracking on the NPU](#hand-tracking-on-the-npu)): the 21 points and their bones are drawn on the picture, the gesture is read from the joint angles (fist, open hand, pointing, victory, three, four, thumbs up and down, thumb out, OK, rock on, call me, or a finger count), and the side panel names the hand (left or right, and how sure the network is). Beside it the NPU's time per network, the tracking rate and what the ISP chose. The camera and the NPU run only while the screen is up | 5.2 / 10.1 ms |
 | Under the Hood | This firmware, measured live from Zephyr's own statistics: a 3D plot with one ribbon per thread (the eight busiest) showing its share of the CPU over the last 12 s on a logarithmic height axis from 0.01 % to 100 %, so a service thread at a twentieth of a per cent is as readable as the UI thread at fifty (drag to orbit, pinch to zoom, tap a ribbon, tap SCALE for linear axes), every thread with its CPU share and stack high-water mark, and the static RAM, LVGL pool, kernel heap and PSRAM in use. Interrupt time counts to the thread it interrupted | 7.8 / 12.6 ms |
 
 Frame time is all UI-thread work for a frame (screen logic, layout, render),
 measured on the board over five seconds per screen by `tools/tour.py`. The
 budget at 59.98 Hz is 16.67 ms. Host Link and Core Map are measured with the
-companion running. The same run makes ten screen changes and a 150 s lap of
-attract mode: no dropped frame in either, worst frame 14.3 ms.
+companion running. The same run makes 27 screen changes and a 150 s lap of
+attract mode: no dropped frame in either, worst frame 14.8 ms.
 
 Explorer is the screen closest to the budget, and it was over it until the
 build was told about the FPU: the N657's Cortex-M55 has double precision, but
@@ -285,6 +297,12 @@ LTDC layer's constant alpha, reloaded at the vertical blank, over a
 background colour that matches the theme. The frame that builds the new
 screen is therefore drawn while the display is dark, and a transition costs
 no frame time (blending a veil in software dropped a frame on every one).
+The swap itself (one screen's hide, the next one's show) runs just after a
+frame has been presented, so its time comes out of the budget of the frame
+that builds the new screen; `ctl.py stats` reports it as `tail_worst_us`.
+Under the Hood's first frame after leaving a playing film missed a refresh
+that way about once in three attract laps, unseen in the dark but counted;
+its side panel now waits one frame.
 
 After 90 seconds without a touch the demo runs itself: it steps through the
 screens, lets Explorer finish its zoom tour, plays the film once in Cinema,
@@ -391,6 +409,74 @@ up to 7 % of full scale. Every voice now ends in a release ramp
 blaming hardware: extract the PCM from the `.n6v`, compare it with the WAV,
 and look for isolated steps in both.
 
+## Hand tracking on the NPU
+
+![A hand tracked on the Camera screen: 21 points, the gesture, which hand](docs/img/camera-hand.png)
+
+The Camera screen runs Google MediaPipe's hand pipeline (Apache-2.0 models)
+on the N6's NPU:
+
+1. The **palm detector** (192 x 192 input) looks at the whole picture,
+   letterboxed, and finds palms at any rotation: about 65 ms a run.
+2. Around the best palm, a square crop turned so that the fingers point up
+   goes to the **hand landmark network** (224 x 224 input): 21 points in 3D,
+   whether it is a hand, and which hand. About 20 ms.
+3. From then on each frame's crop follows the previous frame's landmarks, and
+   the palm detector runs again only when the hand is lost. The points are
+   smoothed with a one-euro filter, and the gesture, read from the joint
+   angles, has to hold for three frames before it shows.
+
+Measured on the board: tracking at the camera's 30 fps; the crop costs the
+CPU 5 to 10 ms a frame (it reads the camera frame from PSRAM). One hand is
+tracked at a time; a second hand in view does not disturb it, and tracking
+moves cleanly from one hand to the other. Checked on the panel with both
+hands, palm and back.
+
+The networks' working memory is the display's second frame buffer: 1.5 MB of
+the SRAM beside the NPU, lent to it while the Camera screen is up. The
+display runs single-buffered meanwhile, every frame started at the top of the
+panel's refresh, and the tour still counts 0 dropped frames. With their
+working memory in PSRAM the same networks took 938 and 350 ms. The weights
+are read in place from the flash.
+
+ST's NPU runtime and the converted networks are under ST's licence SLA0044,
+which does not allow them in an Apache-2.0 repository, so they are made
+locally:
+
+```powershell
+.\.venv\Scripts\python.exe tools\nn.py fetch      # the two models, SHA-256 pinned
+.\.venv\Scripts\python.exe tools\nn.py generate   # convert with ST Edge AI into build-nn\ (not committed)
+.\.venv\Scripts\python.exe tools\nn.py testimg    # MediaPipe's test picture, built into the firmware as a test input
+.\n6.cmd go --app-only                            # the build picks build-nn\ up
+.\.venv\Scripts\python.exe tools\nn.py flash      # the weights into the flash (stops the board); then n6.cmd run
+.\.venv\Scripts\python.exe tools\nn.py check      # both networks on the board against the original models on the PC
+```
+
+And to see what it does:
+
+```powershell
+.\.venv\Scripts\python.exe tools\ctl.py "nn hands"            # tracking, gesture, presence, handedness; palms found, confirmed, lost
+.\.venv\Scripts\python.exe tools\ctl.py "screen 11" "nn hands 2"   # track the built-in test picture: thumbs up expected
+.\.venv\Scripts\python.exe tools\nn.py watch 20               # the tracker's counters over 20 s
+.\.venv\Scripts\python.exe tools\nn.py grab 5 --hand          # frames as the tracker saw them, and the PC's models on them
+```
+
+`nn.py grab` copies a camera frame and both networks' inputs off the board
+and runs the original models on the PC: on the board's own inputs, and on
+variants (filtered differently, cropped, contrast stretched, turned, scaled,
+mirrored). The frames land in `captures/`, which git ignores: they show
+whoever is in front of the camera.
+
+That tool found the one real fault so far. The landmark network has two
+single-valued outputs, and the tracker took the first for "this is a hand".
+It is the handedness. A right hand passed, a left hand was dropped (208 palms
+found, 12 confirmed), which is what showed on the panel. The real presence
+output stops at exactly 0.5 for any hand in ST's quantized model, and that
+flat 0.5 had been read as a broken handedness output. Run on the PC on the
+test picture's mirror image and on inputs that are no hand at all, the two
+outputs gave themselves away in a minute: handedness 0.93 against 0.24,
+presence 0.50 against 0.01.
+
 ## Status
 
 | Item | State |
@@ -404,7 +490,7 @@ and look for isolated steps in both.
 | Video | 800 x 480, 30 fps from flash and from the microSD card, no dropped frames in the automated run |
 | Audio out | 48 kHz stereo to the headphone jack, zero underruns in the automated run, checked by ear. The sample clock comes from the HSI-fed PLL2 and measures 47.6 to 47.7 kHz (0.7 % low) |
 | Stand-alone boot (BOOT1 = L) | Working: with the switch at L the demo starts by itself after a reset (the console shows the boot ROM loading MCUboot from flash, then the application) |
-| Camera | Working: 30.0 fps, 0 dropped UI frames; opening and closing the screen costs no frame (the stream starts and stops on the capture thread). The image tuning is ST's ISP middleware, a west module under ST's licence SLA0044, fetched at build time and never committed here. Hand tracking on the NPU: both networks give the original models' answers (landmarks within 0.9 px of the PC), and the whole pipeline names the thumbs up in MediaPipe's test picture on the board; not yet tried with a hand in front of the camera. The NPU borrows the display's second frame buffer while the screen is up (the display runs single-buffered meanwhile, 0 dropped frames in the tour). ST's NPU runtime and the converted networks are under ST's licence SLA0044 and stay out of this repository: `tools/nn.py` fetches and converts, and the build leaves the NPU out without them |
+| Camera | Working: 30.0 fps, 0 dropped UI frames; opening and closing the screen costs no frame (the stream starts and stops on the capture thread). The image tuning is ST's ISP middleware, a west module under ST's licence SLA0044, fetched at build time and never committed here. Hand tracking on the NPU: both networks give the original models' answers (landmarks within 0.9 px of the PC), the whole pipeline names the thumbs up in MediaPipe's test picture on the board, and real hands in front of the camera track at 30 fps, either hand, palm or back (checked on the panel). The left/right label has not been checked against a real hand yet. One hand at a time. The NPU borrows the display's second frame buffer while the screen is up (the display runs single-buffered meanwhile, 0 dropped frames in the tour). ST's NPU runtime and the converted networks are under ST's licence SLA0044 and stay out of this repository: `tools/nn.py` fetches and converts, and the build leaves the NPU out without them |
 | Microphone as Signal Lab source | Capture path working, sound not yet: MDF1 turns the PDM stream into 48 kHz, 24 bit PCM on the DAC's own clock, a circular DMA delivers it with no errors, and a tap on Signal Lab's SOURCE label puts it on the scope, spectrum and waterfall. On this board the onboard microphone (U13) delivers only noise: 50 dB above its datasheet floor, unaffected by every capture setting, with no response to a tone or to tapping. Read at the pin, its bit stream is a healthy sigma-delta stream with nothing but that noise in the audio band, so the electronics of the part run and its transducer does not. A known good PDM microphone on connector CN5 (same pins, selected automatically) is the next step. The generator stays the default source |
 | Host Link | Working: 340 of 340 datagrams answered in the test run, 1.4 to 2.9 ms round trip as timed by the host |
 | Web remote, firmware update over the network | Not started |
@@ -413,7 +499,7 @@ and look for isolated steps in both.
 | Under the Hood | Working: no dropped frame on any of the five height axes in the automated run. On a linear axis the UI thread hid everything else (seen on the panel), hence the logarithmic default. The screen measures itself: with it showing, the UI thread takes about a third more of the CPU |
 | Cinema slider | A crash while scrubbing (picture frozen, a repeating noise) was reported once. Probable cause, found in a console log of real touches: Zephyr's input queue (16 events, drained by a thread at the lowest priority) dropped events, a lost release left the slider pressed, and the player then seeks to the same frame 60 times a second. Touch callbacks now run in the driver's context with no queue. Checked on the panel afterwards: five fingers on Touch Lab register and release cleanly with no event dropped, and the slider no longer hangs the film. Injected touches bypass the driver, which is why 2400 fuzzed actions never showed it. The slider's sound was rough as well (every UI frame restarted it at the finger); it is now short pieces of the clip cross-faded into each other while the finger moves and silence while it rests, measured free of steps and confirmed by ear on the panel. Other defects found on the way are fixed: a drag starting near a screen edge closed the film, seeks were counted as dropped frames and as stalls, Back could cost the UI a frame, the touch target was 44 px |
 | Screen transitions | Working: hardware fade, no frame dropped in the automated run |
-| Attract mode | Working: starts after 90 s idle, one lap is about 95 s |
+| Attract mode | Working: starts after 90 s idle, one lap is about two minutes; a hand tracked on the Camera screen counts as someone using it |
 | Soak test | Not started |
 
 ## License
