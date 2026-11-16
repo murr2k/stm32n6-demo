@@ -34,8 +34,6 @@ static int n_cols;
 static int test_tiles;
 static int thumb_w, shown_scroll;
 static volatile int st_scroll, st_max;
-static uint32_t show_ms;
-static int attract_step;
 
 static void mini_draw(lv_event_t *e)
 {
@@ -158,12 +156,6 @@ static void create(lv_obj_t *root)
 	build();
 }
 
-static void show(void)
-{
-	show_ms = k_uptime_get_32();
-	attract_step = 0;
-}
-
 static void tick(uint32_t now_ms)
 {
 	int sx = lv_obj_get_scroll_x(pan);
@@ -182,18 +174,10 @@ static void tick(uint32_t now_ms)
 			lv_obj_invalidate(minis[i]);
 		}
 	}
-	/* The demo running itself shows what is off to the right, and comes back. */
-	if (max > 0 && shell_in_attract()) {
-		uint32_t t = now_ms - show_ms;
-
-		if (attract_step == 0 && t > 2000) {
-			attract_step = 1;
-			lv_obj_scroll_to_x(pan, max, LV_ANIM_ON);
-		} else if (attract_step == 1 && t > 4500) {
-			attract_step = 2;
-			lv_obj_scroll_to_x(pan, 0, LV_ANIM_ON);
-		}
-	}
+	/* No automatic pan in attract mode: while the field moves every visible tile
+	 * redraws its live thumbnail each frame, and with ten screens that reached
+	 * 15.7 ms and dropped a frame. The position bar shows there is more.
+	 */
 }
 
 void home_test_tiles(int n)
@@ -212,7 +196,6 @@ void home_get_status(int *tiles, int *scroll_x, int *scroll_max)
 const struct screen screen_home = {
 	.title = "Home",
 	.create = create,
-	.show = show,
 	.tick = tick,
 	.attract_secs = 7,
 };

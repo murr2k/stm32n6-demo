@@ -27,7 +27,7 @@ from shot import grab  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "captures" / "tour"
-SCREENS = ["home", "deck", "siglab", "explorer", "touchlab", "hostlink", "coremap", "cinema", "specimen", "hood"]
+SCREENS = ["home", "deck", "siglab", "explorer", "touchlab", "hostlink", "coremap", "cinema", "specimen", "hood", "settings"]
 
 
 def stats(host: str) -> dict[str, float]:
@@ -308,7 +308,9 @@ def home_pan_test(host: str) -> None:
         h2, g1 = home(), stats(host)
         grab(host).save(OUT / "h1-home-panned.png")
         first = h2["scroll"] // col                # the column now at the left edge
-        expect = SCREENS[first + 1] if first < 4 else "home"  # its top tile; a placeholder opens nothing
+        top = first if first < 4 else 8 + (first - 4) * 2  # the index of its top tile
+        real = len(SCREENS) - 1                     # tiles that open a screen; the rest are placeholders
+        expect = SCREENS[top + 1] if top < real else "home"  # a placeholder opens nothing
         send(host, ["tap 100 112"])
         time.sleep(1.0)
         tapped = where(host)[0]

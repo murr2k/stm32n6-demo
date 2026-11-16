@@ -13,8 +13,11 @@
 #include <zephyr/net/net_stats.h>
 #include <zephyr/net/socket.h>
 
+#include <zephyr/net/dhcpv4.h>
+
 #include "gfx.h"
 #include "net.h"
+#include "netcfg.h"
 
 LOG_MODULE_REGISTER(net, LOG_LEVEL_INF);
 
@@ -23,6 +26,7 @@ LOG_MODULE_REGISTER(net, LOG_LEVEL_INF);
 static struct net_mgmt_event_callback ipv4_cb;
 static struct net_mgmt_event_callback link_cb;
 static struct net_status status;
+static bool dhcp_running;
 static struct k_spinlock lock;
 static K_SEM_DEFINE(ip_ready, 0, 1);
 
@@ -35,13 +39,20 @@ static void ipv4_event(struct net_mgmt_event_callback *cb, uint64_t event, struc
 	for (int i = 0; i < NET_IF_MAX_IPV4_ADDR; i++) {
 		struct net_if_addr *a = &iface->config.ip.ipv4->unicast[i].ipv4;
 
-		if (a->is_used && a->addr_type == NET_ADDR_DHCP) {
-			char buf[NET_IPV4_ADDR_LEN];
+		if (a->is_used && (a->addr_type == NET_ADDR_DHCP || a->addr_type == NET_ADDR_MANUAL)) {
+			char buf[NET_IPV4_ADDR_LEN], mbuf[NET_IPV4_ADDR_LEN], gbuf[NET_IPV4_ADDR_LEN];
+			struct net_in_addr mask = net_if_ipv4_get_netmask_by_addr(iface, &a->address.in_addr);
 			k_spinlock_key_t key;
 
 			net_addr_ntop(AF_INET, &a->address.in_addr, buf, sizeof(buf));
+			net_addr_ntop(AF_INET, &mask, mbuf, sizeof(mbuf));
+			net_addr_ntop(AF_INET, &iface->config.ip.ipv4->gw, gbuf, sizeof(gbuf));
 			key = k_spin_lock(&lock);
+			memset(status.ip, 0, sizeof(status.ip));
 			strncpy(status.ip, buf, sizeof(status.ip) - 1);
+			strncpy(status.mask, mbuf, sizeof(status.mask) - 1);
+			strncpy(status.gw, gbuf, sizeof(status.gw) - 1);
+			status.fixed = a->addr_type == NET_ADDR_MANUAL;
 			status.have_ip = true;
 			k_spin_unlock(&lock, key);
 			LOG_INF("ip %s", buf);
@@ -78,7 +89,92 @@ int net_start(void)
 	net_mgmt_init_event_callback(&link_cb, link_event, NET_EVENT_IF_UP | NET_EVENT_IF_DOWN);
 	net_mgmt_add_event_callback(&link_cb);
 	status.link_up = net_if_is_up(iface);
+
+	struct netcfg cfg;
+
+	netcfg_load(&cfg);
+	if (cfg.fixed) {
+		return net_use_config(&cfg);
+	}
 	net_dhcpv4_start(iface);
+	dhcp_running = true;
+	return 0;
+}
+
+/* Drop every address the interface has. */
+static void drop_addresses(struct net_if *iface)
+{
+	for (int i = 0; i < NET_IF_MAX_IPV4_ADDR; i++) {
+		struct net_if_addr *a = &iface->config.ip.ipv4->unicast[i].ipv4;
+
+		if (a->is_used) {
+			struct net_in_addr addr = a->address.in_addr;
+
+			net_if_ipv4_addr_rm(iface, &addr);
+		}
+	}
+}
+
+int net_use_config(const struct netcfg *cfg)
+{
+	struct net_if *iface = net_if_get_default();
+	struct net_in_addr ip, mask, gw;
+	k_spinlock_key_t key;
+
+	if (iface == NULL) {
+		return -ENODEV;
+	}
+	if (!cfg->fixed) {
+		if (status.fixed || !dhcp_running) {
+			drop_addresses(iface);
+			key = k_spin_lock(&lock);
+			status.have_ip = false;
+			status.fixed = false;
+			status.ip[0] = status.mask[0] = status.gw[0] = '\0';
+			k_spin_unlock(&lock, key);
+			net_dhcpv4_start(iface);
+			dhcp_running = true;
+		}
+		return 0;
+	}
+	if (net_addr_pton(AF_INET, cfg->ip, &ip) || net_addr_pton(AF_INET, cfg->mask, &mask)) {
+		return -EINVAL;
+	}
+	if (dhcp_running) {
+		/* DHCP lets go of its lease asynchronously: had the fixed address been
+		 * added at once, the lease's late removal deleted it whenever it was the
+		 * same address (the board then answered nothing until power-off).
+		 */
+		net_dhcpv4_stop(iface);
+		dhcp_running = false;
+		for (int t = 0; t < 40; t++) {
+			bool lease = false;
+
+			for (int i = 0; i < NET_IF_MAX_IPV4_ADDR; i++) {
+				struct net_if_addr *a = &iface->config.ip.ipv4->unicast[i].ipv4;
+
+				lease |= a->is_used && a->addr_type == NET_ADDR_DHCP;
+			}
+			if (!lease) {
+				break;
+			}
+			k_msleep(25);
+		}
+		k_msleep(100);
+	}
+	drop_addresses(iface);
+	if (net_if_ipv4_addr_add(iface, &ip, NET_ADDR_MANUAL, 0) == NULL) {
+		return -EIO;
+	}
+	net_if_ipv4_set_netmask_by_addr(iface, &ip, &mask);
+	if (cfg->gw[0] && net_addr_pton(AF_INET, cfg->gw, &gw) == 0) {
+		net_if_ipv4_set_gw(iface, &gw);
+	}
+	key = k_spin_lock(&lock);
+	strncpy(status.mask, cfg->mask, sizeof(status.mask) - 1);
+	strncpy(status.gw, cfg->gw, sizeof(status.gw) - 1);
+	k_spin_unlock(&lock, key);
+	LOG_INF("fixed address %s mask %s gateway %s", cfg->ip, cfg->mask, cfg->gw[0] ? cfg->gw : "-");
 	return 0;
 }
 

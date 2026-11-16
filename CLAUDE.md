@@ -26,6 +26,8 @@ not to be modified from here.
 .\.venv\Scripts\python.exe tools\acap.py --secs 2 -o captures\x.wav --clicks "tap 40 444"   # record the DAC feed while commands run, count discontinuities
 .\.venv\Scripts\python.exe tools\n6v.py upload media\out\n6_film.n6v   # clip to the microSD card over Ethernet (4 MB/s); also ls, rm, df
 .\.venv\Scripts\python.exe tools\acap.py --mic --secs 3 -o captures\mic.wav   # record the microphone (24 bit), print its level
+Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself (also / and /status.json)
+.\.venv\Scripts\python.exe tools\ctl.py netcfg     # the board's address; "netcfg static IP MASK GW" or "netcfg dhcp" changes it now
 .\.venv\Scripts\python.exe tools\dataset.py info   # Explorer's data set: must say "source flash"; pull + flash put it there
 .\run.cmd                   # host companion: live data for Host Link and Core Map; finds boards by broadcast (--host to name one)
 .\.venv\Scripts\python.exe host\companion.py --host 192.168.254.86 --cores 128   # TEST ONLY: synthetic load on 128 processors
@@ -109,7 +111,7 @@ not to be modified from here.
   duration: sound and picture pause, the underrun counter moves).
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
   Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
-  explorer, touchlab, hostlink, coremap, cinema, specimen, hood. Home shows two
+  explorer, touchlab, hostlink, coremap, cinema, specimen, hood, settings. Home shows two
   rows of four tiles; a ninth and later ones go into further columns on the
   right (same tile size) and the field pans sideways. `ctl.py "hometiles 5"`
   adds placeholder tiles to try that with (`hometiles 0` removes them). The
@@ -398,6 +400,20 @@ not to be modified from here.
   count is a byte (up to 255); the board keeps 128, the core history in
   PSRAM. Discovery: `N6HQ` to udp/5557 (broadcast) is answered with an`n  `N6HA` line of the board's services (hostlink.h); the companion asks every
   10 s and sends to every board that answered.
+- **A change of the board's address goes through `netcfg_apply()`, which
+  hands it to the `netcfg_save` thread; `net_use_config()` waits for DHCP to
+  release its lease before adding a fixed address.** **Why:** DHCP lets go
+  asynchronously; a fixed address equal to the old lease was added and then
+  deleted by the lease's late removal, and the board answered nothing (not
+  even ARP) until power-off. Different addresses and fixed to DHCP worked.
+  Never reboot the board from firmware to apply a setting: a software reset
+  leaves the flash in octal mode and MCUboot fails (see the power-cycle
+  invariant). The setting is kept in `/SD:/n6demo.cfg`; USER held at power-up
+  forces DHCP.
+- **Home does not pan by itself in attract mode.** **Why:** while the field
+  moves, every visible tile redraws its live thumbnail each frame; with ten
+  screens that reached 15.7 ms and dropped a frame. Dragging by hand
+  measured 13.6 ms worst.
 - **Touch coordinates are panel coordinates**, not content-area coordinates:
   subtract `UI_CONTENT_Y` only when positioning objects inside a screen root.
 - **Label the origin of data on screen.** Generated or synthetic sources say

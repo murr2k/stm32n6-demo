@@ -5,7 +5,7 @@ real-time data visualization, and full-screen video with sound, built on
 Zephyr 4.4.0 and LVGL 9.5. The audience is engineers and UX designers, so the
 rules are: lock to the panel refresh, no fake data, and show the measurements.
 
-> **Status: ten screens, video playback and audio output work on hardware.**
+> **Status: eleven screens, video playback and audio output work on hardware.**
 > Every screen holds the panel's 59.98 Hz with no dropped frames in the
 > automated run, a 48 s original film plays at 30 fps with stereo sound from
 > flash or from a microSD card, clips upload to the card over Ethernet at
@@ -102,7 +102,7 @@ against the boot ROM's idle state, not against running firmware.
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install psutil    # once
-.\run.cmd                                           # or: run.cmd --host <board ip>
+.\run.cmd                                           # finds boards by itself; or: run.cmd --host <board ip>
 ```
 
 `run.cmd` starts `host/companion.py`, which sends this PC's per-core CPU
@@ -115,6 +115,32 @@ numbers leave the PC: no process names, no host name. It opens no listening
 port (replies return on the socket it sends from), so there is no firewall
 prompt. Without the companion both screens say they are waiting; they do not
 show placeholder data.
+
+The companion finds boards by itself: it broadcasts a four-byte query on
+udp/5557 and every board answers with one line naming itself and its
+services; it then sends to all of them, and asks again every 10 s. Any host
+can describe up to 255 logical processors. The board keeps 128; Host Link
+shows all of them, and Core Map draws up to 64 posts, so a larger host is
+shown a post per physical core (its SMT threads averaged) or per pair of
+processors, and the header says so. `companion.py --cores N` sends a
+synthetic load on N processors, for testing that, and is labelled as a test
+option only.
+
+## The board's address, and a description for people and agents
+
+The Settings screen shows the board's address and MAC, and sets a fixed
+address (address, mask, gateway on a keypad) or DHCP. The change takes effect
+at once, without a restart, and is kept on the microSD card (`n6demo.cfg`);
+with a fixed address the board is on the network about 1 s after power-up
+instead of about 8. Holding the USER button while the board powers up
+ignores the stored address and uses DHCP. `ctl.py "netcfg static IP MASK GW"`
+and `ctl.py "netcfg dhcp"` do the same over the network.
+
+The board describes itself on http/80: `/` is a page, `/agent.md` the same
+text as Markdown for an agent (what the board is, its screens, every network
+service and protocol, how to find and drive it, and what not to do), and
+`/status.json` its live state. The Settings screen shows a QR code for the
+page.
 
 The companion can be left running across board restarts. The board announces
 its address (a gratuitous ARP) when DHCP assigns it; without that, Windows
@@ -130,8 +156,9 @@ The firmware listens on these ports (trusted LAN only, no authentication):
 |---|---|---|
 | tcp/5555 | One frame of the display, captured at a frame boundary | `tools/shot.py` |
 | tcp/5556 | Text commands: switch screen, start attract mode, which screen is up (`where`), frame statistics, inject touches, audio, video and clip-list status, open a clip | `tools/ctl.py` |
-| udp/5557 | Host telemetry in, echo out | `host/companion.py` |
+| udp/5557 | Host telemetry in, echo out; `N6HQ` discovery query answered with `N6HA` | `host/companion.py` |
 | tcp/5558 | Clips to and from the list on the microSD card: put (with CRC-32), list, delete, free space | `tools/n6v.py upload`, `ls`, `rm`, `df` |
+| tcp/80 | The board describes itself: `/`, `/agent.md`, `/status.json` | a browser, `curl`, an agent |
 
 ```powershell
 .\.venv\Scripts\python.exe tools\ctl.py "screen 2" stats
@@ -210,6 +237,7 @@ captures/               screenshots and logs pulled off the board (not committed
 | Core Map | The same PC's logical processors as posts on a floor plan of its chip (P-cores, E-cores, SMT threads), height and colour by load. Drag to orbit, pinch to zoom and pan, tap a post, double tap to reset. Software 3D: projected in floating point, filled as anti-aliased quads, no depth buffer | 6.8 / 7.7 ms; 12 ms with every post at 100 % |
 | Cinema | Clips from flash and from the microSD card in a gallery that scrolls sideways; full screen with overlay controls, scrubbing (the picture follows the finger, the sound is cross-faded 85 ms pieces of the clip) and a stats panel (decode and conversion time, bit rate, seek time, read-ahead). Hardware JPEG decode about 10 ms a frame, DMA2D conversion 4.8 ms, video slaved to the audio clock | 30 fps video, no drops; a video frame costs the UI 6.2 ms, 9.2 ms with the controls up, 9.9 ms while scrubbing |
 | Specimen | Type scale, colour tokens, motion test | 1.9 / 3.1 ms |
+| Settings | The board's address (DHCP or fixed, entered on a keypad, applied at once, kept on the card), a QR code for the board's own description at http://<board>/, and which PC is feeding Host Link and Core Map | 1.8 / 2.0 ms |
 | Under the Hood | This firmware, measured live from Zephyr's own statistics: a 3D plot with one ribbon per thread (the eight busiest) showing its share of the CPU over the last 12 s on a logarithmic height axis from 0.01 % to 100 %, so a service thread at a twentieth of a per cent is as readable as the UI thread at fifty (drag to orbit, pinch to zoom, tap a ribbon, tap SCALE for linear axes), every thread with its CPU share and stack high-water mark, and the static RAM, LVGL pool, kernel heap and PSRAM in use. Interrupt time counts to the thread it interrupted | 7.8 / 12.6 ms |
 
 Frame time is all UI-thread work for a frame (screen logic, layout, render),

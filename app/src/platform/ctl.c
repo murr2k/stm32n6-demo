@@ -23,6 +23,7 @@
 #include "gfx.h"
 #include "mic.h"
 #include "net.h"
+#include "netcfg.h"
 #include "psram.h"
 #include "screens/screens.h"
 #include "touch.h"
@@ -226,6 +227,39 @@ static int handle(char *line, char *out, size_t out_len)
 				h->n_frames, h->title);
 	} else if (!strcmp(cmd, "play") && n >= 2) {
 		post(CTL_PLAY, a[0]);
+	} else if (!strcmp(cmd, "netcfg")) {
+		/* "netcfg", "netcfg dhcp", "netcfg static IP MASK [GW]" */
+		struct netcfg cfg;
+		char mode[8] = "", ip[16] = "", mask[16] = "", gw[16] = "";
+		int k = sscanf(line, "%*s %7s %15s %15s %15s", mode, ip, mask, gw);
+
+		if (k >= 1) {
+			memset(&cfg, 0, sizeof(cfg));
+			cfg.fixed = !strcmp(mode, "static");
+			if (!cfg.fixed && strcmp(mode, "dhcp")) {
+				return snprintf(out, out_len, "err netcfg dhcp | netcfg static IP MASK [GW]\n");
+			}
+			strncpy(cfg.ip, ip, sizeof(cfg.ip) - 1);
+			strncpy(cfg.mask, mask, sizeof(cfg.mask) - 1);
+			strncpy(cfg.gw, gw, sizeof(cfg.gw) - 1);
+			const char *why = netcfg_check(&cfg);
+
+			if (why) {
+				return snprintf(out, out_len, "err %s\n", why);
+			}
+			int ret = netcfg_apply(&cfg);
+
+			if (ret) {
+				return snprintf(out, out_len, "err %d\n", ret);
+			}
+		}
+		struct net_status ns;
+
+		net_get_status(&ns);
+		netcfg_get(&cfg);
+		return snprintf(out, out_len, "mode=%s ip=%s mask=%s gw=%s stored=%s recovery=%d store=\"%s\"\n",
+				ns.fixed ? "static" : "dhcp", ns.ip, ns.mask, ns.gw, cfg.fixed ? "static" : "dhcp",
+				netcfg_recovery(), netcfg_store_state());
 	} else if (!strcmp(cmd, "hoodt")) {
 		uint32_t t[4];
 
