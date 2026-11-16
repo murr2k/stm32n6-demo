@@ -462,6 +462,234 @@ def cmd_inputs(a: argparse.Namespace) -> None:
         print(d / name)
     send(a.host, ["nn hands 1"])
 
+REF_BATCH = r'''
+import sys, numpy as np, tensorflow as tf
+model, scale, offset = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
+it = tf.lite.Interpreter(model_path=model)
+it.allocate_tensors()
+d = it.get_input_details()[0]
+for inp in sys.argv[4:]:
+    x = np.fromfile(inp, dtype=np.uint8).reshape(d["shape"])
+    if d["dtype"] == np.int8:
+        x = (x.astype(np.int16) - 128).astype(np.int8)
+    elif d["dtype"] == np.float32:
+        x = ((x.astype(np.float32) - offset) * scale).astype(np.float32)
+    it.set_tensor(d["index"], x)
+    it.invoke()
+    res = []
+    for o in it.get_output_details():
+        v = it.get_tensor(o["index"]).astype(np.float32)
+        s, z = o["quantization"]
+        if s:
+            v = (v - z) * s
+        res.append(v.ravel())
+    if model.find("palm") >= 0:
+        sc = next(r for r in res if r.size == 2016)
+        p = 1 / (1 + np.exp(-sc.astype(np.float64)))
+        print(f"RESULT {inp} best={p.max():.3f} above50={int((p > 0.5).sum())}")
+    else:
+        ones = [float(r[0]) for r in res if r.size == 1]
+        print(f"RESULT {inp} singles={' '.join(f'{v:.3f}' for v in ones)}")
+'''
+
+
+def run_batch(name: str, inputs: list[Path]) -> dict[str, str]:
+    """An original model on several inputs in one process: per input its RESULT line."""
+    script = OUT / "ref_batch.py"
+    script.write_text(REF_BATCH)
+    scale, offset = input_quant(name)
+    r = subprocess.run([str(ST_PYTHON), "-I", str(script), str(model_path(name)), str(scale), str(offset),
+                        *map(str, inputs)], capture_output=True, text=True, errors="replace")
+    out = {}
+    for line in r.stdout.splitlines():
+        if line.startswith("RESULT "):
+            _, path, rest = line.split(" ", 2)
+            out[Path(path).name] = rest
+    if not out:
+        print(r.stdout[-2000:], r.stderr[-2000:])
+    return out
+
+
+def palm_variants(frame, stem: Path) -> list[tuple[str, Path]]:
+    """The camera frame turned into palm detector inputs in different ways (192 x 192 RGB)."""
+    import numpy as np
+    from PIL import Image, ImageOps
+
+    img = Image.fromarray(frame)
+    w, h = img.size
+    v = {}
+    # the whole picture, letterboxed, area filtered (the board samples bilinearly)
+    lb = Image.new("RGB", (192, 192))
+    sh = round(h * 192 / w)
+    lb.paste(img.resize((192, sh), Image.BOX), (0, (192 - sh) // 2))
+    v["area"] = lb
+    v["area_levels"] = ImageOps.autocontrast(lb, cutoff=1)
+    # the middle square only (as large again as in the letterbox)
+    v["crop"] = img.crop(((w - h) // 2, 0, (w + h) // 2, h)).resize((192, 192), Image.BOX)
+    v["crop_levels"] = ImageOps.autocontrast(v["crop"], cutoff=1)
+    out = []
+    for k, im in v.items():
+        p = stem.with_name(f"{stem.name}_v_{k}.bin")
+        p.write_bytes(np.asarray(im, np.uint8).tobytes())
+        out.append((k, p))
+    return out
+
+
+def crop_px(img, cx: float, cy: float, side: float, rot: float, size: int = 224):
+    """size x size bilinear crop of an H x W x 3 picture around a square turned by rot (camera
+    pixels), sampled as the board's hand_input does; black outside the picture."""
+    import numpy as np
+
+    hgt, wid = img.shape[:2]
+    g = (np.arange(size) + 0.5) / size - 0.5
+    u, v = np.meshgrid(g * side, g * side)
+    c, s = np.cos(rot), np.sin(rot)
+    x = cx + u * c - v * s - 0.5
+    y = cy + u * s + v * c - 0.5
+    x0, y0 = np.floor(x).astype(int), np.floor(y).astype(int)
+    fx, fy = (x - x0)[..., None], (y - y0)[..., None]
+    ok = (x0 >= 0) & (y0 >= 0) & (x0 < wid - 1) & (y0 < hgt - 1)
+    x0, y0 = np.clip(x0, 0, wid - 2), np.clip(y0, 0, hgt - 2)
+    f = img.astype(np.float32)
+    p = (f[y0, x0] * (1 - fx) * (1 - fy) + f[y0, x0 + 1] * fx * (1 - fy)
+         + f[y0 + 1, x0] * (1 - fx) * fy + f[y0 + 1, x0 + 1] * fx * fy)
+    return np.where(ok[..., None], np.clip(p + 0.5, 0, 255), 0).astype(np.uint8)
+
+
+def hand_variants(frame, g: dict, stem: Path) -> list[tuple[str, Path]]:
+    """The board's landmark crop made again on the PC, and changed: turned, scaled, shifted, contrast."""
+    import math
+
+    import numpy as np
+    from PIL import Image, ImageOps
+
+    cx, cy, side, rot = float(g["cx"]), float(g["cy"]), float(g["size"]), int(g["rot_mdeg"]) / 1000 * math.pi / 180
+    v = {"pc": crop_px(frame, cx, cy, side, rot),
+         "turn180": crop_px(frame, cx, cy, side, rot + math.pi),
+         "turn+30": crop_px(frame, cx, cy, side, rot + math.pi / 6),
+         "turn-30": crop_px(frame, cx, cy, side, rot - math.pi / 6),
+         "x0.75": crop_px(frame, cx, cy, side * 0.75, rot),
+         "x1.3": crop_px(frame, cx, cy, side * 1.3, rot)}
+    v["mirror"] = v["pc"][:, ::-1].copy()
+    v["levels"] = np.asarray(ImageOps.autocontrast(Image.fromarray(v["pc"]), cutoff=1))
+    out = []
+    for k, im in v.items():
+        p = stem.with_name(f"{stem.name}_h_{k}.bin")
+        p.write_bytes(np.ascontiguousarray(im, np.uint8).tobytes())
+        out.append((k, p))
+    return out
+
+
+def cmd_grab(a: argparse.Namespace) -> None:
+    """Frames as the tracker sees them: camera picture and both network inputs, saved to
+    captures/hands (ignored: they show whoever is in front of the camera), and the original
+    models run on the PC on the board's inputs and on other ways of making the palm input."""
+    import time
+
+    import numpy as np
+    from PIL import Image
+    from ctl import send
+
+    d = ROOT / "captures" / "hands"
+    d.mkdir(parents=True, exist_ok=True)
+    jobs = []
+    for k in range(a.n):
+        if "screen=11" not in send(a.host, ["where"])[0]:  # back from attract mode
+            send(a.host, ["screen 11"])
+            time.sleep(2)
+        kv = lambda r: dict(t.split("=", 1) for t in r.split()[1:])  # noqa: E731
+        n0 = int(kv(send(a.host, ["nn grab 1"])[0])["n"])
+        t0 = time.time()
+        while True:
+            g = kv(send(a.host, ["nn grab"])[0])
+            if int(g["n"]) > n0:
+                if not a.hand or g["has_hand"] == "1":
+                    break
+                if time.time() - t0 > a.wait:
+                    sys.exit(f"no palm found in {a.wait:.0f} s")
+                if "screen=11" not in send(a.host, ["where"])[0]:
+                    send(a.host, ["screen 11"])
+                    time.sleep(2)
+                n0 = int(kv(send(a.host, ["nn grab 1"])[0])["n"])
+            elif time.time() - t0 > 3 and int(g["n"]) == n0 and not a.hand:
+                sys.exit("no frame grabbed (is the Camera screen showing and the tracker on?)")
+            time.sleep(0.05)
+        st = kv(send(a.host, ["nn hands"])[0])
+        stem = d / time.strftime("%H%M%S")
+        w, h = int(g["w"]), int(g["h"])
+        t1 = time.time()
+        raw = np.frombuffer(board_read(a.host, int(g["frame"], 16), w * h * 2), np.uint16).reshape(h, w)
+        r5, g6, b5 = (raw >> 11) & 31, (raw >> 5) & 63, raw & 31
+        frame = np.stack([(r5 << 3) | (r5 >> 2), (g6 << 2) | (g6 >> 4), (b5 << 3) | (b5 >> 2)], -1).astype(np.uint8)
+        Image.fromarray(frame).save(f"{stem}_frame.png")
+        lum = frame.astype(np.float32) @ np.array([0.299, 0.587, 0.114], np.float32)
+        palms, hands = [], []
+        if g["has_palm"] == "1":
+            b = board_read(a.host, int(g["palm_in"], 16), 192 * 192 * 3)
+            Image.frombytes("RGB", (192, 192), b).save(f"{stem}_palm.png")
+            p = Path(f"{stem}_board.bin")
+            p.write_bytes(b)
+            palms.append(("board", p))
+        if g["has_hand"] == "1":
+            b = board_read(a.host, int(g["hand_in"], 16), 224 * 224 * 3)
+            Image.frombytes("RGB", (224, 224), b).save(f"{stem}_hand.png")
+            p = Path(f"{stem}_hand.bin")
+            p.write_bytes(b)
+            hands.append(("board", p))
+        print(f"{stem.name}: read in {time.time() - t1:.1f} s; picture mean {lum.mean():.0f}, "
+              f"1..99 % {np.percentile(lum, 1):.0f}..{np.percentile(lum, 99):.0f}; board: palm {g['palm_pct']} %, "
+              f"presence {g['presence_pct']} %, crop {g['size']} px at ({g['cx']}, {g['cy']}) "
+              f"{int(g['rot_mdeg']) / 1000:.0f} deg; counters searches {st['searches']} palms {st['palms']} "
+              f"confirmed {st['confirmed']} lost {st['lost']}", flush=True)
+        palms += palm_variants(frame, stem)
+        if hands:
+            hands += hand_variants(frame, g, stem)
+        jobs.append((stem, palms, hands))
+        if k + 1 < a.n:
+            time.sleep(a.every)
+    # the PC's runs after the collection, so that the frames come at the pace asked for
+    for stem, palms, hands in jobs:
+        print(f"{stem.name}:")
+        res = run_batch("palm_detector", [p for _, p in palms])
+        print("   palm on the PC: " + ", ".join(f"{k} {res.get(p.name, '?')}" for k, p in palms))
+        if hands:
+            res = run_batch("hand_landmark", [p for _, p in hands])
+            print("   landmarks on the PC (handedness, presence: 0.5 a hand, 0.01 none): " +
+                  ", ".join(f"{k} {res.get(p.name, '?').replace('singles=', '')}" for k, p in hands))
+        for f in d.glob(f"{stem.name}_*.bin"):
+            f.unlink()
+
+
+def cmd_watch(a: argparse.Namespace) -> None:
+    """The tracker's counters over a stretch of time: how often it searched, found a palm,
+    had it confirmed, tracked and lost a hand."""
+    import time
+
+    from ctl import send
+
+    kv = lambda r: dict(t.split("=", 1) for t in r.split()[1:])  # noqa: E731
+    if "screen=11" not in send(a.host, ["where"])[0]:
+        send(a.host, ["screen 11"])
+        time.sleep(2)
+    first = last = kv(send(a.host, ["nn hands"])[0])
+    t0 = time.time()
+    tracked = polls = 0
+    pres = []
+    while time.time() - t0 < a.secs:
+        time.sleep(0.2)
+        last = kv(send(a.host, ["nn hands"])[0])
+        polls += 1
+        if last["valid"] == "1":
+            tracked += 1
+            pres.append(int(last["presence_pct"]))
+    dt = time.time() - t0
+    d = {k: int(last[k]) - int(first[k]) for k in ("searches", "palms", "confirmed", "lost")}
+    print(f"{dt:.0f} s: searches {d['searches']} ({d['searches'] / dt:.1f}/s), palms {d['palms']}, "
+          f"confirmed {d['confirmed']}, lost {d['lost']}; tracked {100 * tracked / max(polls, 1):.0f} % of the time"
+          + (f", presence {min(pres)}..{max(pres)} %" if pres else "")
+          + f"; last palm {last['palm_us']} us, landmarks {last['hand_us']} us, tracking {int(last['fps_x10']) / 10} fps")
+
+
 def main() -> None:
     sys.path.insert(0, str(ROOT / "tools"))
     from ctl import DEFAULT_HOST
@@ -476,6 +704,15 @@ def main() -> None:
     sp.add_argument("net", type=int, nargs="?", default=0, help="0 palm detector, 1 hand landmarks")
     sp.add_argument("--all", action="store_true", help="every block, not only those over 5 ms")
     sp.set_defaults(fn=cmd_trace)
+    sp = sub.add_parser("watch")
+    sp.add_argument("secs", type=float, nargs="?", default=10)
+    sp.set_defaults(fn=cmd_watch)
+    sp = sub.add_parser("grab")
+    sp.add_argument("n", type=int, nargs="?", default=1, help="frames")
+    sp.add_argument("--every", type=float, default=1.0, help="seconds between frames")
+    sp.add_argument("--hand", action="store_true", help="only frames in which the landmark network ran")
+    sp.add_argument("--wait", type=float, default=20, help="seconds to wait for such a frame")
+    sp.set_defaults(fn=cmd_grab)
     sp = sub.add_parser("ref")
     sp.add_argument("name")
     sp.add_argument("input")

@@ -167,6 +167,9 @@ static void tick(uint32_t now_ms)
 		last_frame_ms = now_ms;
 		hands_get(&hand); /* the newest result goes with the newest picture */
 		lv_obj_invalidate(view);
+		if (hand.valid && !shell_in_attract()) {
+			shell_note_input(); /* someone is using the screen: no attract mode under their hand */
+		}
 		if (!lv_obj_has_flag(l_state, LV_OBJ_FLAG_HIDDEN)) {
 			lv_obj_add_flag(l_state, LV_OBJ_FLAG_HIDDEN);
 		}
@@ -191,7 +194,15 @@ static void tick(uint32_t now_ms)
 		if (hand.error) {
 			lv_label_set_text(l_hand, hand.error);
 		} else if (hand.valid) {
-			snprintf(buf, sizeof(buf), "tracked, %u %%", (unsigned int)(hand.presence * 100 + 0.5f));
+			/* which hand, and how sure the network is of that */
+			float h = hand.handedness;
+			unsigned int sure = (unsigned int)((h > 0.5f ? h : 1.0f - h) * 100 + 0.5f);
+
+			if (sure < 65) {
+				snprintf(buf, sizeof(buf), "left or right?");
+			} else {
+				snprintf(buf, sizeof(buf), "%s hand, %u %%", h > 0.5f ? "right" : "left", sure);
+			}
 			lv_label_set_text(l_hand, buf);
 		} else {
 			lv_label_set_text(l_hand, "searching");

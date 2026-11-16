@@ -22,6 +22,7 @@
 #include <zephyr/sys/crc.h>
 
 #include "hands.h"
+#include "media/camera.h"
 #include "npu.h"
 #include "platform/gfx.h"
 #include "platform/psram.h"
@@ -404,11 +405,41 @@ int npu_ctl(const char *line, char *out, size_t out_len)
 		hands_get(&h);
 		return snprintf(out, out_len,
 				"ok on=%d valid=%d gesture=%d fingers=%d presence_pct=%d fps_x10=%u palm_us=%u "
-				"hand_us=%u prep_us=%u searches=%u lent=%d in0=0x%08x in1=0x%08x error=%s\n",
+				"hand_us=%u prep_us=%u searches=%u palm_pct=%d palms=%u confirmed=%u lost=%u "
+				"right_pct=%d lent=%d in0=0x%08x in1=0x%08x error=%s\n",
 				hands_enabled(), h.valid, h.gesture, h.fingers, (int)(h.presence * 100), h.fps_x10,
-				h.palm_us, h.hand_us, h.prep_us, h.searches, gfx_back_buffer_lent(),
+				h.palm_us, h.hand_us, h.prep_us, h.searches, (int)(h.palm_score * 100), h.palms,
+				h.confirmed, h.lost, (int)(h.handedness * 100), gfx_back_buffer_lent(),
 				(unsigned int)(uintptr_t)nets[NPU_PALM].in, (unsigned int)(uintptr_t)nets[NPU_HAND].in,
 				h.error ? h.error : "-");
+	}
+	if (!strcmp(sub, "thr")) {
+		/* "nn thr [palm_pct presence_pct]": the tracker's two thresholds */
+		float palm, presence;
+
+		if (a1 >= 0 && a2 >= 0) {
+			hands_set_thresholds(a1 / 100.0f, a2 / 100.0f);
+		}
+		hands_get_thresholds(&palm, &presence);
+		return snprintf(out, out_len, "ok palm_pct=%d presence_pct=%d\n", (int)(palm * 100 + 0.5f),
+				(int)(presence * 100 + 0.5f));
+	}
+	if (!strcmp(sub, "grab")) {
+		/* "nn grab 1" asks for the next frame the tracker works on to be copied
+		 * (camera picture and network inputs); "nn grab" says where they are */
+		struct hands_grab g;
+
+		if (a1 > 0) {
+			hands_grab_arm();
+		}
+		hands_grab_get(&g);
+		return snprintf(out, out_len,
+				"ok n=%u frame=0x%08x palm_in=0x%08x hand_in=0x%08x has_palm=%d has_hand=%d "
+				"palm_pct=%d presence_pct=%d cx=%d cy=%d size=%d rot_mdeg=%d w=%d h=%d\n",
+				g.n, (unsigned int)(uintptr_t)g.frame, (unsigned int)(uintptr_t)g.palm_in,
+				(unsigned int)(uintptr_t)g.hand_in, g.has_palm, g.has_hand, (int)(g.palm_score * 100),
+				(int)(g.presence * 100), (int)g.cx, (int)g.cy, (int)g.size,
+				(int)(g.rot * 57295.78f), CAM_W, CAM_H);
 	}
 	if (!strcmp(sub, "trace")) {
 		job.kind = JOB_TRACE;

@@ -35,6 +35,9 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 .\.venv\Scripts\python.exe tools\nn.py inputs      # what the hand tracker's networks last saw, as PNGs in build-nn/test
 .\.venv\Scripts\python.exe tools\ctl.py nn "nn hands" "nn bench 20 1"   # NPU and tracker status; times (net 0 palm, 1 hand)
 .\.venv\Scripts\python.exe tools\ctl.py "screen 11" "nn hands 2"   # track the built-in thumbs-up picture: gesture=7 expected
+.\.venv\Scripts\python.exe tools\nn.py watch 20    # tracker counters over 20 s: searches, palms found, confirmed, lost, time tracked
+.\.venv\Scripts\python.exe tools\nn.py grab 5 --hand   # frames as the tracker saw them (captures/hands, ignored) and the PC's models on them and on variants
+.\.venv\Scripts\python.exe tools\ctl.py "nn thr 50 50"   # the palm and presence thresholds, percent
 .\run.cmd                   # host companion: live data for Host Link and Core Map; finds boards by broadcast (--host to name one)
 .\.venv\Scripts\python.exe host\companion.py --host 192.168.254.86 --cores 128   # TEST ONLY: synthetic load on 128 processors
 ```
@@ -328,7 +331,9 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   back by itself, and the log says so). After a change to the generator or
   to DS_N: `dataset.py erase`, start, `pull`, `flash`.
 - **PSRAM in use: 13.4 of 28 MB** (`ctl.py media`, `psram_kb`), 13.9 once
-  `acap` has been used (its 576 KB buffer is taken on first use). The
+  `acap` has been used (its 576 KB buffer is taken on first use); 0.5 MB more
+  once `nn hands 2` has run (the test picture as a camera frame), 0.8 MB more
+  once `nn grab` has. The
   read-ahead window was cut from 8 to 4 MB when PSRAM was nearly full; that
   reason is gone, the 4 MB have been enough (0 stalls).
 - **The player's sound never steps: every change of position (pause, play,
@@ -509,6 +514,17 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   under it first and the copy starts at the top. Lending and returning happen
   in `show()`/`hide()`, under the transition fade; the return waits for the
   NPU to let go. The tour checks 0 dropped frames through these switches.
+- **The landmark network's presence is its output `Identity_1`, handedness is
+  `Identity_2`; the converter keeps the .tflite's output order (Identity_2
+  first), so `HANDS_PRESENCE_OUTPUT` is 1.** In ST's quantized model presence
+  saturates at 0.500 for any hand (about 0.01 for anything else, on the PC
+  too), so the board doubles it; handedness is 0.93 for the test picture and
+  0.24 for its mirror image. **Why:** the tracker used handedness as presence:
+  one hand of every person was dropped (the user: "right hand works well,
+  left hand is barely recognized"; 208 palms found, 12 confirmed), and
+  presence's flat 0.5 had been taken for a broken handedness output. Check
+  a network's outputs on a mirrored and a non-hand input, not only on the
+  test picture (`nn.py grab` makes such variants from a real frame).
 - **Image slots are 2 MB, in app/boards/stm32n6570_dk.overlay and in
   app/sysbuild/mcuboot.overlay; the two must agree, and MCUboot is reflashed
   after a change (`n6.cmd flash` without `--app-only`).** **Why:** the
@@ -609,12 +625,15 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   ("The NPU on the camera picture"). N1 done: runtime on Zephyr, both hand
   networks verified against the PC. N2 built: hand tracking on the Camera
   screen, checked end to end with the built-in test picture (`nn hands 2`:
-  Thumbs up, presence 92 %), not yet with a real hand in front of the
-  camera. Open: the crop costs about 10 ms of CPU a frame (reading the
-  camera frame from PSRAM), so tracking may run below the camera's 30 fps;
-  the palm detector varies 58 to 165 ms (142 to 165 in attract laps, cause
-  not known; it only delays finding a hand); the handedness output of ST's
-  quantized landmark model is a flat 0.5 on the board and on the PC alike,
-  so left and right are not shown. Faces (N3) and the soak test (N4) next.
+  Thumbs up) and by the user with real hands on 2026-11-16: the right hand
+  tracked well, the left barely, which was the presence/handedness mix-up
+  (see the invariant); after the fix "tracking was excellent for each hand,
+  both front and back". Open: the crop costs about 10 ms of CPU a frame
+  (reading the camera frame from PSRAM), so tracking may run below the
+  camera's 30 fps; the palm detector varies 58 to 165 ms (142 to 165 in
+  attract laps, cause not known; it only delays finding a hand); which side
+  "right" is was inferred from the user's report (the right hand passed the
+  old gate, which needed handedness above 0.5), to be confirmed on screen.
+  Faces (N3) and the soak test (N4) next.
 - The shell holds 12 screens and all 12 are used: a thirteenth needs
   `MAX_SCREENS` raised in shell.c.
