@@ -547,6 +547,17 @@ void audio_set_source(audio_source_t fn, void *ctx)
 	k_spin_unlock(&lock, key);
 }
 
+void audio_release_source(audio_source_t fn)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+
+	if (source == fn) {
+		source = NULL;
+		source_ctx = NULL;
+	}
+	k_spin_unlock(&lock, key);
+}
+
 uint32_t audio_queued_frames(void)
 {
 	if (!ok) {

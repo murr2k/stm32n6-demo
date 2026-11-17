@@ -67,6 +67,12 @@ void raster_band(const struct raster *r, int x0, const int32_t *lo_q, const int3
 void raster_area(const struct raster *r, int x0, const int32_t *y_q, int n, int y_top, int y_base,
 		 uint32_t rgb, uint8_t a_top);
 
+/* A glow under the trace: opacity a at the trace fading to zero depth px below
+ * it, never below y_limit. Its cost does not grow with the signal: a loud
+ * spectrum through raster_area() fills most of its pane every frame. */
+void raster_glow(const struct raster *r, int x0, const int32_t *y_q, int n, int depth, int y_limit,
+		 uint32_t rgb, uint8_t a);
+
 /* Blit an 8-bit map through a 256-entry colour table (heat maps, waterfalls). */
 void raster_lut8(const struct raster *r, int x, int y, int w, int h, const uint8_t *src,
 		 int src_stride, const uint32_t *lut);

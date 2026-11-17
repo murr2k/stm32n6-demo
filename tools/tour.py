@@ -3,7 +3,8 @@
 
 Visits every screen, lets it run, records frame statistics and a screenshot,
 then exercises the multi-touch paths with injected contacts (Touch Lab,
-Explorer, Core Map), checks that touch releases never change screen, runs a
+Explorer, Core Map), plays Signal Lab's theremin and records its sound,
+checks that touch releases never change screen, runs a
 set of screen transitions, audio and video playback from flash, an upload to
 the microSD card with playback and seeks from it, and one lap of attract
 mode. host/companion.py is started for the run so Host Link and Core Map
@@ -14,6 +15,7 @@ Usage: tour.py [--host IP] [--screens home,deck,...] [--no-touch] [--no-media] [
 from __future__ import annotations
 
 import argparse
+import math
 import re
 import subprocess
 import sys
@@ -144,6 +146,62 @@ def scrub_sound(host: str) -> None:
           f"discontinuities {len(clicks(pcm))}, signal in {loud} % of it, frame worst "
           f"{g1['render_worst_us'] / 1000:.2f} ms, UI dropped {int(g1['dropped'] - g0['dropped'])}, "
           f"stalls {int(v1.get('stalls', 0) - v0.get('stalls', 0))}")
+
+
+def theremin_test(host: str) -> None:
+    """Signal Lab's theremin played with injected touches: what the DAC gets
+    through a glide across the field, a two-finger chord and the lifts (every
+    change has to be a ramp), the pitch and level a held touch plays against
+    its column and height, touch to sound, a finger that leaves the field
+    (it keeps its level until it lifts) or comes down off it (it does not
+    play), the SOUND switch, and the frames meanwhile."""
+    def thm() -> dict[str, str]:
+        return {k: v for k, v in re.findall(r"(\w+)=([-\w/]+)", send(host, ["thm"])[0])}
+
+    def voice(st: dict[str, str]) -> tuple[int, ...]:
+        return tuple(int(x) for x in st["v0"].split("/"))  # on, held, hz, db
+
+    sound_was = thm()["sound"]  # the SOUND switch is the user's: put back afterwards
+    send(host, [f"screen {SCREENS.index('siglab')}", "sleep 1.2", "sigsrc 2", "sleep 1.2", "thmwave 1", "thmsnap 0",
+                "thmsound 1"])
+    play = [c for i in range(40) for c in (f"touch 0 {100 + 15 * i} {200 + i} 1", "sleep 0.03")]
+    play += ["touch 1 400 300 1", "sleep 0.5", "touch 0 700 239 0", "sleep 0.3", "touch 1 400 300 0", "sleep 0.6",
+             "touch 0 300 180 1", "sleep 0.15", "touch 0 300 180 0"]
+    send(host, ["reset"])
+    g0 = stats(host)
+    pcm = capture(host, 3.0, play)
+    # a held touch: column 400 (x 416), y 204 (the spectrum pane is 252 px tall from y 144)
+    send(host, ["touch 0 416 204 1", "sleep 0.5"])
+    st = thm()
+    grab(host).save(OUT / f"{SCREENS.index('siglab')}-siglab-theremin.png")
+    # the same finger off the field's top (over the scope), then past its left end
+    send(host, ["touch 0 416 110 1", "sleep 0.3"])
+    above = voice(thm())
+    send(host, ["touch 0 5 110 1", "sleep 0.3"])
+    past = voice(thm())
+    send(host, ["touch 0 5 110 0", "sleep 0.6"])
+    # a finger that comes down over the scope and slides onto the field
+    send(host, ["touch 0 416 110 1", "sleep 0.2", "touch 0 416 204 1", "sleep 0.3"])
+    stray = voice(thm())
+    send(host, ["touch 0 416 204 0", "sleep 0.6"])
+    # SOUND off: the voice plays on screen and in the analysis, the DAC gets silence
+    send(host, ["thmsound 0", "sleep 0.1"])
+    muted = capture(host, 1.0, ["touch 0 416 204 1", "sleep 0.6"])
+    shown = voice(thm())
+    send(host, ["touch 0 416 204 0", "sleep 0.6"])
+    g1 = stats(host)
+    send(host, ["sigsrc 0", f"thmsound {sound_was}"])
+    _, _, hz, db = voice(st)
+    want_hz = 20 * 1000 ** (400 / 767)
+    want_db = -6 + 10 * math.log2((394 - 204) / 249)  # the loudness taper: 10 dB a halving of the height
+    loud = sum(1 for l, _ in pcm if abs(l) > 200) * 100 // max(len(pcm), 1)
+    print(f"theremin: a glide, a chord and lifts: discontinuities {len(clicks(pcm))}, signal in {loud} % of it; "
+          f"a touch at {want_hz:.0f} Hz, {want_db:.0f} dB played {hz} Hz, {db} dB; touch to sound last "
+          f"{int(st['lat_last_us']) / 1000:.1f} ms, worst {int(st['lat_worst_us']) / 1000:.1f} ms; frame worst "
+          f"{g1['render_worst_us'] / 1000:.2f} ms, dropped {int(g1['dropped'] - g0['dropped'])}")
+    print(f"theremin: off the top {above[2]} Hz, {above[3]} dB (held {above[1]}); past the left end {past[2]} Hz, "
+          f"{past[3]} dB; down off the field, slid on: held {stray[1]} (0 expected); SOUND off: playing "
+          f"{shown[1]} at {shown[3]} dB, DAC peak {max((abs(l) for l, _ in muted), default=0)} (0 expected)")
 
 
 def media(host: str) -> dict[str, int]:
@@ -461,6 +519,7 @@ def run(a: argparse.Namespace) -> None:
         visit(a.host, SCREENS.index(name), name, settle=2.0, run=a.run)
     if not a.no_touch:
         touch_tests(a.host)
+        theremin_test(a.host)
     transition_test(a.host)
     if not a.no_media:
         media_tests(a.host)

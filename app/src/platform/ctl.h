@@ -24,7 +24,12 @@
  *   micbits <kbits> <delay_ns> <khz> <pull>  raw bit stream, clocked by hand (mic.h)
  *   micscope <n>               n fast samples of the clock and data pins while the MDF runs
  *   micprobe                   microphone bring-up: is the data line free and unclamped with the clock stopped
- *   sigsrc <0|1>               Signal Lab's source: generator or microphone
+ *   micinject <hz> <clock_off> [pull]  capture self-test: a square wave on the data pin made with its pulls (mic.h)
+ *   micpdm <hz> [amp_pct mode rate_khz] capture self-test: a synthetic microphone's PDM stream on the data pin (mic.h)
+ *   sigsrc <0|1|2>             Signal Lab's source: generator, microphone or theremin
+ *   thm [voice hz db]          theremin state; a voice by remote (hz 0 lifts it), voice -1: back to touch
+ *   thmwave <0..3>, thmsnap <0|1>, thmghost <0|1>   theremin waveform, semitone snap, the ghost player
+ *   thmsound <0|1>             the theremin's SOUND switch (off: it plays to the analysis only)
  *   mcap [ms]                  record the next ms of microphone samples (3 s at most), like acap
  *   acap [ms]                  record the next ms of DAC output (3 s at most);
  *                              without ms: where it is and how far it has got

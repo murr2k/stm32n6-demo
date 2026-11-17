@@ -26,6 +26,8 @@ typedef uint32_t (*audio_source_t)(int16_t *dst, uint32_t frames, void *ctx);
 int audio_init(void);
 bool audio_ok(void);
 void audio_set_source(audio_source_t fn, void *ctx);
+/* Clear the source if it is still fn (someone else may have taken it since). */
+void audio_release_source(audio_source_t fn);
 
 /* Frames handed to the driver that have not reached the DAC yet, estimated
  * between block boundaries from the kernel clock.

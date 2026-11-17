@@ -2,9 +2,11 @@
  * Signal path for the Signal Lab: a 48 kHz source, a 1024-point Helium FFT
  * per display frame, a log-frequency spectrum and a waterfall history.
  *
- * There are two sources, and the screen says which one is on: a built-in
- * signal generator, and the board's MEMS microphone (platform/mic.h), whose
- * 48 kHz come from the same clock as the audio output's.
+ * There are three sources, and the screen says which one is on: a built-in
+ * signal generator, the board's MEMS microphone (platform/mic.h), whose
+ * 48 kHz come from the same clock as the audio output's, and the theremin
+ * (dsp/theremin.h): what it sends to the DAC, analysed at the DAC's measured
+ * rate so that a tone sits on the axis where it sounds.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -35,7 +37,7 @@ struct sig_view {
 	const char *source;
 };
 
-enum { SIG_SRC_GENERATOR, SIG_SRC_MIC };
+enum { SIG_SRC_GENERATOR, SIG_SRC_MIC, SIG_SRC_THEREMIN };
 
 void sig_init(void);
 /* Choose the source; the microphone only if it is running. */
@@ -51,5 +53,8 @@ bool sig_held(void);
 /* Frequency at a display column, and the inverse. */
 float sig_col_hz(int col);
 int sig_hz_col(float hz);
+/* The same between fractions of a column (no clamping). */
+float sig_colf_hz(float col);
+float sig_hz_colf(float hz);
 
 #endif

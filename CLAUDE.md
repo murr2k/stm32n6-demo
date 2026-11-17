@@ -37,6 +37,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 .\.venv\Scripts\python.exe tools\ctl.py "screen 11" "nn hands 2"   # track the built-in thumbs-up picture: gesture=7 expected
 .\.venv\Scripts\python.exe tools\ctl.py "screen 11" "nn hands 3"   # the picture twice, one copy mirrored: hands=2 g0=7 g1=7, r0/r1 about 92/24; "nn hands 1" back to the camera
 .\.venv\Scripts\python.exe tools\ctl.py "nn cfg 2 500"   # at most 2 hands; with fewer tracked, look for another every 500 ms
+.\.venv\Scripts\python.exe tools\ctl.py "screen 2" "sigsrc 2" "thm 0 440 -12" thm   # theremin: a voice without touching (hz 0 lifts, "thm -1" back to touch), its state
+.\.venv\Scripts\python.exe tools\ctl.py "thmwave 3" "thmsnap 1" "thmghost 1" "thmsound 0"   # timbre 0..3, semitone snap, the attract ghost, the SOUND switch
 .\.venv\Scripts\python.exe tools\nn.py watch 20    # tracker counters over 20 s: searches, palms found, confirmed, lost, time tracked
 .\.venv\Scripts\python.exe tools\nn.py grab 5 --hand   # frames as the tracker saw them (captures/hands, ignored) and the PC's models on them and on variants
 .\.venv\Scripts\python.exe tools\ctl.py "nn thr 50 50"   # the palm and presence thresholds, percent
@@ -92,7 +94,7 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   from it at boot; the top 4 MB (from `PSRAM_NPU_BASE`, 0x91C0_0000) are the
   NPU's spill memory, which the converter addresses directly and
   `psram_alloc` never hands out. Budget, measured 2026-11-15: internal RAM
-  815 of 840 KB (LVGL pool 256 KB, heap 64 KB, the card's two 32 KB I/O
+  815 of 840 KB (819 since the theremin, 2026-11-17: 21 KB left) (LVGL pool 256 KB, heap 64 KB, the card's two 32 KB I/O
   buffers, stacks; the NPU's thread 8 KB), all screens' LVGL objects are
   built at boot and kept; PSRAM 13.4 of 28 MB and never freed: the player
   7.0 MB (4 MB read-ahead window, three 576 KB decode buffers, 1 MB index),
@@ -124,8 +126,14 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   channel 6 transfer into AHBSRAM1 (buffer at +0x2000, list node at +0x3000,
   beside the audio output's). A cooperative thread copies each 512-sample
   half into a 16384-sample ring in PSRAM; readers use `mic_total()` and
-  `mic_copy()`. Signal Lab takes it as its second source (`sig_set_source`,
-  a tap on the SOURCE label, `ctl.py "sigsrc 1"`); the generator is the
+  `mic_copy()`. `ctl.py "mictune 1 1 1 8 5 8 1 0 0 3" "micinject 1000 1"`
+  injects a 1 kHz square wave at the data pin with U13 asleep (capture
+  self-test; `"micinject 0 0 0" "mictune 0 1 1 4 5 16 1 0 0 3"` restores).
+  `ctl.py "mictune 1 1 1 8 5 8 1 0 0 3" "micpdm 1000 50 2 160"` puts a
+  synthetic microphone's 1 kHz PDM stream on the data pin instead, for
+  Signal Lab (`micpdm 0` and the default `mictune` restore).
+  Signal Lab takes it as its second source (`sig_set_source`,
+  a tap on the SOURCE label, `ctl.py "sigsrc 1"`; `sigsrc 2` is the theremin); the generator is the
   default. `ctl.py mic` shows rate, errors and level, `acap.py --mic`
   records a WAV, `ctl.py "mictune ..."` restarts the capture with other
   settings (mic.h lists the ten values), `micprobe` and `micbits` look at
@@ -162,6 +170,31 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   one-euro filter, per hand.
   Measured on the board, both networks agree with the original models on
   the PC (`nn.py check`).
+- Theremin (dsp/theremin.c, Signal Lab's third source, `sigsrc 2`): Signal
+  Lab's spectrum is the instrument. A touch at a column sounds
+  `sig_colf_hz(col)` at the level of its height on a loudness taper
+  (`thm_u_db`: -6 dBFS at the top, 10 dB less per halving of the height,
+  chosen by the user over even dB steps, which left the bottom half
+  inaudible), and the spectrum's level axis uses the same taper in
+  instrument mode (`db_to_y`, `thm_db_u`), so the analyser shows the peak
+  under the finger; one voice per touch slot (five). A slot plays only if
+  it came down on the field (not one already down when the theremin was
+  enabled, not one that came down on a button or an edge) and then plays
+  until it lifts: off the field's top or bottom it keeps its last level,
+  past an end the pitch stops there (the user: no cut-off when a finger
+  runs off the chart). SOUND (`theremin_set_sound`, `thmsound`, on at
+  power-up, not stored) fades the DAC feed to silence in 10 ms; the
+  analysis ring still gets what is played. The synthesizer is the audio output's
+  source while Signal Lab shows with THEREMIN selected (`theremin_enable`,
+  given back after a fade with `audio_release_source`, which clears only if
+  it is still the owner) and reads `touch_get()` itself at the start of each
+  512-frame block on the audio thread: touch to sound 11 to 21 ms (the
+  panel's report to the block's first sample at the DAC; `thm` reports it).
+  Everything it plays goes into a PSRAM ring that sig.c analyses; pitch and
+  analysis use the DAC's rate measured from its block count (47.7 kHz).
+  In attract mode a ghost plays keyframes (a flying saucer); any touch ends
+  it. Signal Lab's spectrum and waterfall are one pane (`plot_pane`) whose
+  draw handler splits it: 146/164 px as analyser, 252/58 px as instrument.
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
   Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
   explorer, touchlab, hostlink, coremap, cinema, specimen, hood, settings, camera. Home shows two
@@ -280,10 +313,29 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   `-halt`: it stops the core.
 - **A full-screen view (`shell_set_cover`) owns every touch: no edge swipes
   under it.**
-- **`raster_line` and `raster_poly` must stay free of per-pixel-row divisions
-  and edge scans.** **Why:** a 64-bit division per column made 25 wireframe
-  lines cost 1.5 ms, and two edge scans per row made 22 tall posts cost 6 ms.
-  The polygon fill walks its two edge chains; lines use a float slope.
+- **`raster_line`, `raster_poly` and `raster_area` must stay free of
+  per-pixel-row divisions and edge scans.** **Why:** a 64-bit division per
+  column made 25 wireframe lines cost 1.5 ms, and two edge scans per row made
+  22 tall posts cost 6 ms. The polygon fill walks its two edge chains; lines
+  use a float slope; the area fill steps its fade in 16.16 fixed point (one
+  division a column: 0.9 ms less a frame for a loud spectrum).
+- **Label objects that lie on a pane redrawn every frame are redrawn every
+  frame too; draw such captions in the pane's handler (`ui_draw_text`).**
+  **Why:** Signal Lab's seven axis captions were label objects over its
+  spectrum: with them drawn by the handler instead, its frame went from 8.3
+  to 4.6 ms. And never move or resize objects in a screen switch: each
+  position is a style write (about 185 us), and resizing two panes and moving
+  seven labels added 2.1 ms to the switch tail, which dropped a frame in an
+  attract lap. Signal Lab's two layouts are one pane split by its handler.
+- **The theremin draws a glow under its spectrum (`raster_glow`), not
+  `raster_area`.** **Why:** a fill to the floor costs with how loud the
+  spectrum is: five loud voices filled most of the 252 px pane, 12 ms frames
+  and dropped frames. The glow is 28 px deep whatever the sound. Synthesis is
+  not the cost (0.25 to 0.8 ms per 10.7 ms block for five voices, `thm`).
+- **The theremin's sound never steps: phase-continuous oscillators, pitch
+  glides in log frequency, every level ramps, lifts decay, a soft limiter
+  (ceiling -0.9 dBFS).** The tour records a glide, a chord and lifts and
+  counts the discontinuities: 0.
 - **Core Map zoom is capped at 2.5x.** **Why:** it is fill-rate bound; at 3.5x
   tall posts overdrew the whole view several times (11.8 ms draw, dropped
   frames). Faces of one post overlap by a pixel under the face drawn after
@@ -433,7 +485,51 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   sigma-delta stream: the bit changes about 100 ns after the rising clock
   edge and holds for the whole cycle, identical on both edges, shaped noise
   above 50 kHz, and in the audio band a floor some 40 dB above the
-  datasheet's. With the clock stopped the line is free and unclamped
+  datasheet's. Claps and fingernail taps at the board (2026-11-17, spoken
+  prompts, the user at the board) left no trace: through the MDF on the
+  falling and on the rising edge (10 ms windows and bands within 0.7 dB of
+  quiet), and in raw bits clocked by the CPU at 2.4 MHz with no MDF at all
+  (within the 2.7 dB that two quiet recordings differ by; a working part
+  would show 20 to 30 dB at every clap). So no MDF setting can bring a
+  signal out: it is not in the bits. The raw stream's first ~100 ms after
+  the clock starts is a burst near -13 dBFS (the part starting up); leave
+  it out of any comparison. ST's own unmodified MDF_AudioRecorder (the
+  build of 2026-05-30 in the sibling project, loaded into RAM: power cycle,
+  `STM32_Programmer_CLI -c port=swd mode=HOTPLUG -halt -d <elf> -s
+  0x34180400`) gives the same on 2026-11-17: a constant hiss in the
+  headphones that nothing near the board changes (the user, by ear), and
+  its buffer read over SWD the same in quiet, taps and claps. On
+  2026-05-31 the same binary on this board made taps "clearly audible"
+  (sibling project, docs/dmic-stm32-mdf/NEXT.md). So the firmware is
+  cleared, ST's and ours: U13, its supply or its sound port changed after
+  May 31. Open: how and when the external PUI microphone was wired (to CN5
+  with pin 10 grounded, or straight to PE8/TP18, where it would have fought
+  U13's output), VDD_MIC at CN5 pin 2, the sound port. The capture chain
+  itself is verified from the
+  data pin on (`ctl.py "micinject ..."`, 2026-11-17): with U13 asleep (its
+  clock pin held low) and the MDF in low-frequency master mode (it samples
+  with its own clock; normal SPI mode takes the clock from the pin and then
+  delivers nothing), a square wave made by flipping PE8's own pull-up and
+  pull-down comes out at the right frequency (1004, 252 and 2508 Hz for
+  1000, 250 and 2500: the sample clock's known 0.45 % shortfall), with odd
+  harmonics as a square wave has them, 0 errors; a held pull gives digital
+  zero (-138.5 dBFS). With U13 clocked the injected wave vanishes and only
+  its noise remains: it drives the line, and the noise is its own output,
+  not the chain's. Mode 1 of `mictune` (Sinc5 / 8, 1.536 MHz) has 30 dB less
+  gain than the default (Sinc5 / 16): compare levels within one setting.
+  A synthetic microphone too (`micpdm`): a sine through a second-order
+  sigma-delta modulator, put on PE8 by GPDMA1 channel 7 paced by TIM6
+  (table in AHBSRAM2), decodes to the right frequency and shows on Signal
+  Lab. Two limits found on the way: a pin set as a GPIO output no longer
+  feeds its alternate-function input (PE8 toggled, IDR showed it, the MDF
+  read a still line), so only the pulls can put bits on it; and on PE8 the
+  pulls are slow and lopsided (the line falls about 5 us after the pull-down
+  comes on and rises at once: much capacitance or something holding it up,
+  U13 asleep, U14, the trace to CN5), so 160 to 192 kbit/s is the most it
+  carries, at about 8 dB SINAD (second harmonic -15 to -21 dBc).
+  Return-to-zero coding does not help on this line. A clean MHz-rate test
+  would need a free MDF data input (another SDIx on an unloaded pin).
+  With the clock stopped the line is free and unclamped
   (`micprobe`), so the part has its supply and sleeps as it should. That
   is a microphone whose electronics run and whose transducer delivers
   nothing. Wiring per the
@@ -442,11 +538,15 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   VDD_MIC from 3.3 V through SB19; LR high, so data is valid while the
   clock is high (falling edge). The user's own good captures on this board
   were made with an external PUI DMM-2726-B on those pins (1.536 MHz,
-  Sinc5 / 8), not with U13. ST's unmodified MDF_AudioRecorder gave "weak
-  audio with hiss" here. Verify the path with a known good microphone on
-  CN5 before anything else. Research on this (other owners' reports, ST's
-  and third-party settings, datasheet, MDF pitfalls, ranked tests):
-  `reports/STM32N6 DK microphone noise only.md`, notes in `research_notes/`.
+  Sinc5 / 8), not with U13 (how it was wired is not recorded). ST's
+  unmodified MDF_AudioRecorder passed taps on 2026-05-31 and nothing on
+  2026-11-17 (above). **Results, the board circuit around U13 (SB19, U14,
+  MIC_DET, CN5), what to check on this board and on its replacement, and
+  links to every source: `docs/microphone.md`.** The user will swap in a
+  replacement DK. First round of research (MDF settings of ST and others):
+  `reports/STM32N6 DK microphone noise only.md`. The second round's working
+  notes stay local and are not committed (the user: no need to commit what
+  can be retrieved from the sources; document the results with links).
 - **Under the Hood: logarithmic height by default, ribbons not curtains, and
   a run of equal samples as one polygon** (hood.c). **Why:** on a linear axis
   the UI thread (about 50 %) was a wall and every other thread a flat line

@@ -213,6 +213,56 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
 </section>
 
 <section>
+  <span class="eyebrow">Built 2026-11-17</span>
+  <h2>A theremin on Signal Lab: the spectrum analyser you can play</h2>
+  <p>Signal Lab gets a third source next to the generator and the microphone: <b>THEREMIN</b>. With it selected, the spectrum becomes the instrument. A fingertip on it sounds a tone whose <b>frequency is the spectrum's own frequency at that column</b> (the same log axis, 20 Hz to 20 kHz) and whose <b>level is the spectrum's own dB value at that height</b>. What the analyser then shows is the tone it is playing, so the peak sits under the finger, follows it when it slides, and drops with it. The scope above shows the waveform, the waterfall below writes the melody as it scrolls. Up to five fingers play five voices, a chord shows as five peaks.</p>
+
+  <div class="two">
+    <div>
+      <h3>Playing</h3>
+      <ul>
+        <li><b>Horizontal: frequency</b>, <code>sig_col_hz(col)</code>, so the tone lands exactly on the axis under the finger. The field stops 28 px from the screen edges, where the shell's edge swipes start, so changing screens still works; that costs only 20 to 23 Hz and 18 to 20 kHz.</li>
+        <li><b>Vertical: level</b>, the inverse of the spectrum's <code>db_to_y</code>: the top is -6 dBFS (a cap, for ears and headphones), the bottom silence. In this mode the spectrum takes most of the waterfall's height (about 270 px instead of 146: about 2 px a dB), and the waterfall stays as a strip that draws the trail.</li>
+        <li>Each finger gets a crosshair through spectrum and waterfall and a small readout beside it: note name, frequency, level ("A4 440.0 Hz -18 dB"), drawn in the pane's draw handler, not as label objects.</li>
+        <li>A <b>WAVE</b> label cycles the timbre, each with its own picture on the log spectrum: sine (one peak), theremin (a sine slightly overdriven, with a little vibrato), triangle (odd harmonics falling 12 dB an octave), sawtooth (every harmonic, band-limited so nothing folds back).</li>
+        <li>A <b>SNAP</b> label (off, semitones): the pitch glides to the nearest semitone, and faint note ticks (C2 to C8) appear on the axis.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>Sound</h3>
+      <ul>
+        <li>A synthesizer in <code>dsp/theremin.c</code> is the audio output's source (<code>audio_set_source</code>, 512 frames every 10.7 ms): five phase-continuous oscillators, so a frequency change never steps the waveform.</li>
+        <li>Every change is a ramp, per the rule that the sound never steps: pitch glides in log frequency (about 8 ms), level follows in about 5 ms, a touch fades in over 10 ms, a lift fades out over about 150 ms (the theremin's decay). Voices are summed through a soft limiter, so five loud fingers never clip.</li>
+        <li>The synthesizer reads the touch state itself at the start of each block (<code>touch_get()</code> from the audio thread), not through the UI frame: the touch reaches the sound in one to two blocks, 11 to 21 ms after the panel reports it. The screen shows this as a measured <b>touch to sound</b> figure.</li>
+        <li>Every sample it plays also goes into a ring that Signal Lab analyses as its source, so the picture is the sound that reaches the DAC.</li>
+        <li>The DAC's clock runs at 47.7 kHz, not 48 (measured, PLL2 from the HSI): the oscillators and the analysis both use the measured rate, so A4 is 440 Hz in the air and on the axis.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="scroll"><table>
+    <tr><th>Resource</th><th>Plan</th></tr>
+    <tr><td class="k">Audio output</td><td>The theremin takes the source only while Signal Lab shows with THEREMIN selected, and gives it back with a fade when the screen or the source changes. Cinema's player takes it back when a clip opens, as now.</td></tr>
+    <tr><td class="k">CPU</td><td>Five voices at 48 kHz: about 0.1 ms a block, in the cooperative audio thread. The crosshairs and readouts add well under 1 ms to Signal Lab's frame (8.4 ms average, 10.4 worst in the last tour).</td></tr>
+    <tr><td class="k">Memory</td><td>A few hundred bytes of voice state in internal RAM; the analysis ring (8192 samples, 32 KB) in PSRAM.</td></tr>
+    <tr><td class="k">Attract mode</td><td>Decided: a ghost plays it, a 1950s flying saucer (two voices on keyframes, a wide slow vibrato), drawn with violet crosshairs. Any touch takes over; the screen's earlier source returns when attract mode moves on.</td></tr>
+    <tr><td class="k">Drawing, as built</td><td>The instrument draws a 28 px glow under the spectrum instead of filling to the floor (five loud voices filled the tall pane: 12 ms frames). Spectrum and waterfall are one pane split by its draw handler, and the axis captions are drawn with it: moving and resizing objects at a mode change cost 2.1 ms of screen-switch time and dropped a frame in attract mode, and the caption objects were redrawn every frame. Signal Lab went from 8.3 to 4.6 ms a frame.</td></tr>
+  </table></div>
+
+  <div class="scroll"><table class="phase">
+    <tr><th>Step</th><th>Work</th><th>Done when</th></tr>
+    <tr><td>T1</td><td><span class="pill ok">done</span> The synthesizer: voices, waveforms, ramps, limiter, analysis ring; a control command to sound a voice without touching</td><td>Recorded from the DAC feed: 439.8 Hz for 440 and -12.2 dBFS for -12, each waveform's harmonics as they should be, 0 discontinuities through starts, glides and lifts, underruns 0.</td></tr>
+    <tr><td>T2</td><td><span class="pill ok">done</span> Signal Lab: the THEREMIN source, the taller spectrum, crosshairs and readouts, WAVE and SNAP, the latency figure</td><td>A touch at the 734 Hz, -24 dB point plays 734 Hz at -24 dB; 0 dropped frames while playing (worst 7.7 ms).</td></tr>
+    <tr><td>T3</td><td><span class="pill ok">done</span> Proof: the tour plays it with injected touches (a glide across the field, a two-finger chord, a lift) and records the sound</td><td>The tour passes; played by hand on the panel by the user, 2026-11-17.</td></tr>
+    <tr><td>T4</td><td><span class="pill ok">done</span> The user's changes after playing it: a loudness taper for the level (even dB steps left the bottom half of the field inaudible), a finger slid off the field keeps its level until it lifts, a SOUND switch (off: it plays on screen in silence, for a quiet attract mode)</td><td>The tour: a touch at 734 Hz and -10 dB on the taper plays exactly that; off the top the level holds, a finger that comes down off the field does not play, SOUND off gives a DAC peak of 0; 0 dropped frames (worst 8.5 ms).</td></tr>
+  </table></div>
+  <div class="callout">
+    <h3>Open</h3>
+    <p>The top of the field stays at -6 dBFS: the present output volume is good. With a working microphone (the replacement board), a fourth view could play the theremin and analyse the microphone: the same tone, as the room returns it.</p>
+  </div>
+</section>
+
+<section>
   <span class="eyebrow">Survey</span>
   <h2>What is on the bench today</h2>
   <p>Checked on this host before planning. One tool is missing and needs your install; nothing else blocks the start.</p>

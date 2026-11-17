@@ -5,6 +5,41 @@ names what a user of the demo or of its tools would notice; the commit log
 has the detail, and `CLAUDE.md` the reasons behind the rules that came out of
 them.
 
+## 2026-11-17
+
+### Added
+
+- **A theremin on Signal Lab**: a third source (SOURCE cycles generator,
+  microphone, theremin) turns the spectrum into an instrument. A fingertip
+  sounds the frequency of the column under it at the level of its height,
+  so the peak sits under the finger; the height is a loudness taper (equal
+  steps of height, equal steps of loudness), and a finger slid off the
+  spectrum keeps its level until it lifts. Up to five fingers, four timbres
+  (WAVE), semitone snap (SNAP), a SOUND switch (off: it plays on screen in
+  silence, also in attract mode), a crosshair and readout per finger, the
+  measured touch to sound on screen. Pitch and analysis use the DAC's
+  measured 47.7 kHz. In attract mode a ghost plays a flying saucer.
+  `ctl.py sigsrc 2`, `thm`, `thmwave`, `thmsnap`, `thmghost`, `thmsound`;
+  the tour plays it and checks its sound.
+- Gesture "The bird": the middle finger up from a fist.
+- `ctl.py micinject`: a self-test of the microphone capture path. With the
+  microphone asleep, a square wave made with the data pin's own pull
+  resistors goes through the MDF filters, the DMA and the ring buffer like
+  microphone bits; on this board it comes out at the right frequency and
+  shape, which leaves the board's microphone as the source of its noise.
+- `ctl.py micpdm`: a synthetic microphone. A sine through a sigma-delta
+  modulator, put on the microphone's data pin by DMA, decoded by the same
+  chain and shown on Signal Lab. `micscope` also records the data pin's
+  pull, to time how the line follows it.
+
+### Changed
+
+- Faster Signal Lab: 4.6 ms a frame from 8.3 in the tour. Its axis captions
+  are drawn with the plot instead of as label objects that were redrawn every
+  frame, and the gradient fill under curves (also used elsewhere) divides
+  once per column, not once per pixel.
+- The microphone's findings and sources: `docs/microphone.md`.
+
 ## 2026-11-16
 
 ### Fixed

@@ -14,12 +14,17 @@
 #include "platform/mic.h"
 #include "platform/psram.h"
 #include "sig.h"
+#include "theremin.h"
 
 #define RING        4096              /* samples, power of two */
 #define F_LO        20.0f
 #define F_HI        20000.0f
-#define BIN_HZ      ((float)SIG_FS / SIG_FFT)
 #define TWO_PI      6.28318530718f
+
+/* The sample rate the analysis assumes: nominal for the generator (it makes
+ * its own samples at 48 kHz), the DAC's measured rate for the theremin. */
+static float fs_now = SIG_FS;
+#define BIN_HZ (fs_now / SIG_FFT)
 
 static int16_t ring[RING];
 static uint32_t ring_w;               /* total samples written */
@@ -109,14 +114,32 @@ int sig_hz_col(float hz)
 	return (int)CLAMP(c, 0.0f, (float)(SIG_COLS - 1));
 }
 
+float sig_colf_hz(float col)
+{
+	return F_LO * powf(F_HI / F_LO, col / (SIG_COLS - 1));
+}
+
+float sig_hz_colf(float hz)
+{
+	return logf(MAX(hz, 1.0f) / F_LO) / logf(F_HI / F_LO) * (SIG_COLS - 1);
+}
+
+/* Column edges in FFT bins for the rate the samples really have. */
+static void set_rate(float fs)
+{
+	fs_now = fs;
+	for (int c = 0; c <= SIG_COLS; c++) {
+		col_bin[c] = F_LO * powf(F_HI / F_LO, ((float)c - 0.5f) / (SIG_COLS - 1)) / BIN_HZ;
+	}
+}
+
 void sig_init(void)
 {
 	for (int i = 0; i < SIG_FFT; i++) {
 		win[i] = 0.5f - 0.5f * cosf(TWO_PI * i / SIG_FFT);
 	}
-	for (int c = 0; c <= SIG_COLS; c++) {
-		col_bin[c] = F_LO * powf(F_HI / F_LO, ((float)c - 0.5f) / (SIG_COLS - 1)) / BIN_HZ;
-	}
+	set_rate(SIG_FS);
+	theremin_init();
 	for (int c = 0; c < SIG_COLS; c++) {
 		col_db[c] = col_peak[c] = SIG_DB_MIN;
 	}
@@ -165,6 +188,34 @@ static bool take_microphone(void)
 	return any;
 }
 
+/* ---- theremin: what it sent to the DAC ------------------------------------ */
+static uint32_t thm_at;
+
+static bool take_theremin(void)
+{
+	static int16_t tmp[256];
+	uint32_t end = theremin_total();
+	bool any = false;
+
+	if (end - thm_at > RING / 2) {
+		thm_at = end - RING / 2; /* after a pause: only the latest */
+	}
+	while (thm_at != end) {
+		uint32_t n = theremin_copy(thm_at, tmp, MIN(end - thm_at, (uint32_t)ARRAY_SIZE(tmp)));
+
+		if (n == 0) {
+			thm_at = end;
+			break;
+		}
+		for (uint32_t i = 0; i < n; i++) {
+			ring[ring_w++ & (RING - 1)] = tmp[i];
+		}
+		thm_at += n;
+		any = true;
+	}
+	return any;
+}
+
 void sig_set_source(int src)
 {
 	if (src == SIG_SRC_MIC && !mic_ok()) {
@@ -172,7 +223,11 @@ void sig_set_source(int src)
 	}
 	source = src;
 	mic_at = mic_total();
-	view.source = src == SIG_SRC_MIC ? "MICROPHONE  +30 dB" : "SIGNAL GENERATOR";
+	thm_at = theremin_total();
+	set_rate(src == SIG_SRC_THEREMIN ? theremin_rate() : SIG_FS);
+	view.source = src == SIG_SRC_MIC        ? "MICROPHONE  +30 dB"
+		      : src == SIG_SRC_THEREMIN ? "THEREMIN  TOUCH TO PLAY"
+						: "SIGNAL GENERATOR";
 	for (int c = 0; c < SIG_COLS; c++) {
 		col_peak[c] = SIG_DB_MIN; /* the other source's peaks mean nothing here */
 	}
@@ -307,6 +362,13 @@ void sig_service(uint32_t now_ms)
 	}
 	if (source == SIG_SRC_MIC) {
 		if (!take_microphone()) {
+			return;
+		}
+	} else if (source == SIG_SRC_THEREMIN) {
+		if (fabsf(theremin_rate() - fs_now) > 1.0f) {
+			set_rate(theremin_rate()); /* the measurement settles in the first seconds */
+		}
+		if (!take_theremin()) {
 			return;
 		}
 	} else {

@@ -12,7 +12,8 @@ refresh, no fake data, and show the measurements.
 > from flash or from a microSD card, and clips upload to the card over
 > Ethernet at 2 to 4 MB/s while the demo runs. The camera runs at 30 fps, and
 > the NPU tracks up to two hands in it: 21 points each, the gesture, and
-> which hand it is. Touch, motion, colour, sound and hand tracking have
+> which hand it is. Signal Lab's spectrum analyser doubles as a theremin
+> you play with up to five fingers. Touch, motion, colour, sound and hand tracking have
 > been checked by hand on the panel. Left alone for 90 seconds it tours
 > itself. The microphone path runs, but the board's own microphone delivers
 > only noise. See [Status](#status) and the [changelog](CHANGELOG.md).
@@ -181,7 +182,9 @@ screenshots to `captures/tour/`, pans Home with five placeholder tiles added
 (rest position, a tap on a tile that has moved, an edge swipe), then drives
 Touch Lab, Explorer and Core Map
 with injected multi-touch (three contacts, pinches, a flick, an orbit, an
-edge swipe), checks that 80 touch releases never change the screen, enters
+edge swipe), plays the theremin (a glide, a chord, lifts: the sound recorded
+and checked for steps, a held touch's pitch and level against its column
+and height, a finger off the spectrum, the SOUND switch), checks that 80 touch releases never change the screen, enters
 every screen through a transition (27 changes, six of them from a playing
 film into Under the Hood), plays the film from flash and from the card, opens and
 closes a clip three times, records what the DAC gets during a drag on the
@@ -242,7 +245,7 @@ captures/               screenshots and logs pulled off the board (not committed
 |---|---|---|
 | Home | A tile per screen; each thumbnail is drawn live by that screen's code. Two rows of four; more screens go into further columns that pan in under the finger and come to rest on a column | 5.4 / 6.4 ms |
 | Flight Deck | Frame time, CPU share per thread, heaps, Ethernet rates: the board measuring itself | 2.9 / 7.9 ms |
-| Signal Lab | Triggered scope, log-frequency spectrum with peak hold and cursor, waterfall; one 1024-point Helium FFT per frame (about 220 us) | 7.8 / 10.2 ms |
+| Signal Lab | Triggered scope, log-frequency spectrum with peak hold and cursor, waterfall; one 1024-point Helium FFT per frame (about 220 us). Three sources: a signal generator, the microphone, and a theremin played on the spectrum itself (see [The theremin](#the-theremin)) | 5.0 / 6.5 ms; playing, up to 8.5 ms |
 | Explorer | 2^20 samples x 4 channels with a min/max pyramid, used in place from the flash; pan, pinch, cursor, auto tour | 11.1 / 14.5 ms while it zooms, 3 ms at rest |
 | Touch Lab | Five contacts with trails, crosshairs, distance, report rate, touch-to-swap time | 1.7 / 2.4 ms |
 | Host Link | A PC's per-core CPU load as a scrolling heat map, memory, network throughput and datagram round-trip time, pushed over UDP by `run.cmd` | 6.7 / 10.0 ms |
@@ -250,7 +253,7 @@ captures/               screenshots and logs pulled off the board (not committed
 | Cinema | Clips from flash and from the microSD card in a gallery that scrolls sideways; full screen with overlay controls, scrubbing (the picture follows the finger, the sound is cross-faded 85 ms pieces of the clip) and a stats panel (decode and conversion time, bit rate, seek time, read-ahead). Hardware JPEG decode about 10 ms a frame, DMA2D conversion 4.8 ms, video slaved to the audio clock | 30 fps video, no drops; a video frame costs the UI 6.2 ms, 9.2 ms with the controls up, 9.9 ms while scrubbing |
 | Specimen | Type scale, colour tokens, motion test | 1.9 / 3.1 ms |
 | Settings | The board's address (DHCP or fixed, entered on a keypad, applied at once, kept on the card), a QR code for the board's own description at http://<board>/, and which PC is feeding Host Link and Core Map | 1.8 / 2.0 ms |
-| Camera | The IMX335 (B-CAMS-IMX module, 5 Mpx) live at 30 fps: demosaiced and scaled to 592 x 444 by the DCMIPP, auto exposure and white balance by ST's ISP middleware, copied to the display by DMA2D (3 ms). Over it, hand tracking on the NPU, up to two hands (see [Hand tracking on the NPU](#hand-tracking-on-the-npu)): each hand's 21 points and their bones are drawn on the picture in its own colour, its gesture is read from the joint angles (fist, open hand, pointing, victory, three, four, thumbs up and down, thumb out, OK, rock on, call me, I love you in American Sign Language, or a finger count), and the side panel names each hand (left or right, and how sure the network is). Beside it the NPU's time per network, how many hands and at what rate, and what the ISP chose. The camera and the NPU run only while the screen is up | 5.0 / 8.7 ms |
+| Camera | The IMX335 (B-CAMS-IMX module, 5 Mpx) live at 30 fps: demosaiced and scaled to 592 x 444 by the DCMIPP, auto exposure and white balance by ST's ISP middleware, copied to the display by DMA2D (3 ms). Over it, hand tracking on the NPU, up to two hands (see [Hand tracking on the NPU](#hand-tracking-on-the-npu)): each hand's 21 points and their bones are drawn on the picture in its own colour, its gesture is read from the joint angles (fist, open hand, pointing, victory, three, four, thumbs up and down, thumb out, OK, rock on, call me, I love you in American Sign Language, the bird, or a finger count), and the side panel names each hand (left or right, and how sure the network is). Beside it the NPU's time per network, how many hands and at what rate, and what the ISP chose. The camera and the NPU run only while the screen is up | 5.0 / 8.7 ms |
 | Under the Hood | This firmware, measured live from Zephyr's own statistics: a 3D plot with one ribbon per thread (the eight busiest) showing its share of the CPU over the last 12 s on a logarithmic height axis from 0.01 % to 100 %, so a service thread at a twentieth of a per cent is as readable as the UI thread at fifty (drag to orbit, pinch to zoom, tap a ribbon, tap SCALE for linear axes), every thread with its CPU share and stack high-water mark, and the static RAM, LVGL pool, kernel heap and PSRAM in use. Interrupt time counts to the thread it interrupted | 7.8 / 12.6 ms |
 
 Frame time is all UI-thread work for a frame (screen logic, layout, render),
@@ -305,10 +308,58 @@ that way about once in three attract laps, unseen in the dark but counted;
 its side panel now waits one frame.
 
 After 90 seconds without a touch the demo runs itself: it steps through the
-screens, lets Explorer finish its zoom tour, plays the film once in Cinema,
+screens, lets Explorer finish its zoom tour, lets a ghost play a flying
+saucer on Signal Lab's theremin, plays the film once in Cinema,
 and skips screens that would show nothing (Host Link without a companion,
 Touch Lab without fingers). The title bar says so while it does, and any
 touch hands control back. `ctl.py attract` starts it immediately.
+
+## The theremin
+
+![Signal Lab's theremin: three fingers, a sawtooth chord snapped to C4, C5 and B5](docs/img/theremin.png)
+
+Signal Lab's third source turns the spectrum analyser into an instrument. A
+fingertip on the spectrum sounds the frequency of the column under it, on the
+analyser's own log axis, at the level of the height it is at, so the peak
+sits under the finger and follows it. The level axis is a loudness taper:
+equal steps of height are equal steps of loudness (it doubles every 10 dB),
+-6 dBFS at the top, -16 at half height, -26 at a quarter, silence at the
+floor, and the spectrum's level axis uses the same scale while it is an
+instrument. A finger plays from where it comes down on the spectrum until it
+lifts: slid off the top or the bottom it keeps its level, slid past either
+end its pitch stops there. Up to five fingers play five voices. WAVE picks
+the timbre (sine; theremin, a sine with a little overdrive and vibrato;
+triangle; band-limited sawtooth), each with its own picture on the log
+spectrum, and the level a finger sets is the level of the fundamental under
+it. SNAP pulls the pitch to semitones and marks them on the axis. SOUND
+switches the output off: the instrument still plays on screen, and the DAC
+gets silence (for a quiet attract mode). The scope above shows the waveform,
+the waterfall strip below the melody.
+
+- The synthesizer (`app/src/dsp/theremin.c`) is the audio output's source
+  while it plays, and reads the touch panel itself at the start of every
+  512-frame block, from the audio thread: **touch to sound is 11 to 21 ms**,
+  measured from the panel's report to the first sample at the DAC and shown
+  on screen.
+- The sound never steps: pitch glides in log frequency, levels ramp, a lift
+  decays over about 0.4 s, and a soft limiter keeps five loud fingers below
+  -0.9 dBFS. In the tour's recordings of a glide, a chord and lifts:
+  0 discontinuities.
+- The DAC's clock is 47.7 kHz, not 48 (measured). The oscillators and the
+  analysis both use the measured rate, so a touch at the 734 Hz column plays
+  734 Hz in the air and on the axis.
+- Five voices take 0.25 to 0.8 ms of synthesis per 10.7 ms block. Drawing
+  the instrument, with its crosshairs and readouts, costs at most 8.5 ms a
+  frame.
+- In attract mode a ghost plays it: a 1950s flying saucer, two voices on
+  keyframes with a wide, slow vibrato. Any touch takes over. With SOUND off
+  the saucer flies in silence.
+
+```powershell
+.\.venv\Scripts\python.exe tools\ctl.py "screen 2" "sigsrc 2"     # Signal Lab with the theremin
+.\.venv\Scripts\python.exe tools\ctl.py "thm 0 440 -12" "thm"     # a voice without touching, and the state
+.\.venv\Scripts\python.exe tools\ctl.py "thmwave 3" "thmsnap 1" "thmghost 1" "thmsound 0"
+```
 
 ## Video and audio
 
@@ -508,7 +559,7 @@ presence 0.50 against 0.01.
 | Audio out | 48 kHz stereo to the headphone jack, zero underruns in the automated run, checked by ear. The sample clock comes from the HSI-fed PLL2 and measures 47.6 to 47.7 kHz (0.7 % low) |
 | Stand-alone boot (BOOT1 = L) | Working: with the switch at L the demo starts by itself after a reset (the console shows the boot ROM loading MCUboot from flash, then the application) |
 | Camera | Working: 30.0 fps, 0 dropped UI frames; opening and closing the screen costs no frame (the stream starts and stops on the capture thread). The image tuning is ST's ISP middleware, a west module under ST's licence SLA0044, fetched at build time and never committed here. Hand tracking on the NPU: both networks give the original models' answers (landmarks within 0.9 px of the PC), the whole pipeline names the thumbs up in MediaPipe's test picture on the board, and real hands in front of the camera track at 26 to 30 fps alone and 15 fps in pairs, either hand, palm or back (checked on the panel, also the left/right labels). The NPU borrows the display's second frame buffer while the screen is up (the display runs single-buffered meanwhile, 0 dropped frames in the tour). ST's NPU runtime and the converted networks are under ST's licence SLA0044 and stay out of this repository: `tools/nn.py` fetches and converts, and the build leaves the NPU out without them |
-| Microphone as Signal Lab source | Capture path working, sound not yet: MDF1 turns the PDM stream into 48 kHz, 24 bit PCM on the DAC's own clock, a circular DMA delivers it with no errors, and a tap on Signal Lab's SOURCE label puts it on the scope, spectrum and waterfall. On this board the onboard microphone (U13) delivers only noise: 50 dB above its datasheet floor, unaffected by every capture setting, with no response to a tone or to tapping. Read at the pin, its bit stream is a healthy sigma-delta stream with nothing but that noise in the audio band, so the electronics of the part run and its transducer does not. A known good PDM microphone on connector CN5 (same pins, selected automatically) is the next step. The generator stays the default source |
+| Microphone as Signal Lab source | Capture path working, sound not yet: MDF1 turns the PDM stream into 48 kHz, 24 bit PCM on the DAC's own clock, a circular DMA delivers it with no errors, and a tap on Signal Lab's SOURCE label puts it on the scope, spectrum and waterfall. On this board the onboard microphone (U13) delivers only noise: 50 dB above its datasheet floor, unaffected by every capture setting, with no response to a tone or to tapping. Read at the pin, its bit stream is a healthy sigma-delta stream with nothing but that noise in the audio band, so the electronics of the part run and its transducer does not. Claps and taps at the board leave no trace, through the filters on either clock edge or in the raw bits. The capture chain itself is verified from the pin on: with the microphone asleep, a square wave made with the data pin's own pull resistors (`micinject`) comes out at the right frequency and shape, and a held line gives digital silence; with the microphone clocked, its output overrides the injected wave. A synthetic microphone (`micpdm`: a sine through a sigma-delta modulator, put on the data pin by DMA) shows on Signal Lab as the sine it was, distorted only by how slowly that line follows the pin's pull resistors. ST's own unmodified recorder example passed taps on this board in May and nothing now, so the part has degraded; findings, board circuit and sources in [docs/microphone.md](docs/microphone.md). A known good PDM microphone on connector CN5 (same pins, selected automatically) is the next step. The generator stays the default source |
 | Host Link | Working: 340 of 340 datagrams answered in the test run, 1.4 to 2.9 ms round trip as timed by the host |
 | Web remote, firmware update over the network | Not started |
 | microSD media library | Working: FAT32/exFAT, upload over Ethernet at 2 to 4 MB/s with CRC, streamed playback with 0 stalls in the automated run. Checked by measurement and screenshots, not yet by eye and ear on the panel. Not built: noticing a card put in after boot without `n6v.py mount` (untested with a real insertion), fast seeks in files of a gigabyte or more |
@@ -516,7 +567,8 @@ presence 0.50 against 0.01.
 | Under the Hood | Working: no dropped frame on any of the five height axes in the automated run. On a linear axis the UI thread hid everything else (seen on the panel), hence the logarithmic default. The screen measures itself: with it showing, the UI thread takes about a third more of the CPU |
 | Cinema slider | A crash while scrubbing (picture frozen, a repeating noise) was reported once. Probable cause, found in a console log of real touches: Zephyr's input queue (16 events, drained by a thread at the lowest priority) dropped events, a lost release left the slider pressed, and the player then seeks to the same frame 60 times a second. Touch callbacks now run in the driver's context with no queue. Checked on the panel afterwards: five fingers on Touch Lab register and release cleanly with no event dropped, and the slider no longer hangs the film. Injected touches bypass the driver, which is why 2400 fuzzed actions never showed it. The slider's sound was rough as well (every UI frame restarted it at the finger); it is now short pieces of the clip cross-faded into each other while the finger moves and silence while it rests, measured free of steps and confirmed by ear on the panel. Other defects found on the way are fixed: a drag starting near a screen edge closed the film, seeks were counted as dropped frames and as stalls, Back could cost the UI a frame, the touch target was 44 px |
 | Screen transitions | Working: hardware fade, no frame dropped in the automated run |
-| Attract mode | Working: starts after 90 s idle, one lap is about two minutes; a hand tracked on the Camera screen counts as someone using it |
+| Attract mode | Working: starts after 90 s idle, one lap is about two minutes; a hand tracked on the Camera screen counts as someone using it; a ghost plays the theremin on Signal Lab |
+| Theremin | Working: pitch and level as asked (a touch at the 734 Hz, -10 dB point plays 734 Hz at -10 dB), 0 discontinuities through glides, chords and lifts, touch to sound 11 to 21 ms, 0 dropped frames while playing (worst 8.5 ms). A finger slid off the top keeps its level, one that comes down off the spectrum does not play, SOUND off sends the DAC nothing (peak 0), all checked by the tour. Played by hand by the user on 2026-11-17; the loudness taper, the level hold and the SOUND switch came from that |
 | Soak test | Not started |
 
 ## License

@@ -18,6 +18,7 @@
 #include "ctl.h"
 #include "dsp/dataset.h"
 #include "dsp/sig.h"
+#include "dsp/theremin.h"
 #include "media/player.h"
 #include "media/sdcard.h"
 #include "gfx.h"
@@ -123,14 +124,48 @@ static int handle(char *line, char *out, size_t out_len)
 				"ok=%d total=%u blocks=%u errors=%u last_error=0x%x rate_hz=%u peak=%d rms=%d dc=%d\n", m.ok,
 				m.total, m.blocks, m.errors, m.last_error, m.rate_hz, (int)m.peak, (int)m.rms, (int)m.dc);
 	} else if (!strcmp(cmd, "sigsrc") && n >= 2) {
-		sig_set_source(a[0] ? SIG_SRC_MIC : SIG_SRC_GENERATOR);
+		sig_set_source(a[0] == 2 ? SIG_SRC_THEREMIN : a[0] ? SIG_SRC_MIC : SIG_SRC_GENERATOR);
 		return snprintf(out, out_len, "source=%d\n", sig_source());
+	} else if (!strcmp(cmd, "thm") || !strcmp(cmd, "thmwave") || !strcmp(cmd, "thmsnap") ||
+		   !strcmp(cmd, "thmghost") || !strcmp(cmd, "thmsound")) {
+		/* thm [voice hz db]: a voice by remote (hz 0 lifts it), "thm -1" back to touch;
+		 * thmwave <0..3>, thmsnap <0|1>, thmghost <0|1>, thmsound <0|1> (the SOUND
+		 * switch); each replies with the state */
+		struct thm_status st;
+
+		if (!strcmp(cmd, "thm") && n >= 2) {
+			theremin_remote(a[0], n >= 3 ? (float)a[1] : 0.0f, n >= 4 ? (float)a[2] : -20.0f);
+		} else if (!strcmp(cmd, "thmwave") && n >= 2) {
+			theremin_set_wave(a[0]);
+		} else if (!strcmp(cmd, "thmsnap") && n >= 2) {
+			theremin_set_snap(a[0] != 0);
+		} else if (!strcmp(cmd, "thmghost") && n >= 2) {
+			theremin_ghost(a[0] != 0);
+		} else if (!strcmp(cmd, "thmsound") && n >= 2) {
+			theremin_set_sound(a[0] != 0);
+		}
+		theremin_get(&st);
+		int len = snprintf(out, out_len,
+				   "ok enabled=%d mode=%d wave=%d snap=%d sound=%d rate_mhz=%u blocks=%u synth_us=%u "
+				   "synth_worst_us=%u lat_last_us=%u lat_worst_us=%u lat_n=%u",
+				   st.enabled, st.mode, st.wave, st.snap, st.sound, (unsigned int)(st.rate_hz * 1000.0f), st.blocks,
+				   st.synth_us, st.synth_worst_us, st.lat_last_us, st.lat_worst_us, st.lat_n);
+
+		for (int v = 0; v < THM_VOICES; v++) {
+			len += snprintf(out + len, out_len - len, " v%d=%d/%d/%d/%d", v, st.v[v].on, st.v[v].held,
+					(int)(st.v[v].hz + 0.5f), (int)(st.v[v].db - 0.5f));
+		}
+		return len + snprintf(out + len, out_len - len, "\n");
 	} else if (!strcmp(cmd, "micbits") && n >= 4) {
 		return mic_bitbang(a[0], a[1], a[2], a[3], out, out_len);
 	} else if (!strcmp(cmd, "micscope") && n >= 2) {
 		return mic_scope(a[0], out, out_len);
 	} else if (!strcmp(cmd, "micprobe")) {
 		return mic_probe(out, out_len);
+	} else if (!strcmp(cmd, "micpdm") && n >= 2) {
+		return mic_pdm(a[0], n >= 3 ? a[1] : 50, n >= 4 ? a[2] : 1, n >= 5 ? a[3] : 768, out, out_len);
+	} else if (!strcmp(cmd, "micinject") && n >= 3) {
+		return mic_inject(a[0], a[1], n >= 4 ? a[2] : 0, out, out_len);
 	} else if (!strcmp(cmd, "mictune")) {
 		int v[12], k = sscanf(line, "%*s %d %d %d %d %d %d %d %d %d %d %d %d", &v[0], &v[1], &v[2], &v[3], &v[4],
 				      &v[5], &v[6], &v[7], &v[8], &v[9], &v[10], &v[11]);
