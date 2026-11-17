@@ -11,15 +11,15 @@ refresh, no fake data, and show the measurements.
 > in the automated run. A 48 s original film plays at 30 fps with stereo sound
 > from flash or from a microSD card, and clips upload to the card over
 > Ethernet at 2 to 4 MB/s while the demo runs. The camera runs at 30 fps, and
-> the NPU tracks a hand in it at the camera's rate: 21 points, the gesture,
-> and which hand it is. Touch, motion, colour, sound and hand tracking have
+> the NPU tracks up to two hands in it: 21 points each, the gesture, and
+> which hand it is. Touch, motion, colour, sound and hand tracking have
 > been checked by hand on the panel. Left alone for 90 seconds it tours
 > itself. The microphone path runs, but the board's own microphone delivers
 > only noise. See [Status](#status) and the [changelog](CHANGELOG.md).
 
 | | |
 |---|---|
-| ![Home](docs/img/home.png) | ![Hand tracking on the NPU, over the live camera](docs/img/camera-hand.png) |
+| ![Home](docs/img/home.png) | ![Two hands tracked on the NPU, over the live camera](docs/img/camera-hands.png) |
 | ![Signal Lab](docs/img/signal-lab.png) | ![Under the Hood: the firmware's threads in 3D](docs/img/under-the-hood.png) |
 | ![Explorer](docs/img/explorer.png) | ![The film playing in Cinema](docs/img/film.png) |
 | ![Core Map: a PC's processors in 3D](docs/img/core-map.png) | ![A clip playing from the microSD card, with the stats panel](docs/img/cinema-card-playing.png) |
@@ -250,7 +250,7 @@ captures/               screenshots and logs pulled off the board (not committed
 | Cinema | Clips from flash and from the microSD card in a gallery that scrolls sideways; full screen with overlay controls, scrubbing (the picture follows the finger, the sound is cross-faded 85 ms pieces of the clip) and a stats panel (decode and conversion time, bit rate, seek time, read-ahead). Hardware JPEG decode about 10 ms a frame, DMA2D conversion 4.8 ms, video slaved to the audio clock | 30 fps video, no drops; a video frame costs the UI 6.2 ms, 9.2 ms with the controls up, 9.9 ms while scrubbing |
 | Specimen | Type scale, colour tokens, motion test | 1.9 / 3.1 ms |
 | Settings | The board's address (DHCP or fixed, entered on a keypad, applied at once, kept on the card), a QR code for the board's own description at http://<board>/, and which PC is feeding Host Link and Core Map | 1.8 / 2.0 ms |
-| Camera | The IMX335 (B-CAMS-IMX module, 5 Mpx) live at 30 fps: demosaiced and scaled to 592 x 444 by the DCMIPP, auto exposure and white balance by ST's ISP middleware, copied to the display by DMA2D (3 ms). Over it, hand tracking on the NPU (see [Hand tracking on the NPU](#hand-tracking-on-the-npu)): the 21 points and their bones are drawn on the picture, the gesture is read from the joint angles (fist, open hand, pointing, victory, three, four, thumbs up and down, thumb out, OK, rock on, call me, or a finger count), and the side panel names the hand (left or right, and how sure the network is). Beside it the NPU's time per network, the tracking rate and what the ISP chose. The camera and the NPU run only while the screen is up | 5.2 / 10.1 ms |
+| Camera | The IMX335 (B-CAMS-IMX module, 5 Mpx) live at 30 fps: demosaiced and scaled to 592 x 444 by the DCMIPP, auto exposure and white balance by ST's ISP middleware, copied to the display by DMA2D (3 ms). Over it, hand tracking on the NPU, up to two hands (see [Hand tracking on the NPU](#hand-tracking-on-the-npu)): each hand's 21 points and their bones are drawn on the picture in its own colour, its gesture is read from the joint angles (fist, open hand, pointing, victory, three, four, thumbs up and down, thumb out, OK, rock on, call me, or a finger count), and the side panel names each hand (left or right, and how sure the network is). Beside it the NPU's time per network, how many hands and at what rate, and what the ISP chose. The camera and the NPU run only while the screen is up | 5.0 / 8.7 ms |
 | Under the Hood | This firmware, measured live from Zephyr's own statistics: a 3D plot with one ribbon per thread (the eight busiest) showing its share of the CPU over the last 12 s on a logarithmic height axis from 0.01 % to 100 %, so a service thread at a twentieth of a per cent is as readable as the UI thread at fifty (drag to orbit, pinch to zoom, tap a ribbon, tap SCALE for linear axes), every thread with its CPU share and stack high-water mark, and the static RAM, LVGL pool, kernel heap and PSRAM in use. Interrupt time counts to the thread it interrupted | 7.8 / 12.6 ms |
 
 Frame time is all UI-thread work for a frame (screen logic, layout, render),
@@ -411,26 +411,41 @@ and look for isolated steps in both.
 
 ## Hand tracking on the NPU
 
-![A hand tracked on the Camera screen: 21 points, the gesture, which hand](docs/img/camera-hand.png)
+![Two hands tracked on the Camera screen: 21 points each, a gesture each, which hand](docs/img/camera-hands.png)
 
 The Camera screen runs Google MediaPipe's hand pipeline (Apache-2.0 models)
-on the N6's NPU:
+on the N6's NPU, for up to two hands:
 
 1. The **palm detector** (192 x 192 input) looks at the whole picture,
    letterboxed, and finds palms at any rotation: about 65 ms a run.
-2. Around the best palm, a square crop turned so that the fingers point up
-   goes to the **hand landmark network** (224 x 224 input): 21 points in 3D,
-   whether it is a hand, and which hand. About 20 ms.
-3. From then on each frame's crop follows the previous frame's landmarks, and
-   the palm detector runs again only when the hand is lost. The points are
-   smoothed with a one-euro filter, and the gesture, read from the joint
-   angles, has to hold for three frames before it shows.
+2. Around each palm, a square crop turned so that the fingers point up goes
+   to the **hand landmark network** (224 x 224 input): 21 points in 3D,
+   whether it is a hand, and which hand. About 22 ms.
+3. From then on each frame's crop follows the previous frame's landmarks.
+   With no hand in view the palm detector runs on every frame; with one hand
+   tracked it looks for a second every 0.5 s. The points are smoothed with a
+   one-euro filter, and the gesture, read from the joint angles, has to hold
+   for three frames before it shows.
 
-Measured on the board: tracking at the camera's 30 fps; the crop costs the
-CPU 5 to 10 ms a frame (it reads the camera frame from PSRAM). One hand is
-tracked at a time; a second hand in view does not disturb it, and tracking
-moves cleanly from one hand to the other. Checked on the panel with both
-hands, palm and back.
+The hard part of two hands is not seeing the same hand twice. The palm
+detector keeps finding the hand that is already tracked, and a half-closed
+hand can pass for two: once whole, and once as a fist made of its own curled
+fingers. A palm counts as a new hand only if its centre is well away from
+every tracked palm (0.6 palm lengths) and its crop overlaps no tracked
+hand's by half. After the landmarks, two tracks whose crops overlap by half,
+or most of whose points lie on the other hand, are one hand, and the newer
+goes. With crops alone, a minute of two hands held up had both tracked for
+1 s; with these checks, for 53 s, and a hand opening and closing for 15 s
+was never counted as two.
+
+Measured on the board: one hand tracks at 26 to 30 fps (33 ms a frame: the
+crop costs the CPU about 9 ms, reading the camera frame from PSRAM, and the
+landmarks 22 ms); two hands at 15 fps, because the networks' inputs share
+one place in memory and the hands run one after the other. While one hand is
+tracked, the search for a second costs it a 130 ms frame twice a second.
+Checked on the panel with each hand alone, palm and back, and with both at
+once in different gestures. With two palms to the camera the left/right
+labels come out opposite, each matching its hand's shape in the picture.
 
 The networks' working memory is the display's second frame buffer: 1.5 MB of
 the SRAM beside the NPU, lent to it while the Camera screen is up. The
@@ -455,8 +470,10 @@ locally:
 And to see what it does:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\ctl.py "nn hands"            # tracking, gesture, presence, handedness; palms found, confirmed, lost
+.\.venv\Scripts\python.exe tools\ctl.py "nn hands"            # hands tracked, gestures, presence, handedness; palms found, confirmed, lost, merged
 .\.venv\Scripts\python.exe tools\ctl.py "screen 11" "nn hands 2"   # track the built-in test picture: thumbs up expected
+.\.venv\Scripts\python.exe tools\ctl.py "nn hands 3"          # the picture twice, one copy mirrored: two thumbs up, opposite hands
+.\.venv\Scripts\python.exe tools\ctl.py "nn cfg 1 500"        # one hand at most (2: two); look for another every 500 ms
 .\.venv\Scripts\python.exe tools\nn.py watch 20               # the tracker's counters over 20 s
 .\.venv\Scripts\python.exe tools\nn.py grab 5 --hand          # frames as the tracker saw them, and the PC's models on them
 ```
@@ -467,7 +484,7 @@ variants (filtered differently, cropped, contrast stretched, turned, scaled,
 mirrored). The frames land in `captures/`, which git ignores: they show
 whoever is in front of the camera.
 
-That tool found the one real fault so far. The landmark network has two
+That tool found the first real fault. The landmark network has two
 single-valued outputs, and the tracker took the first for "this is a hand".
 It is the handedness. A right hand passed, a left hand was dropped (208 palms
 found, 12 confirmed), which is what showed on the panel. The real presence
@@ -490,7 +507,7 @@ presence 0.50 against 0.01.
 | Video | 800 x 480, 30 fps from flash and from the microSD card, no dropped frames in the automated run |
 | Audio out | 48 kHz stereo to the headphone jack, zero underruns in the automated run, checked by ear. The sample clock comes from the HSI-fed PLL2 and measures 47.6 to 47.7 kHz (0.7 % low) |
 | Stand-alone boot (BOOT1 = L) | Working: with the switch at L the demo starts by itself after a reset (the console shows the boot ROM loading MCUboot from flash, then the application) |
-| Camera | Working: 30.0 fps, 0 dropped UI frames; opening and closing the screen costs no frame (the stream starts and stops on the capture thread). The image tuning is ST's ISP middleware, a west module under ST's licence SLA0044, fetched at build time and never committed here. Hand tracking on the NPU: both networks give the original models' answers (landmarks within 0.9 px of the PC), the whole pipeline names the thumbs up in MediaPipe's test picture on the board, and real hands in front of the camera track at 30 fps, either hand, palm or back (checked on the panel). The left/right label has not been checked against a real hand yet. One hand at a time. The NPU borrows the display's second frame buffer while the screen is up (the display runs single-buffered meanwhile, 0 dropped frames in the tour). ST's NPU runtime and the converted networks are under ST's licence SLA0044 and stay out of this repository: `tools/nn.py` fetches and converts, and the build leaves the NPU out without them |
+| Camera | Working: 30.0 fps, 0 dropped UI frames; opening and closing the screen costs no frame (the stream starts and stops on the capture thread). The image tuning is ST's ISP middleware, a west module under ST's licence SLA0044, fetched at build time and never committed here. Hand tracking on the NPU: both networks give the original models' answers (landmarks within 0.9 px of the PC), the whole pipeline names the thumbs up in MediaPipe's test picture on the board, and real hands in front of the camera track at 26 to 30 fps alone and 15 fps in pairs, either hand, palm or back (checked on the panel, also the left/right labels). The NPU borrows the display's second frame buffer while the screen is up (the display runs single-buffered meanwhile, 0 dropped frames in the tour). ST's NPU runtime and the converted networks are under ST's licence SLA0044 and stay out of this repository: `tools/nn.py` fetches and converts, and the build leaves the NPU out without them |
 | Microphone as Signal Lab source | Capture path working, sound not yet: MDF1 turns the PDM stream into 48 kHz, 24 bit PCM on the DAC's own clock, a circular DMA delivers it with no errors, and a tap on Signal Lab's SOURCE label puts it on the scope, spectrum and waterfall. On this board the onboard microphone (U13) delivers only noise: 50 dB above its datasheet floor, unaffected by every capture setting, with no response to a tone or to tapping. Read at the pin, its bit stream is a healthy sigma-delta stream with nothing but that noise in the audio band, so the electronics of the part run and its transducer does not. A known good PDM microphone on connector CN5 (same pins, selected automatically) is the next step. The generator stays the default source |
 | Host Link | Working: 340 of 340 datagrams answered in the test run, 1.4 to 2.9 ms round trip as timed by the host |
 | Web remote, firmware update over the network | Not started |

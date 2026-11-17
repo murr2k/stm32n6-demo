@@ -35,6 +35,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 .\.venv\Scripts\python.exe tools\nn.py inputs      # what the hand tracker's networks last saw, as PNGs in build-nn/test
 .\.venv\Scripts\python.exe tools\ctl.py nn "nn hands" "nn bench 20 1"   # NPU and tracker status; times (net 0 palm, 1 hand)
 .\.venv\Scripts\python.exe tools\ctl.py "screen 11" "nn hands 2"   # track the built-in thumbs-up picture: gesture=7 expected
+.\.venv\Scripts\python.exe tools\ctl.py "screen 11" "nn hands 3"   # the picture twice, one copy mirrored: hands=2 g0=7 g1=7, r0/r1 about 92/24; "nn hands 1" back to the camera
+.\.venv\Scripts\python.exe tools\ctl.py "nn cfg 2 500"   # at most 2 hands; with fewer tracked, look for another every 500 ms
 .\.venv\Scripts\python.exe tools\nn.py watch 20    # tracker counters over 20 s: searches, palms found, confirmed, lost, time tracked
 .\.venv\Scripts\python.exe tools\nn.py grab 5 --hand   # frames as the tracker saw them (captures/hands, ignored) and the PC's models on them and on variants
 .\.venv\Scripts\python.exe tools\ctl.py "nn thr 50 50"   # the palm and presence thresholds, percent
@@ -149,10 +151,15 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   what does not fit spills to the PSRAM block at 0x91C0_0000; weights are
   read in place from the flash at 0x7580_0000. The `nn` thread (priority 5)
   serves `ctl.py nn ...` requests and runs `hands_step` per camera frame:
-  palm detector on the letterboxed picture until a hand is found (about
-  65 ms), then only the 224 x 224 crop turned upright around the hand and
-  the landmarks (about 22 ms), the next crop following the landmarks;
-  gestures from joint angles, points smoothed by a one-euro filter.
+  up to two hands (`HANDS_MAX`), each in its own slot (`struct track`) for
+  as long as it is tracked. With no hand the palm detector runs on every
+  frame (about 65 ms, on the letterboxed picture); with one it runs every
+  500 ms (`nn cfg`). Each hand costs a 224 x 224 crop turned upright around
+  it (about 9 ms of CPU, reading PSRAM) and the landmarks (about 22 ms), the
+  next crop following the landmarks; the networks' inputs share one place,
+  so the hands run one after the other: 33 ms a frame with one hand, 66 ms
+  with two (15 fps). Gestures from joint angles, points smoothed by a
+  one-euro filter, per hand.
   Measured on the board, both networks agree with the original models on
   the PC (`nn.py check`).
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
@@ -336,7 +343,7 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   to DS_N: `dataset.py erase`, start, `pull`, `flash`.
 - **PSRAM in use: 13.4 of 28 MB** (`ctl.py media`, `psram_kb`), 13.9 once
   `acap` has been used (its 576 KB buffer is taken on first use); 0.5 MB more
-  once `nn hands 2` has run (the test picture as a camera frame), 0.8 MB more
+  once `nn hands 2` or `3` has run (the test picture as a camera frame), 0.8 MB more
   once `nn grab` has. The
   read-ahead window was cut from 8 to 4 MB when PSRAM was nearly full; that
   reason is gone, the 4 MB have been enough (0 stalls).
@@ -529,6 +536,20 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   presence's flat 0.5 had been taken for a broken handedness output. Check
   a network's outputs on a mirrored and a non-hand input, not only on the
   test picture (`nn.py grab` makes such variants from a real frame).
+- **Two tracks must never sit on one hand. A palm detection is a new hand
+  only if its palm centre is more than 0.6 palm lengths from every tracked
+  palm and its crop overlaps none by half (`tracked_already`); after the
+  landmarks, two tracks whose crops overlap by half, or most of whose points
+  lie near the other's (`inside`), are one hand and the newer (or smaller)
+  goes.** **Why:** with crops alone, the palm detector re-found the hand
+  already tracked (a palm's crop and a landmark crop of the same hand can
+  overlap by less than half), the duplicate took the slot meant for a second
+  hand, was merged away a frame later, and the same happened at every
+  search: the user's second hand was hardly ever picked up (1 s of 60).
+  And a half-closed hand was tracked twice, whole and as a "fist" on its own
+  curled fingers. After both checks: 53 s of 60 with two real hands, and one
+  hand opening and closing for 15 s never counted as two. `nn hands 3`
+  covers the search with the test picture, not these cases.
 - **Image slots are 2 MB, in app/boards/stm32n6570_dk.overlay and in
   app/sysbuild/mcuboot.overlay; the two must agree, and MCUboot is reflashed
   after a change (`n6.cmd flash` without `--app-only`).** **Why:** the
@@ -632,12 +653,19 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   Thumbs up) and by the user with real hands on 2026-11-16: the right hand
   tracked well, the left barely, which was the presence/handedness mix-up
   (see the invariant); after the fix "tracking was excellent for each hand,
-  both front and back". Open: the crop costs about 10 ms of CPU a frame
-  (reading the camera frame from PSRAM), so tracking may run below the
-  camera's 30 fps; the palm detector varies 58 to 165 ms (142 to 165 in
-  attract laps, cause not known; it only delays finding a hand); which side
-  "right" is was inferred from the user's report (the right hand passed the
-  old gate, which needed handedness above 0.5), to be confirmed on screen.
-  Faces (N3) and the soak test (N4) next.
+  both front and back". Two hands at once since 2026-11-16 (see the
+  invariant on tracks), checked by the user in a spoken, guided session.
+  Left/right: two palms shown together get opposite labels, each matching
+  its hand's shape in the picture, and the user found the labels correct
+  on the panel. An earlier timed test seemed to show the label following
+  palm against back, but the user had not held the hands in the order asked,
+  so it shows nothing. Open: two hands run at 15 fps because each hand's
+  crop (about 9 ms of CPU, reading PSRAM) and landmarks (22 ms) run one
+  after the other; cropping the second hand into a staging buffer while the
+  NPU runs the first would give about 22 fps, but needs the runtime driven
+  step by step. A search for a second hand costs the first a 130 ms frame
+  twice a second. The palm detector varies 58 to 165 ms (142 to 165 in
+  attract laps, cause not known; it only delays finding a hand). Faces (N3)
+  and the soak test (N4) next.
 - The shell holds 12 screens and all 12 are used: a thirteenth needs
   `MAX_SCREENS` raised in shell.c.

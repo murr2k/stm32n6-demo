@@ -30,28 +30,35 @@
 #define PY     0
 #define SIDE_X (CAM_W + 16)
 
-static lv_obj_t *view, *l_gesture, *l_hand, *l_npu, *l_track, *l_cam, *l_gain, *l_exp, *l_state;
+static lv_obj_t *view, *l_cap[HANDS_MAX], *l_gesture[HANDS_MAX], *l_npu, *l_track, *l_cam, *l_exp, *l_state;
 static uint32_t copy_us, last_frame_ms, frame_gap_ms;
-static struct hands_result hand; /* the copy the overlay draws */
+static struct hands_result hands; /* the copy the overlay draws */
+/* each slot's colour, on the skeleton and on its gesture */
+static const uint32_t hand_color[HANDS_MAX] = {C_AZURE, C_VIOLET};
 
 static void overlay(const struct raster *r)
 {
-	if (!hand.valid) {
-		return;
-	}
 	int ox = r->box.x1, oy = r->box.y1;
 
-	for (int i = 0; i < hand_n_bones; i++) {
-		int a = hand_bones[i][0], b = hand_bones[i][1];
+	for (int h = 0; h < HANDS_MAX; h++) {
+		const struct hand *p = &hands.hand[h];
 
-		raster_line(r, (int)((ox + hand.x[a]) * RQ_ONE), (int)((oy + hand.y[a]) * RQ_ONE),
-			    (int)((ox + hand.x[b]) * RQ_ONE), (int)((oy + hand.y[b]) * RQ_ONE), C_AZURE, 20, 230);
-	}
-	for (int i = 0; i < HAND_POINTS; i++) {
-		bool tip = i == 4 || i == 8 || i == 12 || i == 16 || i == 20;
+		if (!p->valid) {
+			continue;
+		}
+		for (int i = 0; i < hand_n_bones; i++) {
+			int a = hand_bones[i][0], b = hand_bones[i][1];
 
-		raster_disc(r, (int)((ox + hand.x[i]) * RQ_ONE), (int)((oy + hand.y[i]) * RQ_ONE),
-			    (tip ? 5 : 3) * RQ_ONE, tip ? C_AMBER : C_TEXT, 255);
+			raster_line(r, (int)((ox + p->x[a]) * RQ_ONE), (int)((oy + p->y[a]) * RQ_ONE),
+				    (int)((ox + p->x[b]) * RQ_ONE), (int)((oy + p->y[b]) * RQ_ONE), hand_color[h], 20,
+				    230);
+		}
+		for (int i = 0; i < HAND_POINTS; i++) {
+			bool tip = i == 4 || i == 8 || i == 12 || i == 16 || i == 20;
+
+			raster_disc(r, (int)((ox + p->x[i]) * RQ_ONE), (int)((oy + p->y[i]) * RQ_ONE),
+				    (tip ? 5 : 3) * RQ_ONE, tip ? C_AMBER : C_TEXT, 255);
+		}
 	}
 }
 
@@ -95,13 +102,17 @@ static void view_cover(lv_event_t *e)
 	}
 }
 
-static lv_obj_t *field(lv_obj_t *root, int y, const char *cap, uint32_t color, const lv_font_t *font)
+static lv_obj_t *field(lv_obj_t *root, int y, const char *cap, uint32_t color, const lv_font_t *font,
+		       lv_obj_t **caption)
 {
-	lv_obj_t *l;
+	lv_obj_t *l, *c = ui_caption(root, cap);
 
-	lv_obj_set_pos(ui_caption(root, cap), SIDE_X, y);
+	lv_obj_set_pos(c, SIDE_X, y);
 	l = ui_label(root, font, color, "-");
 	lv_obj_set_pos(l, SIDE_X, y + 14);
+	if (caption != NULL) {
+		*caption = c;
+	}
 	return l;
 }
 
@@ -114,25 +125,25 @@ static void create(lv_obj_t *root)
 	l_state = ui_label(root, &font_textm_16, C_TEXT2, "Starting the camera");
 	lv_obj_align_to(l_state, view, LV_ALIGN_CENTER, 0, 0);
 
-	l_gesture = field(root, 8, "GESTURE", C_TEXT, &font_head_28);
-	l_hand = field(root, 64, "HAND", C_TEXT, &font_mono_14);
-	l_npu = field(root, 108, "NPU PALM / LANDMARKS", C_AZURE, &font_mono_14);
-	l_track = field(root, 152, "TRACKING", C_TEXT, &font_mono_14);
-	l_cam = field(root, 196, "CAMERA", C_TEXT, &font_mono_14);
-	l_gain = field(root, 240, "ANALOGUE GAIN", C_TEXT2, &font_mono_14);
-	l_exp = field(root, 284, "EXPOSURE", C_TEXT2, &font_mono_14);
+	l_gesture[0] = field(root, 8, "HAND 1", hand_color[0], &font_head_28, &l_cap[0]);
+	l_gesture[1] = field(root, 64, "HAND 2", hand_color[1], &font_head_28, &l_cap[1]);
+	l_npu = field(root, 120, "NPU PALM / LANDMARKS", C_AZURE, &font_mono_14, NULL);
+	l_track = field(root, 164, "TRACKING", C_TEXT, &font_mono_14, NULL);
+	l_cam = field(root, 208, "CAMERA", C_TEXT, &font_mono_14, NULL);
+	l_exp = field(root, 252, "GAIN, EXPOSURE", C_TEXT2, &font_mono_14, NULL);
 	lv_obj_t *note = ui_label(root, &font_text_14, C_TEXT3,
 				  "Google MediaPipe palm detector and hand landmarks (Apache-2.0) on the "
-				  "NPU; gestures from the joint angles. Picture: DCMIPP and ST's ISP.");
+				  "NPU, up to two hands; gestures from the joint angles. Picture: DCMIPP "
+				  "and ST's ISP.");
 
 	lv_obj_set_width(note, GFX_W - SIDE_X - UI_PAD);
 	lv_label_set_long_mode(note, LV_LABEL_LONG_WRAP);
-	lv_obj_set_pos(note, SIDE_X, 334);
+	lv_obj_set_pos(note, SIDE_X, 302);
 }
 
 static void show(void)
 {
-	memset(&hand, 0, sizeof(hand));
+	memset(&hands, 0, sizeof(hands));
 	camera_start(); /* asynchronous: the picture arrives in about 0.1 s */
 	gfx_lend_back_buffer(true);
 	hands_enable(true);
@@ -154,9 +165,30 @@ static void ms_text(char *buf, size_t len, uint32_t us)
 	}
 }
 
+/* A slot's caption: which hand by the network's handedness output, when it is sure. */
+static void caption_text(char *buf, size_t len, int slot, const struct hand *p)
+{
+	float h = p->handedness;
+	unsigned int sure = (unsigned int)((h > 0.5f ? h : 1.0f - h) * 100 + 0.5f);
+
+	if (!p->valid || sure < 65) {
+		snprintf(buf, len, "HAND %d", slot + 1);
+	} else {
+		snprintf(buf, len, "HAND %d, %s %u %%", slot + 1, h > 0.5f ? "RIGHT" : "LEFT", sure);
+	}
+}
+
+static void label_update(lv_obj_t *l, const char *text)
+{
+	/* only when it changes: each change is an invalid area for LVGL */
+	if (strcmp(lv_label_get_text(l), text) != 0) {
+		lv_label_set_text(l, text);
+	}
+}
+
 static void tick(uint32_t now_ms)
 {
-	static uint32_t text_t0, seen_frames, seen_hand;
+	static uint32_t text_t0, seen_frames;
 	struct camera_status st;
 	char buf[48], a[12], b[12];
 
@@ -165,9 +197,9 @@ static void tick(uint32_t now_ms)
 		seen_frames = st.frames;
 		frame_gap_ms = now_ms - last_frame_ms;
 		last_frame_ms = now_ms;
-		hands_get(&hand); /* the newest result goes with the newest picture */
+		hands_get(&hands); /* the newest result goes with the newest picture */
 		lv_obj_invalidate(view);
-		if (hand.valid && !shell_in_attract()) {
+		if (hands.n > 0 && !shell_in_attract()) {
 			shell_note_input(); /* someone is using the screen: no attract mode under their hand */
 		}
 		if (!lv_obj_has_flag(l_state, LV_OBJ_FLAG_HIDDEN)) {
@@ -187,41 +219,36 @@ static void tick(uint32_t now_ms)
 
 	half = !half;
 	if (half) {
-		if (hand.seq != seen_hand || !hand.valid) {
-			seen_hand = hand.seq;
-			lv_label_set_text(l_gesture, hand.valid ? hands_gesture_name(hand.gesture, hand.fingers) : "-");
-		}
-		if (hand.error) {
-			lv_label_set_text(l_hand, hand.error);
-		} else if (hand.valid) {
-			/* which hand, and how sure the network is of that */
-			float h = hand.handedness;
-			unsigned int sure = (unsigned int)((h > 0.5f ? h : 1.0f - h) * 100 + 0.5f);
+		for (int h = 0; h < HANDS_MAX; h++) {
+			const struct hand *p = &hands.hand[h];
 
-			if (sure < 65) {
-				snprintf(buf, sizeof(buf), "left or right?");
+			if (hands.error && h == 0) {
+				label_update(l_gesture[h], "-");
 			} else {
-				snprintf(buf, sizeof(buf), "%s hand, %u %%", h > 0.5f ? "right" : "left", sure);
+				label_update(l_gesture[h], p->valid ? hands_gesture_name(p->gesture, p->fingers)
+								    : hands.n == 0 && h == 0 ? "searching" : "-");
 			}
-			lv_label_set_text(l_hand, buf);
-		} else {
-			lv_label_set_text(l_hand, "searching");
+			caption_text(buf, sizeof(buf), h, p);
+			label_update(l_cap[h], buf);
 		}
-		ms_text(a, sizeof(a), hand.palm_us);
-		ms_text(b, sizeof(b), hand.hand_us);
-		snprintf(buf, sizeof(buf), "%s / %s ms", a, b);
-		lv_label_set_text(l_npu, buf);
-		snprintf(buf, sizeof(buf), "%u.%u fps", hand.valid ? hand.fps_x10 / 10 : 0,
-			 hand.valid ? hand.fps_x10 % 10 : 0);
-		lv_label_set_text(l_track, buf);
 	} else {
+		ms_text(a, sizeof(a), hands.palm_us);
+		ms_text(b, sizeof(b), hands.hand_us);
+		snprintf(buf, sizeof(buf), "%s / %s ms", a, b);
+		label_update(l_npu, hands.error ? hands.error : buf);
+		if (hands.n == 0) {
+			snprintf(buf, sizeof(buf), "no hand");
+		} else {
+			snprintf(buf, sizeof(buf), "%d hand%s, %u.%u fps", hands.n, hands.n > 1 ? "s" : "",
+				 hands.fps_x10 / 10, hands.fps_x10 % 10);
+		}
+		label_update(l_track, buf);
 		snprintf(buf, sizeof(buf), "%u.%u fps, copy %u.%u ms", st.fps_x10 / 10, st.fps_x10 % 10,
 			 copy_us / 1000, (copy_us % 1000) / 100);
-		lv_label_set_text(l_cam, buf);
-		snprintf(buf, sizeof(buf), "%u.%u dB", st.gain_mdb / 1000, (st.gain_mdb % 1000) / 100);
-		lv_label_set_text(l_gain, buf);
-		snprintf(buf, sizeof(buf), "%u lines", st.exposure);
-		lv_label_set_text(l_exp, buf);
+		label_update(l_cam, buf);
+		snprintf(buf, sizeof(buf), "%u.%u dB, %u lines", st.gain_mdb / 1000, (st.gain_mdb % 1000) / 100,
+			 st.exposure);
+		label_update(l_exp, buf);
 	}
 }
 

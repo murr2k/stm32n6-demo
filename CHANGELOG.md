@@ -22,6 +22,12 @@ them.
 
 ### Added
 
+- **Two hands at once** on the Camera screen, each with its own colour,
+  gesture and left/right label; one hand tracks at 26 to 30 fps, two at
+  15 fps. A hand already tracked, or part of one (a half-closed hand's curled
+  fingers), is not taken for a second hand. `nn hands 3` tracks the test
+  picture twice (one copy mirrored), `nn cfg` sets how many hands and how
+  often to look for another; `nn hands` reports both.
 - Camera screen: the hand tracked is named left or right, with how sure the
   network is.
 - Tracker diagnostics: `nn hands` reports the best palm score of each search
@@ -39,6 +45,9 @@ them.
 
 - A hand tracked on the Camera screen counts as someone using the demo:
   attract mode does not start under it.
+- Camera screen side panel: a gesture per hand (HAND 1, HAND 2, captioned
+  with left or right), the number of hands with the tracking rate, gain and
+  exposure on one line.
 
 ## 2026-11-15
 

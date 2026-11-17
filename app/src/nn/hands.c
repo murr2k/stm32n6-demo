@@ -9,6 +9,10 @@
  * tracking, the next crop comes from the landmarks themselves (their box
  * around wrist and knuckles, turned the same way, 2 times, shifted a tenth).
  *
+ * Two hands as in MediaPipe: a palm whose crop overlaps a tracked hand's by
+ * more than half is that hand again and is not taken; two tracks whose crops
+ * come to overlap that much have found the same hand, and the newer goes.
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <math.h>
@@ -51,27 +55,38 @@ const uint8_t hand_bones[][2] = {
 };
 const int hand_n_bones = ARRAY_SIZE(hand_bones);
 
+#define PALM_CAND   64   /* best palm detections kept for the suppression */
+#define SAME_HAND   0.5f /* crop overlap (intersection over union) of one hand */
+
 struct roi {
 	float cx, cy, size, rot; /* camera pixels, radians */
 };
 
-static atomic_t want, simulate;
+/* One tracked hand: its next crop, its palm (centre and wrist to middle
+ * knuckle, camera pixels, last frame), landmark smoothing, gesture debouncing. */
+struct track {
+	bool on;
+	struct roi roi;
+	float pcx, pcy, psize;
+	float fx[HAND_POINTS], fy[HAND_POINTS], fdx[HAND_POINTS], fdy[HAND_POINTS];
+	uint32_t t_us;
+	enum hand_gesture shown, cand;
+	int cand_count;
+};
+
+static atomic_t want, simulate, reset;
 static uint16_t *sim_frame;
+static int sim_built;
 static struct k_spinlock lock;
 static struct hands_result result; /* published copy */
 static struct hands_result work;   /* the nn thread's */
-static bool tracking;
-static struct roi roi;
-
-/* gesture debouncing and landmark smoothing */
-static enum hand_gesture shown_gesture, cand_gesture;
-static int cand_count;
-static float fx[HAND_POINTS], fy[HAND_POINTS], fdx[HAND_POINTS], fdy[HAND_POINTS];
-static uint32_t last_t_us;
+static struct track tracks[HANDS_MAX];
 static uint32_t rate_t0, rate_n;
 
 /* thresholds: MediaPipe's defaults, 0.5 each; the palm's as a logit */
 static float palm_logit = 0.0f, presence_min = 0.5f;
+static int max_hands = HANDS_MAX;
+static uint32_t search_ms = 500, last_search_ms;
 
 static atomic_t grab_req;
 static struct hands_grab grab;
@@ -87,6 +102,18 @@ void hands_get_thresholds(float *palm, float *presence)
 {
 	*palm = 1.0f / (1.0f + expf(-palm_logit));
 	*presence = presence_min;
+}
+
+void hands_set_search(int max, uint32_t ms)
+{
+	max_hands = CLAMP(max, 1, HANDS_MAX);
+	search_ms = MIN(ms, 10000u);
+}
+
+void hands_get_search(int *max, uint32_t *ms)
+{
+	*max = max_hands;
+	*ms = search_ms;
 }
 
 void hands_grab_arm(void)
@@ -118,20 +145,24 @@ void hands_enable(bool on)
 	if (on) {
 		k_spinlock_key_t key = k_spin_lock(&lock);
 
-		result.valid = false; /* nothing from an earlier visit */
+		/* nothing from an earlier visit */
+		result.n = 0;
+		memset(result.hand, 0, sizeof(result.hand));
 		k_spin_unlock(&lock, key);
+		atomic_set(&reset, 1);
 	}
 	atomic_set(&want, on);
 }
 
-void hands_simulate(bool on)
+void hands_simulate(int mode)
 {
-	atomic_set(&simulate, on);
+	atomic_set(&simulate, CLAMP(mode, 0, 2));
 }
 
-/* The palm detector's 192 x 192 test picture, scaled into the middle 444 x 444
- * of a camera frame (nearest pixel), sides black. */
-static const uint16_t *sim_picture(void)
+/* The palm detector's 192 x 192 test picture in a camera frame (nearest
+ * pixel), the rest black: mode 1 once, 444 x 444 in the middle; mode 2 twice,
+ * 296 x 296 side by side, the left copy mirrored. */
+static const uint16_t *sim_picture(int mode)
 {
 	const uint8_t *t = npu_test_input(NPU_PALM);
 
@@ -143,14 +174,23 @@ static const uint16_t *sim_picture(void)
 		if (sim_frame == NULL) {
 			return NULL;
 		}
-		int x0 = (CAM_W - CAM_H) / 2;
+		sim_built = 0;
+	}
+	if (sim_built != mode) {
+		int side = mode == 2 ? CAM_W / 2 : CAM_H, y0 = (CAM_H - side) / 2;
 
 		for (int y = 0; y < CAM_H; y++) {
 			for (int x = 0; x < CAM_W; x++) {
-				int u = (x - x0) * PALM_N / CAM_H, v = y * PALM_N / CAM_H;
+				int copy = mode == 2 ? x / side : 0;
+				int dx = x - (mode == 2 ? copy * side : (CAM_W - side) / 2), dy = y - y0;
 				uint16_t p = 0;
 
-				if (u >= 0 && u < PALM_N) {
+				if (dx >= 0 && dx < side && dy >= 0 && dy < side) {
+					int u = dx * PALM_N / side, v = dy * PALM_N / side;
+
+					if (mode == 2 && copy == 0) {
+						u = PALM_N - 1 - u;
+					}
 					const uint8_t *s = t + (v * PALM_N + u) * 3;
 
 					p = ((s[0] >> 3) << 11) | ((s[1] >> 2) << 5) | (s[2] >> 3);
@@ -159,6 +199,7 @@ static const uint16_t *sim_picture(void)
 			}
 		}
 		sys_cache_data_flush_range(sim_frame, CAM_W * CAM_H * 2);
+		sim_built = mode;
 	}
 	return sim_frame;
 }
@@ -298,56 +339,37 @@ static void anchor(int i, float *ax, float *ay)
 	*ay = ((c / n) + 0.5f) / n;
 }
 
-/* Best palm, merged with the detections overlapping it (MediaPipe's weighted
- * suppression), as a crop for the landmarks. False if no score passes the
- * threshold; *best_p is the best score either way. */
-static bool palm_roi(const float *score, const float *box, struct roi *q, float *best_p)
+/* Intersection over union of two boxes given as centre and size. */
+static float iou(float ax, float ay, float aw, float ah, float bx, float by, float bw, float bh)
 {
-	int best = 0;
+	float ix = MIN(ax + aw / 2, bx + bw / 2) - MAX(ax - aw / 2, bx - bw / 2);
+	float iy = MIN(ay + ah / 2, by + bh / 2) - MAX(ay - ah / 2, by - bh / 2);
+	float inter = MAX(ix, 0.0f) * MAX(iy, 0.0f);
 
-	for (int i = 1; i < ANCHORS; i++) {
-		if (score[i] > score[best]) {
-			best = i;
-		}
-	}
-	*best_p = 1.0f / (1.0f + expf(-score[best]));
-	if (score[best] <= palm_logit) {
-		return false;
-	}
-	float ax, ay, b[PALM_STRIDE], sum = 0, d[PALM_STRIDE] = {0};
+	return inter / (aw * ah + bw * bh - inter + 1e-9f);
+}
 
-	anchor(best, &ax, &ay);
-	float bx = box[best * PALM_STRIDE] / PALM_N + ax, by = box[best * PALM_STRIDE + 1] / PALM_N + ay;
-	float bw = box[best * PALM_STRIDE + 2] / PALM_N, bh = box[best * PALM_STRIDE + 3] / PALM_N;
+/* Two crops, upright squares around their centres (turning ignored). */
+static float roi_overlap(const struct roi *a, const struct roi *b)
+{
+	return iou(a->cx, a->cy, a->size, a->size, b->cx, b->cy, b->size, b->size);
+}
 
-	for (int i = 0; i < ANCHORS; i++) {
-		if (score[i] <= palm_logit) {
-			continue;
-		}
-		const float *r = box + i * PALM_STRIDE;
+/* Detection i: box (centre, size) and key points, 0..1 of the 192 x 192 input. */
+static void decode(const float *box, int i, float *b)
+{
+	const float *r = box + i * PALM_STRIDE;
+	float ax, ay;
 
-		anchor(i, &ax, &ay);
-		for (int k = 0; k < PALM_STRIDE; k++) {
-			b[k] = r[k] / PALM_N + ((k == 2 || k == 3) ? 0 : (k & 1) ? ay : ax);
-		}
-		/* overlap with the best box */
-		float ix = MIN(bx + bw / 2, b[0] + b[2] / 2) - MAX(bx - bw / 2, b[0] - b[2] / 2);
-		float iy = MIN(by + bh / 2, b[1] + b[3] / 2) - MAX(by - bh / 2, b[1] - b[3] / 2);
-		float inter = MAX(ix, 0.0f) * MAX(iy, 0.0f);
-
-		if (inter / (bw * bh + b[2] * b[3] - inter) < 0.3f) {
-			continue;
-		}
-		float w = 1.0f / (1.0f + expf(-score[i]));
-
-		for (int k = 0; k < PALM_STRIDE; k++) {
-			d[k] += w * b[k];
-		}
-		sum += w;
-	}
+	anchor(i, &ax, &ay);
 	for (int k = 0; k < PALM_STRIDE; k++) {
-		d[k] /= sum;
+		b[k] = r[k] / PALM_N + ((k == 2 || k == 3) ? 0 : (k & 1) ? ay : ax);
 	}
+}
+
+/* A merged detection as the crop for the landmarks. */
+static void palm_crop(const float *d, struct roi *q)
+{
 	/* letterbox to camera pixels: x * CAM_W, y * CAM_W - padding */
 	float pad = LB_PAD / LB_SCALE;
 	float cx = d[0] * CAM_W, cy = d[1] * CAM_W - pad, w = d[2] * CAM_W, h = d[3] * CAM_W;
@@ -358,7 +380,93 @@ static bool palm_roi(const float *score, const float *box, struct roi *q, float 
 	q->cx = cx + 0.5f * h * sinf(q->rot);
 	q->cy = cy - 0.5f * h * cosf(q->rot);
 	q->size = MAX(w, h) * 2.6f;
-	return true;
+}
+
+/* A detection (merged, 0..1 of the detector's input) of a hand tracked
+ * already: its palm centre near that hand's, or its crop on that hand's. The
+ * crops alone miss: a palm's crop and a landmark crop of one hand can overlap
+ * by less than half, and the duplicate then took the slot meant for a second
+ * hand (merged away a frame later, and the same again at the next search). */
+static bool tracked_already(const float *d, const struct roi *q)
+{
+	float pad = LB_PAD / LB_SCALE;
+	float cx = d[0] * CAM_W, cy = d[1] * CAM_W - pad, size = MAX(d[2], d[3]) * CAM_W;
+
+	for (int i = 0; i < HANDS_MAX; i++) {
+		const struct track *t = &tracks[i];
+
+		if (!t->on) {
+			continue;
+		}
+		float dx = cx - t->pcx, dy = cy - t->pcy, near = 0.6f * MAX(size, t->psize);
+
+		if (dx * dx + dy * dy < near * near || roi_overlap(q, &t->roi) > SAME_HAND) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/* Palms, best first, each merged with the detections overlapping it
+ * (MediaPipe's weighted suppression), as crops for the landmarks; palms of
+ * hands tracked already are left out. Up to max; *best_p is the best score in
+ * the picture whether it passes the threshold or not. */
+static int palm_rois(const float *score, const float *box, struct roi *out, int max, float *best_p)
+{
+	static uint16_t cand[PALM_CAND];
+	static bool used[PALM_CAND];
+	int n = 0, best = 0, found = 0;
+
+	for (int i = 0; i < ANCHORS; i++) {
+		if (score[i] > score[best]) {
+			best = i;
+		}
+		if (score[i] <= palm_logit || (n == PALM_CAND && score[i] <= score[cand[n - 1]])) {
+			continue;
+		}
+		/* insert, best first, keeping the PALM_CAND best */
+		int j = n < PALM_CAND ? n++ : n - 1;
+
+		while (j > 0 && score[cand[j - 1]] < score[i]) {
+			cand[j] = cand[j - 1];
+			j--;
+		}
+		cand[j] = i;
+	}
+	*best_p = 1.0f / (1.0f + expf(-score[best]));
+	memset(used, 0, sizeof(used));
+	for (int c = 0; c < n && found < max; c++) {
+		if (used[c]) {
+			continue;
+		}
+		float top[PALM_STRIDE], b[PALM_STRIDE], d[PALM_STRIDE] = {0}, sum = 0;
+
+		decode(box, cand[c], top);
+		for (int e = c; e < n; e++) {
+			if (used[e]) {
+				continue;
+			}
+			decode(box, cand[e], b);
+			if (iou(top[0], top[1], top[2], top[3], b[0], b[1], b[2], b[3]) < 0.3f) {
+				continue;
+			}
+			float w = 1.0f / (1.0f + expf(-score[cand[e]]));
+
+			used[e] = true;
+			for (int k = 0; k < PALM_STRIDE; k++) {
+				d[k] += w * b[k];
+			}
+			sum += w;
+		}
+		for (int k = 0; k < PALM_STRIDE; k++) {
+			d[k] /= sum;
+		}
+		palm_crop(d, &out[found]);
+		if (!tracked_already(d, &out[found])) {
+			found++;
+		}
+	}
+	return found;
 }
 
 /* The next crop from this frame's landmarks (camera pixels). */
@@ -495,38 +603,40 @@ static float euro_alpha(float cutoff_hz, float dt)
 	return 1.0f / (1.0f + tau / dt);
 }
 
-static void smooth(const float *x, const float *y, float dt, bool reset)
+static void smooth(struct track *t, const float *x, const float *y, float dt, bool start)
 {
 	const float min_cutoff = 1.2f, beta = 0.015f, d_cutoff = 1.0f;
 
 	for (int i = 0; i < HAND_POINTS; i++) {
-		if (reset) {
-			fx[i] = x[i], fy[i] = y[i], fdx[i] = fdy[i] = 0;
+		if (start) {
+			t->fx[i] = x[i], t->fy[i] = y[i], t->fdx[i] = t->fdy[i] = 0;
 			continue;
 		}
 		float ad = euro_alpha(d_cutoff, dt);
 
-		fdx[i] += ad * ((x[i] - fx[i]) / dt - fdx[i]);
-		fdy[i] += ad * ((y[i] - fy[i]) / dt - fdy[i]);
-		float speed = sqrtf(fdx[i] * fdx[i] + fdy[i] * fdy[i]);
+		t->fdx[i] += ad * ((x[i] - t->fx[i]) / dt - t->fdx[i]);
+		t->fdy[i] += ad * ((y[i] - t->fy[i]) / dt - t->fdy[i]);
+		float speed = sqrtf(t->fdx[i] * t->fdx[i] + t->fdy[i] * t->fdy[i]);
 		float a = euro_alpha(min_cutoff + beta * speed, dt);
 
-		fx[i] += a * (x[i] - fx[i]);
-		fy[i] += a * (y[i] - fy[i]);
+		t->fx[i] += a * (x[i] - t->fx[i]);
+		t->fy[i] += a * (y[i] - t->fy[i]);
 	}
 }
 
 /* --- one frame ------------------------------------------------------------- */
 
-static void lose(void)
+/* Slot i stops tracking; counted as a lost hand if it was one. */
+static void drop(int i, bool count)
 {
-	if (tracking) {
+	if (tracks[i].on && count) {
 		work.lost++;
 	}
-	tracking = false;
-	work.valid = false;
-	work.gesture = shown_gesture = cand_gesture = G_NONE;
-	cand_count = 0;
+	tracks[i].on = false;
+	tracks[i].shown = tracks[i].cand = G_NONE;
+	tracks[i].cand_count = 0;
+	work.hand[i].valid = false;
+	work.hand[i].gesture = G_NONE;
 }
 
 /* The landmark network's outputs: two single values (handedness, presence)
@@ -590,14 +700,83 @@ static void grab_finish(struct hands_grab *g, const struct roi *q, float presenc
 	atomic_clear(&grab_req);
 }
 
+/* Most of b's points close to a's: b is a part of hand a read as a hand of
+ * its own (a half-closed hand found once whole and once as a fist on its
+ * curled fingers, seen 2026-11-16: the crops overlapped too little to tell). */
+static bool inside(const struct hand *a, const struct hand *b, float near)
+{
+	int close = 0;
+
+	for (int i = 0; i < HAND_POINTS; i++) {
+		for (int k = 0; k < HAND_POINTS; k++) {
+			float dx = b->x[i] - a->x[k], dy = b->y[i] - a->y[k];
+
+			if (dx * dx + dy * dy < near * near) {
+				close++;
+				break;
+			}
+		}
+	}
+	return close > HAND_POINTS / 2;
+}
+
+/* Slot i from this frame's landmarks of its hand, found in crop q. */
+static void update(int i, const float *pts, float presence, float handed, const struct roi *q, uint32_t now)
+{
+	struct track *t = &tracks[i];
+	struct hand *h = &work.hand[i];
+	bool start = !t->on;
+	float x[HAND_POINTS], y[HAND_POINTS];
+
+	/* handedness wavers from frame to frame: averaged over the track */
+	h->handedness = start ? handed : h->handedness + 0.2f * (handed - h->handedness);
+	/* crop pixels to camera pixels */
+	float c = cosf(q->rot), s = sinf(q->rot);
+
+	for (int k = 0; k < HAND_POINTS; k++) {
+		float a = (pts[k * 3] / HAND_N - 0.5f) * q->size, b = (pts[k * 3 + 1] / HAND_N - 0.5f) * q->size;
+
+		x[k] = q->cx + a * c - b * s;
+		y[k] = q->cy + a * s + b * c;
+	}
+	landmark_roi(x, y, &t->roi);
+	t->pcx = (x[0] + x[5] + x[9] + x[13] + x[17]) / 5;
+	t->pcy = (y[0] + y[5] + y[9] + y[13] + y[17]) / 5;
+	t->psize = sqrtf((x[9] - x[0]) * (x[9] - x[0]) + (y[9] - y[0]) * (y[9] - y[0]));
+	smooth(t, x, y, MAX((now - t->t_us) / 1e6f, 0.005f), start);
+	t->t_us = now;
+	memcpy(h->x, t->fx, sizeof(h->x));
+	memcpy(h->y, t->fy, sizeof(h->y));
+
+	int nf;
+	enum hand_gesture gest = classify(pts, x, y, &nf);
+
+	if (gest == t->cand) {
+		if (++t->cand_count >= 3) {
+			t->shown = gest;
+		}
+	} else {
+		t->cand = gest;
+		t->cand_count = 1;
+	}
+	h->gesture = t->shown;
+	h->fingers = nf;
+	h->presence = presence;
+	h->valid = true;
+	t->on = true;
+}
+
 void hands_step(void)
 {
-	uint32_t seq, t0, us;
-	struct roi q;
-	bool from_palm = false;
+	uint32_t seq, t0, t_step, us;
 	struct hands_grab g = {0};
+	struct roi q[HANDS_MAX], gq = {0};
+	int slot[HANDS_MAX], jobs = 0, on = 0;
+	bool fresh[HANDS_MAX] = {false};
+	float gpresence = 0;
 
-	bool sim = atomic_get(&simulate) != 0;
+	int mode = atomic_get(&simulate);
+	bool sim = mode != 0;
 
 	if (sim) {
 		k_msleep(33);
@@ -615,7 +794,7 @@ void hands_step(void)
 		return;
 	}
 	work.error = NULL;
-	const uint16_t *f = sim ? sim_picture() : camera_acquire_nn(&seq);
+	const uint16_t *f = sim ? sim_picture(mode) : camera_acquire_nn(&seq);
 
 	if (f == NULL) {
 		if (!sim) {
@@ -627,13 +806,32 @@ void hands_step(void)
 	if (!sim) {
 		sys_cache_data_invd_range((void *)f, CAM_W * CAM_H * 2);
 	}
+	t_step = k_cycle_get_32();
+	if (atomic_cas(&reset, 1, 0)) {
+		for (int i = 0; i < HANDS_MAX; i++) {
+			drop(i, false);
+		}
+	}
 	bool grabbing = atomic_get(&grab_req) != 0 && grab_buffers();
 
 	if (grabbing) {
 		memcpy((void *)grab.frame, f, CAM_W * CAM_H * 2);
 	}
-	if (!tracking) {
-		/* look for a palm in the whole picture */
+	/* the hands tracked follow their landmarks */
+	for (int i = 0; i < HANDS_MAX; i++) {
+		if (tracks[i].on && on == max_hands) {
+			drop(i, false); /* the maximum was lowered */
+		} else if (tracks[i].on) {
+			q[jobs] = tracks[i].roi, slot[jobs++] = i, on++;
+		}
+	}
+	/* and the palm detector looks for more: on every frame with none */
+	uint32_t now_ms = k_uptime_get_32();
+
+	if (on < max_hands && (on == 0 || now_ms - last_search_ms >= search_ms)) {
+		struct roi found[HANDS_MAX];
+
+		last_search_ms = now_ms;
 		t0 = k_cycle_get_32();
 		palm_input(f, npu_input(NPU_PALM));
 		work.prep_us = k_cyc_to_us_floor32(k_cycle_get_32() - t0);
@@ -651,90 +849,83 @@ void hands_step(void)
 		uint32_t n;
 		const float *score = npu_output(NPU_PALM, 0, &n);
 		const float *box = npu_output(NPU_PALM, 1, &n);
-		bool found = palm_roi(score, box, &q, &work.palm_score);
+		int nf = palm_rois(score, box, found, max_hands - on, &work.palm_score);
 
-		if (!found) {
-			release(sim);
-			gfx_borrow_end();
-			lose();
-			publish();
-			if (grabbing) {
-				grab_finish(&g, NULL, 0);
+		work.palms += nf;
+		for (int k = 0, i = 0; k < nf; k++) {
+			/* into a free slot */
+			while (tracks[i].on || fresh[i]) {
+				i++;
 			}
-			return;
+			q[jobs] = found[k], slot[jobs++] = i, fresh[i] = true;
 		}
-		work.palms++;
-		from_palm = true;
-	} else {
-		q = roi;
 	}
-	t0 = k_cycle_get_32();
-	hand_input(f, &q, npu_input(NPU_HAND));
-	work.prep_us = k_cyc_to_us_floor32(k_cycle_get_32() - t0);
-	if (grabbing) {
-		memcpy((void *)grab.hand_in, npu_input(NPU_HAND), HAND_N * HAND_N * 3);
-		g.has_hand = true;
+	/* each hand: crop, landmarks (the networks' inputs share one place: in turn) */
+	uint32_t now = gfx_now_us();
+
+	for (int j = 0; j < jobs; j++) {
+		int i = slot[j];
+
+		t0 = k_cycle_get_32();
+		hand_input(f, &q[j], npu_input(NPU_HAND));
+		work.prep_us = k_cyc_to_us_floor32(k_cycle_get_32() - t0);
+		if (grabbing && !g.has_hand) {
+			memcpy((void *)grab.hand_in, npu_input(NPU_HAND), HAND_N * HAND_N * 3);
+			g.has_hand = true;
+			gq = q[j];
+		}
+		if (j == jobs - 1) {
+			release(sim); /* the last crop is taken */
+		}
+		float pts[63], presence = 0, handed = 0.5f;
+		int r = npu_infer(NPU_HAND, &us);
+
+		if (r == 0) {
+			work.hand_us = us;
+			r = read_landmarks(pts, &presence, &handed) ? 0 : -EIO;
+		}
+		if (j == 0) {
+			gpresence = presence;
+		}
+		if (r != 0 || presence < presence_min) {
+			drop(i, true);
+			work.hand[i].presence = presence;
+			continue;
+		}
+		if (fresh[i]) {
+			work.confirmed++;
+		}
+		update(i, pts, presence, handed, &q[j], now);
 	}
-	release(sim);
-
-	float pts[63], presence = 0, handed = 0.5f, x[HAND_POINTS], y[HAND_POINTS];
-	int r = npu_infer(NPU_HAND, &us);
-
-	if (r == 0) {
-		work.hand_us = us;
-		r = read_landmarks(pts, &presence, &handed) ? 0 : -EIO;
+	if (jobs == 0) {
+		release(sim);
 	}
 	gfx_borrow_end();
 	if (grabbing) {
-		grab_finish(&g, &q, presence);
+		grab_finish(&g, g.has_hand ? &gq : NULL, gpresence);
 	}
-	if (r != 0 || presence < presence_min) {
-		work.presence = presence;
-		lose();
-		publish();
-		return;
-	}
-	if (from_palm) {
-		work.confirmed++;
-	}
-	/* handedness wavers from frame to frame: averaged over the track */
-	work.handedness = from_palm || !work.valid ? handed : work.handedness + 0.2f * (handed - work.handedness);
-	/* crop pixels to camera pixels */
-	float c = cosf(q.rot), s = sinf(q.rot);
+	/* two tracks on one hand (hands crossed, a palm taken twice, a part of a
+	 * hand taken for one): the newer goes, or the smaller */
+	if (HANDS_MAX == 2 && tracks[0].on && tracks[1].on) {
+		float near = 0.3f * MAX(tracks[0].psize, tracks[1].psize);
 
-	for (int i = 0; i < HAND_POINTS; i++) {
-		float a = (pts[i * 3] / HAND_N - 0.5f) * q.size, b = (pts[i * 3 + 1] / HAND_N - 0.5f) * q.size;
+		if (roi_overlap(&tracks[0].roi, &tracks[1].roi) > SAME_HAND ||
+		    inside(&work.hand[0], &work.hand[1], near) || inside(&work.hand[1], &work.hand[0], near)) {
+			int i = fresh[0] != fresh[1] ? (fresh[0] ? 0 : 1)
+						     : (tracks[0].psize < tracks[1].psize ? 0 : 1);
 
-		x[i] = q.cx + a * c - b * s;
-		y[i] = q.cy + a * s + b * c;
-	}
-	landmark_roi(x, y, &roi);
-	tracking = true;
-
-	uint32_t now = gfx_now_us();
-	float dt = MAX((now - last_t_us) / 1e6f, 0.005f);
-
-	smooth(x, y, dt, from_palm || !work.valid);
-	last_t_us = now;
-	memcpy(work.x, fx, sizeof(fx));
-	memcpy(work.y, fy, sizeof(fy));
-
-	int nf;
-	enum hand_gesture gest = classify(pts, x, y, &nf);
-
-	if (gest == cand_gesture) {
-		if (++cand_count >= 3) {
-			shown_gesture = gest;
+			drop(i, false);
+			work.merged++;
 		}
-	} else {
-		cand_gesture = gest;
-		cand_count = 1;
 	}
-	work.gesture = shown_gesture;
-	work.fingers = nf;
-	work.presence = presence;
-	work.valid = true;
-	if (++rate_n >= 15) {
+	work.n = 0;
+	for (int i = 0; i < HANDS_MAX; i++) {
+		work.n += tracks[i].on;
+	}
+	work.step_us = k_cyc_to_us_floor32(k_cycle_get_32() - t_step);
+	if (work.n == 0) {
+		rate_t0 = now, rate_n = 0;
+	} else if (++rate_n >= 15) {
 		work.fps_x10 = (uint32_t)((uint64_t)rate_n * 10000000 / MAX(now - rate_t0, 1u));
 		rate_t0 = now, rate_n = 0;
 	}

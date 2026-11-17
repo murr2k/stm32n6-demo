@@ -395,23 +395,42 @@ int npu_ctl(const char *line, char *out, size_t out_len)
 	}
 	if (!strcmp(sub, "hands")) {
 		/* "nn hands": the tracker's state; "nn hands 0" pauses it, "1" resumes,
-		 * "2" runs it on the built-in test picture instead of the camera */
+		 * "2" runs it on the built-in test picture instead of the camera, "3" on
+		 * two copies of it (two hands). valid, gesture, fingers, presence and
+		 * right_pct are the first hand tracked; v0..r1 each slot. */
 		struct hands_result h;
 
 		if (a1 >= 0) {
-			hands_simulate(a1 == 2);
+			hands_simulate(a1 >= 2 ? a1 - 1 : 0);
 			hands_enable(a1 != 0);
 		}
 		hands_get(&h);
+		const struct hand *f = &h.hand[h.hand[0].valid ? 0 : 1];
+
 		return snprintf(out, out_len,
-				"ok on=%d valid=%d gesture=%d fingers=%d presence_pct=%d fps_x10=%u palm_us=%u "
-				"hand_us=%u prep_us=%u searches=%u palm_pct=%d palms=%u confirmed=%u lost=%u "
-				"right_pct=%d lent=%d in0=0x%08x in1=0x%08x error=%s\n",
-				hands_enabled(), h.valid, h.gesture, h.fingers, (int)(h.presence * 100), h.fps_x10,
-				h.palm_us, h.hand_us, h.prep_us, h.searches, (int)(h.palm_score * 100), h.palms,
-				h.confirmed, h.lost, (int)(h.handedness * 100), gfx_back_buffer_lent(),
+				"ok on=%d hands=%d valid=%d gesture=%d fingers=%d presence_pct=%d fps_x10=%u "
+				"palm_us=%u hand_us=%u prep_us=%u step_us=%u searches=%u palm_pct=%d palms=%u "
+				"confirmed=%u lost=%u merged=%u right_pct=%d v0=%d g0=%d r0=%d v1=%d g1=%d r1=%d "
+				"lent=%d in0=0x%08x in1=0x%08x error=%s\n",
+				hands_enabled(), h.n, f->valid, f->gesture, f->fingers, (int)(f->presence * 100),
+				h.fps_x10, h.palm_us, h.hand_us, h.prep_us, h.step_us, h.searches,
+				(int)(h.palm_score * 100), h.palms, h.confirmed, h.lost, h.merged,
+				(int)(f->handedness * 100), h.hand[0].valid, h.hand[0].gesture,
+				(int)(h.hand[0].handedness * 100), h.hand[1].valid, h.hand[1].gesture,
+				(int)(h.hand[1].handedness * 100), gfx_back_buffer_lent(),
 				(unsigned int)(uintptr_t)nets[NPU_PALM].in, (unsigned int)(uintptr_t)nets[NPU_HAND].in,
 				h.error ? h.error : "-");
+	}
+	if (!strcmp(sub, "cfg")) {
+		/* "nn cfg [max_hands search_ms]": how many hands, how often to look for another */
+		int max;
+		uint32_t ms;
+
+		if (a1 > 0 && a2 >= 0) {
+			hands_set_search(a1, a2);
+		}
+		hands_get_search(&max, &ms);
+		return snprintf(out, out_len, "ok max_hands=%d search_ms=%u\n", max, ms);
 	}
 	if (!strcmp(sub, "thr")) {
 		/* "nn thr [palm_pct presence_pct]": the tracker's two thresholds */
