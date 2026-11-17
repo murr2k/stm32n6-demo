@@ -471,10 +471,249 @@ int mic_bitbang(uint32_t kbits, uint32_t delay_ns, uint32_t khz, int pull, char 
 			(unsigned int)half, (unsigned int)delay, ok);
 }
 
+/* Self-test: a square wave made with the data pin's own pulls (see mic.h). */
+static bool inject_up;
+
+static void inject_flip(struct k_timer *t)
+{
+	ARG_UNUSED(t);
+	inject_up = !inject_up;
+	LL_GPIO_SetPinPull(GPIOE, LL_GPIO_PIN_8, inject_up ? LL_GPIO_PULL_UP : LL_GPIO_PULL_DOWN);
+}
+
+static K_TIMER_DEFINE(inject_timer, inject_flip, NULL);
+
+int mic_inject(int hz, int clock_off, int pull, char *buf, size_t len)
+{
+	k_timer_stop(&inject_timer);
+	if (clock_off) {
+		/* the clock pin still, low: the microphone sleeps; the MDF's clock runs on inside */
+		LL_GPIO_ResetOutputPin(GPIOE, LL_GPIO_PIN_2);
+		LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_2, LL_GPIO_MODE_OUTPUT);
+	} else {
+		LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_2, LL_GPIO_MODE_ALTERNATE);
+	}
+	LL_GPIO_SetPinPull(GPIOE, LL_GPIO_PIN_8,
+			   pull == 1 ? LL_GPIO_PULL_UP : pull == 2 ? LL_GPIO_PULL_DOWN : LL_GPIO_PULL_NO);
+	uint32_t half_us = 0;
+
+	if (hz > 0) {
+		half_us = 500000u / (uint32_t)CLAMP(hz, 1, 5000);
+		k_timer_start(&inject_timer, K_USEC(half_us), K_USEC(half_us));
+	}
+	return snprintf(buf, len, "ok clock_off=%d hz=%d half_us=%u pull=%d moder_pe2=%u pupdr_pe8=%u\n", clock_off, hz,
+			half_us, pull, (unsigned int)((GPIOE->MODER >> 4) & 3),
+			(unsigned int)((GPIOE->PUPDR >> 16) & 3));
+}
+
+/* ---- a synthetic microphone ------------------------------------------------
+ *
+ * A sine through a second-order sigma-delta modulator (the loop inside a PDM
+ * microphone: noise transfer (1 - z^-1)^2), one bit per word in AHBSRAM2, put
+ * on the data pin by GPDMA1 channel 7 at each TIM6 update: written to BSRR (the
+ * pin driven) or to PUPDR (the pin's pulls, the pin left in its MDF input mode).
+ * Whole periods only, so the table loops cleanly. U13 sleeps meanwhile (clock
+ * pin held low), and the MDF samples with its own clock (low-frequency master
+ * mode, 1.536 MHz). The two clocks are not locked: an entry is now and then
+ * read once more or once less, a little noise and no more.
+ *
+ * Driving the pin does not reach the MDF: on the N6 a pin set as a GPIO output
+ * no longer feeds its alternate-function input (the pin toggled, IDR showed
+ * it, the MDF read a still line). The pulls do, the pin staying in AF mode,
+ * but their edges are slow and unequal, hence the return-to-zero mode.
+ */
+#define PDM_TABLE ((uint32_t *)SRAM2_AHB_BASE_S)
+#define PDM_MAX   ((SRAM2_AHB_SIZE - 0x100) / sizeof(uint32_t))
+#define pdm_node  ((DMA_NodeTypeDef *)(SRAM2_AHB_BASE_S + SRAM2_AHB_SIZE - 0x100))
+
+static DMA_HandleTypeDef pdm_dma;
+static DMA_QListTypeDef pdm_queue;
+static bool pdm_ready, pdm_running;
+
+/* TIM6's kernel clock, counted (divided by 8) against the core's cycle
+ * counter over 1 ms: a register read's latency is then 0.03 % of the count
+ * (over 50 us it was 0.5 %, and the synthetic sine came out 0.5 % sharp). */
+static uint32_t tim6_hz(void)
+{
+	CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+	DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
+	TIM6->CR1 = 0;
+	TIM6->PSC = 7;
+	TIM6->ARR = 0xFFFF;
+	TIM6->EGR = TIM_EGR_UG;
+
+	unsigned int key = irq_lock();
+
+	TIM6->CR1 = TIM_CR1_CEN;
+	uint32_t c0 = DWT->CYCCNT, t0 = TIM6->CNT;
+
+	while (DWT->CYCCNT - c0 < SystemCoreClock / 1000) {
+	}
+	uint32_t t1 = TIM6->CNT, c1 = DWT->CYCCNT;
+
+	irq_unlock(key);
+	TIM6->CR1 = 0;
+	TIM6->PSC = 0;
+	return (uint32_t)((uint64_t)((t1 - t0) & 0xFFFF) * 8 * SystemCoreClock / (c1 - c0));
+}
+
+static int pdm_setup(void)
+{
+	DMA_NodeConfTypeDef nc = {0};
+
+	__HAL_RCC_TIM6_CLK_ENABLE();
+	__HAL_RCC_TIM6_CLK_SLEEP_ENABLE();
+	__HAL_RCC_AHBSRAM2_MEM_CLK_ENABLE();
+	__HAL_RCC_AHBSRAM2_MEM_CLK_SLEEP_ENABLE();
+	pdm_dma.Instance = GPDMA1_Channel7;
+	nc.NodeType = DMA_GPDMA_LINEAR_NODE;
+	nc.Init.Request = GPDMA1_REQUEST_TIM6_UP;
+	nc.Init.BlkHWRequest = DMA_BREQ_SINGLE_BURST;
+	nc.Init.Direction = DMA_MEMORY_TO_PERIPH;
+	nc.Init.SrcInc = DMA_SINC_INCREMENTED;
+	nc.Init.DestInc = DMA_DINC_FIXED;
+	nc.Init.SrcDataWidth = DMA_SRC_DATAWIDTH_WORD;
+	nc.Init.DestDataWidth = DMA_DEST_DATAWIDTH_WORD;
+	nc.Init.SrcBurstLength = 1;
+	nc.Init.DestBurstLength = 1;
+	nc.Init.Priority = DMA_LOW_PRIORITY_HIGH_WEIGHT; /* below the audio output and the microphone */
+	nc.Init.TransferEventMode = DMA_TCEM_BLOCK_TRANSFER;
+	nc.Init.TransferAllocatedPort = DMA_SRC_ALLOCATED_PORT0 | DMA_DEST_ALLOCATED_PORT1;
+	nc.DataHandlingConfig.DataExchange = DMA_EXCHANGE_NONE;
+	nc.DataHandlingConfig.DataAlignment = DMA_DATA_RIGHTALIGN_ZEROPADDED;
+	nc.TriggerConfig.TriggerPolarity = DMA_TRIG_POLARITY_MASKED;
+	nc.SrcSecure = DMA_CHANNEL_SRC_SEC;
+	nc.DestSecure = DMA_CHANNEL_DEST_SEC;
+	nc.SrcAddress = (uint32_t)PDM_TABLE;
+	nc.DstAddress = (uint32_t)&GPIOE->BSRR;
+	nc.DataSize = 4;
+
+	memset(pdm_node, 0, sizeof(*pdm_node));
+	if (HAL_DMAEx_List_BuildNode(&nc, pdm_node) != HAL_OK ||
+	    HAL_DMAEx_List_InsertNode_Tail(&pdm_queue, pdm_node) != HAL_OK ||
+	    HAL_DMAEx_List_SetCircularMode(&pdm_queue) != HAL_OK) {
+		return -EIO;
+	}
+	pdm_dma.InitLinkedList.Priority = DMA_LOW_PRIORITY_HIGH_WEIGHT;
+	pdm_dma.InitLinkedList.LinkStepMode = DMA_LSM_FULL_EXECUTION;
+	pdm_dma.InitLinkedList.LinkAllocatedPort = DMA_LINK_ALLOCATED_PORT1;
+	pdm_dma.InitLinkedList.TransferEventMode = DMA_TCEM_LAST_LL_ITEM_TRANSFER;
+	pdm_dma.InitLinkedList.LinkedListMode = DMA_LINKEDLIST_CIRCULAR;
+	if (HAL_DMAEx_List_Init(&pdm_dma) != HAL_OK || HAL_DMAEx_List_LinkQ(&pdm_dma, &pdm_queue) != HAL_OK ||
+	    HAL_DMA_ConfigChannelAttributes(&pdm_dma, DMA_CHANNEL_PRIV | DMA_CHANNEL_SEC | DMA_CHANNEL_SRC_SEC |
+							       DMA_CHANNEL_DEST_SEC) != HAL_OK) {
+		return -EIO;
+	}
+	return 0;
+}
+
+static void pdm_stop(void)
+{
+	TIM6->CR1 = 0;
+	TIM6->DIER = 0;
+	if (pdm_running) {
+		HAL_DMA_Abort(&pdm_dma);
+		pdm_running = false;
+	}
+}
+
+int mic_pdm(int hz, int amp_pct, int mode, int rate_khz, char *buf, size_t len)
+{
+	if (!pdm_ready) {
+		if (pdm_setup() != 0) {
+			return snprintf(buf, len, "err DMA setup\n");
+		}
+		pdm_ready = true;
+	}
+	pdm_stop();
+	if (mode == 0) {
+		/* back to the microphone: data pin an MDF input with no pull, clock pin the MDF's */
+		LL_GPIO_SetPinPull(GPIOE, LL_GPIO_PIN_8, LL_GPIO_PULL_NO);
+		LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_8, LL_GPIO_MODE_ALTERNATE);
+		LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_2, LL_GPIO_MODE_ALTERNATE);
+		return snprintf(buf, len, "ok off\n");
+	}
+	/* the DMA's rate; with return to zero (mode 3) two entries a bit */
+	uint32_t rate = (uint32_t)CLAMP(rate_khz, 8, 4000) * 1000, e = mode == 3 ? 2 : 1;
+
+	if (hz <= 0 || rate % ((uint32_t)hz * e) != 0 || rate / (uint32_t)hz > PDM_MAX) {
+		return snprintf(buf, len, "err %d Hz needs a whole number of bits a period at %u entries/s, at most %u\n",
+				hz, rate, (unsigned int)PDM_MAX);
+	}
+	uint32_t period = rate / (uint32_t)hz, n = (PDM_MAX / period) * period, bpp = period / e;
+	uint32_t pupd = GPIOE->PUPDR & ~(3u << 16);
+	uint32_t one = mode == 1 ? (1u << 8) : pupd | (1u << 16);       /* set PE8, or pull it up */
+	uint32_t zero = mode == 1 ? (1u << 24) : pupd | (2u << 16);     /* reset PE8, or pull it down */
+	float a = CLAMP(amp_pct, 0, 100) / 100.0f, s1 = 0, s2 = 0;
+	uint32_t ones = 0;
+
+	/* The loop runs one table's length to settle, then the table is taken.
+	 * Return to zero: each 1 is a pulse and a 0 after it, so every 1 has one
+	 * rising and one falling edge whatever its neighbours. Slow or unequal
+	 * edges (the pulls' RC) then cost every pulse the same: gain and offset,
+	 * not distortion. Without it a run of 1s has two edges for any length, and
+	 * how many runs there are depends on the signal. */
+	for (int pass = 0; pass < 2; pass++) {
+		for (uint32_t k = 0; k < n / e; k++) {
+			float x = a * sinf(2.0f * 3.14159265f * (float)(k % bpp) / (float)bpp);
+			float y = s2 >= 0 ? 1.0f : -1.0f;
+
+			s1 += x - y;
+			s2 += s1 - y;
+			if (pass == 1) {
+				PDM_TABLE[k * e] = y > 0 ? one : zero;
+				if (e == 2) {
+					PDM_TABLE[k * e + 1] = zero;
+				}
+				ones += y > 0;
+			}
+		}
+	}
+	sys_cache_data_flush_range(PDM_TABLE, n * sizeof(uint32_t));
+
+	/* the microphone asleep, the data pin ours */
+	LL_GPIO_ResetOutputPin(GPIOE, LL_GPIO_PIN_2);
+	LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_2, LL_GPIO_MODE_OUTPUT);
+	if (mode == 1) {
+		LL_GPIO_SetPinPull(GPIOE, LL_GPIO_PIN_8, LL_GPIO_PULL_NO);
+		LL_GPIO_ResetOutputPin(GPIOE, LL_GPIO_PIN_8);
+		LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_8, LL_GPIO_MODE_OUTPUT);
+	} else {
+		LL_GPIO_SetPinMode(GPIOE, LL_GPIO_PIN_8, LL_GPIO_MODE_ALTERNATE);
+	}
+
+	/* one node, the whole table, round and round */
+	pdm_node->LinkRegisters[NODE_CBR1_DEFAULT_OFFSET] = n * sizeof(uint32_t);
+	pdm_node->LinkRegisters[NODE_CSAR_DEFAULT_OFFSET] = (uint32_t)PDM_TABLE;
+	pdm_node->LinkRegisters[NODE_CDAR_DEFAULT_OFFSET] =
+		mode == 1 ? (uint32_t)&GPIOE->BSRR : (uint32_t)&GPIOE->PUPDR;
+	sys_cache_data_flush_range(pdm_node, sizeof(*pdm_node));
+
+	uint32_t f = tim6_hz(), div = (f + rate / 2) / rate;
+
+	TIM6->PSC = 0;
+	TIM6->ARR = div - 1;
+	TIM6->EGR = TIM_EGR_UG;
+	TIM6->SR = 0;
+	if (HAL_DMAEx_List_Start(&pdm_dma) != HAL_OK) {
+		return snprintf(buf, len, "err DMA start 0x%x\n", (unsigned int)HAL_DMA_GetError(&pdm_dma));
+	}
+	pdm_running = true;
+	TIM6->DIER = TIM_DIER_UDE;
+	TIM6->CR1 = TIM_CR1_CEN;
+	return snprintf(buf, len,
+			"ok hz=%d amp_pct=%d mode=%s entries=%u periods=%u ones_pct=%u tim_hz=%u entry_rate=%u "
+			"moder_pe8=%u\n",
+			hz, amp_pct, mode == 1 ? "drive" : mode == 3 ? "pulls_rz" : "pulls", (unsigned int)n,
+			(unsigned int)(n / period), (unsigned int)(ones * 100 / (n / e)), (unsigned int)f,
+			(unsigned int)(f / div), (unsigned int)((GPIOE->MODER >> 16) & 3));
+}
+
 /* The two pins as the MDF drives and reads them, sampled as fast as the CPU
  * can for n samples with interrupts off (a few ms): each word is the cycle
- * counter shifted left by two, bit 1 the data pin, bit 0 the clock pin. The
- * capture carries on underneath.
+ * counter shifted left by three, bit 2 set while the data pin's pull-up is on
+ * (the synthetic microphone's bit), bit 1 the data pin, bit 0 the clock pin.
+ * The capture carries on underneath.
  */
 int mic_scope(uint32_t n, char *buf, size_t len)
 {
@@ -493,9 +732,9 @@ int mic_scope(uint32_t n, char *buf, size_t len)
 	unsigned int key = irq_lock();
 
 	for (uint32_t i = 0; i < n; i++) {
-		uint32_t v = GPIOE->IDR;
+		uint32_t v = GPIOE->IDR, p = GPIOE->PUPDR;
 
-		out[i] = (DWT->CYCCNT << 2) | (((v >> 8) & 1u) << 1) | ((v >> 2) & 1u);
+		out[i] = (DWT->CYCCNT << 3) | ((((p >> 16) & 3u) == 1u) << 2) | (((v >> 8) & 1u) << 1) | ((v >> 2) & 1u);
 	}
 	irq_unlock(key);
 	return snprintf(buf, len, "addr=0x%08x samples=%u core_hz=%u moder=%08x afrl=%08x afrh=%08x\n",

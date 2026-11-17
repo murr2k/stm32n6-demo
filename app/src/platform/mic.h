@@ -69,6 +69,27 @@ int mic_bitbang(uint32_t kbits, uint32_t delay_ns, uint32_t khz, int pull, char 
  */
 int mic_scope(uint32_t n, char *buf, size_t len);
 
+/* Self-test of the capture chain from the data pin on: with clock_off the
+ * microphone's clock pin is held low (the microphone sleeps and lets go of the
+ * data line), and a timer flips the data pin's own pull-up and pull-down at
+ * 2 x hz: a square wave on the line, read by the MDF like microphone bits (the
+ * pin stays in its MDF input mode). hz 0: no flipping, the pull stays as
+ * `pull` says (0 none, 1 up, 2 down). The MDF must sample with its own clock
+ * for this (mictune with low-frequency master mode). micinject 0 0 0 ends it.
+ */
+int mic_inject(int hz, int clock_off, int pull, char *buf, size_t len);
+
+/* Self-test with a synthetic microphone: a sine of hz at amp_pct of full
+ * scale, through a second-order sigma-delta modulator, put on the data pin at
+ * rate_khz entries a second by DMA (mic.c). mode 1 drives the pin (which on
+ * the N6 cuts the MDF off it: kept to show that), mode 2 flips its pulls (the
+ * pin stays an MDF input), mode 3 the same with return to zero (two entries a
+ * bit, linear despite the pulls' slow edges); U13 sleeps meanwhile. The MDF
+ * must sample with its own clock (mictune, low-frequency master mode). mode 0
+ * gives the pins back to the microphone.
+ */
+int mic_pdm(int hz, int amp_pct, int mode, int rate_khz, char *buf, size_t len);
+
 /* Test aid: record the next ms (up to 3 s) into PSRAM as 32-bit words. Writes
  * "addr= frames= filled=" to buf; ms = 0 only reports (tools/acap.py --mic).
  */

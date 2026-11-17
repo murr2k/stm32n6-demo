@@ -30,6 +30,11 @@ __pycache__/
 # Captures pulled off the board during bring-up
 /captures/
 
+# Research working notes made from public sources: kept locally; the results
+# and the links to the sources are in docs/microphone.md
+/research_notes/STM32N6 DK microphone board paths/
+/reports/STM32N6 DK microphone board paths.md
+
 # Editor / OS
 .vscode/
 .idea/
