@@ -40,6 +40,7 @@ enum hand_gesture {
 	G_ROCK,
 	G_CALL,
 	G_LOVE,  /* thumb, index and little finger out: ASL "I love you" */
+	G_BIRD,  /* the middle finger alone, from a fist */
 	G_OTHER, /* named by its finger count */
 };
 

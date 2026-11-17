@@ -568,6 +568,9 @@ static enum hand_gesture classify(const float *p, const float *x, const float *y
 		return G_CALL;
 	case 0x13:
 		return G_LOVE; /* rock on with the thumb out */
+	case 0x04:
+	case 0x05:
+		return G_BIRD; /* the middle finger up from a fist (the thumb often half out beside it) */
 	case 0x01: {
 		/* which way the thumb points in the picture */
 		float dx = x[4] - x[2], dy = y[4] - y[2], len = sqrtf(dx * dx + dy * dy) + 1e-6f;
@@ -585,7 +588,7 @@ const char *hands_gesture_name(enum hand_gesture g, int fingers)
 		[G_NONE] = "-", [G_FIST] = "Fist", [G_OPEN] = "Open hand", [G_POINT] = "Pointing",
 		[G_VICTORY] = "Victory", [G_THREE] = "Three", [G_FOUR] = "Four", [G_THUMBS_UP] = "Thumbs up",
 		[G_THUMBS_DOWN] = "Thumbs down", [G_THUMB] = "Thumb out", [G_OK] = "OK", [G_ROCK] = "Rock on",
-		[G_CALL] = "Call me", [G_LOVE] = "I love you",
+		[G_CALL] = "Call me", [G_LOVE] = "I love you", [G_BIRD] = "The bird",
 	};
 	static const char *const counts[] = {"No fingers", "One finger", "Two fingers", "Three fingers",
 					     "Four fingers", "Five fingers"};
