@@ -30,6 +30,7 @@ them.
   often to look for another; `nn hands` reports both.
 - Camera screen: the hand tracked is named left or right, with how sure the
   network is.
+- Gesture "I love you" (American Sign Language): rock on with the thumb out.
 - Tracker diagnostics: `nn hands` reports the best palm score of each search
   and counts palms found, confirmed and lost; `nn thr` sets the palm and
   presence thresholds; `nn grab` copies a frame as the tracker saw it.

@@ -39,6 +39,7 @@ enum hand_gesture {
 	G_OK,
 	G_ROCK,
 	G_CALL,
+	G_LOVE,  /* thumb, index and little finger out: ASL "I love you" */
 	G_OTHER, /* named by its finger count */
 };
 
