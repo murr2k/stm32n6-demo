@@ -41,6 +41,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 .\.venv\Scripts\python.exe tools\ctl.py "thmwave 3" "thmsnap 1" "thmghost 1" "thmsound 0"   # timbre 0..3, semitone snap, the attract ghost, the SOUND switch
 .\.venv\Scripts\python.exe tools\ctl.py "screen 2" "sigsrc 1" "monlisten 1" mon   # microphone to the headphones through the EQ, and its state
 .\.venv\Scripts\python.exe tools\ctl.py "monlisten 0" "monband 2 1000 120 100" "montone 1000 -200" mon   # closed loop (headphones by the board): EQ gain measured vs curve
+.\.venv\Scripts\python.exe tools\record.py --secs 20 [--fps 60] [--attract]   # the board records its screen and sound: captures/rec/*.mkv, .mp4 (--attract: one lap)
+.\.venv\Scripts\python.exe tools\avsync.py         # the sync clip recorded by the board: each flash against its beep, in DAC frames
 .\.venv\Scripts\python.exe tools\nn.py watch 20    # tracker counters over 20 s: searches, palms found, confirmed, lost, time tracked
 .\.venv\Scripts\python.exe tools\soak.py --hours 9 --sound 0   # unattended soak: attract and camera phases, polled every second, captures/soak/<start>/summary.txt
 .\.venv\Scripts\python.exe tools\ctl.py swtrace droptrace svct mem stacks   # frames of the last transition, before the last drop; main loop per service; heap, pool, PSRAM, stacks
@@ -102,7 +104,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   from it at boot; the top 4 MB (from `PSRAM_NPU_BASE`, 0x91C0_0000) are the
   NPU's spill memory, which the converter addresses directly and
   `psram_alloc` never hands out. Budget, measured 2026-11-15: internal RAM
-  815 of 840 KB (819 since the theremin, 2026-11-17: 21 KB left) (LVGL pool 256 KB, heap 64 KB, the card's two 32 KB I/O
+  815 of 840 KB (819 since the theremin, 2026-11-17: 21 KB left; 829 since
+  the recorder, the same day: 11 KB left) (LVGL pool 256 KB, heap 64 KB, the card's two 32 KB I/O
   buffers, stacks; the NPU's thread 8 KB), all screens' LVGL objects are
   built at boot and kept; PSRAM 13.4 of 28 MB and never freed: the player
   7.0 MB (4 MB read-ahead window, three 576 KB decode buffers, 1 MB index),
@@ -234,6 +237,36 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   equalizer, with the curve's gain there (the scratch script that runs ten
   cases agreed within 0.2 dB). Keep LISTEN off for that, or the microphone
   feeds the headphones beside it.
+- Recorder (media/recorder.c, tcp/5559, `tools/record.py`): the board
+  records its own screen with the N6's hardware H.264 encoder (VENC) and
+  streams it with its sound. `CONFIG_VIDEO_ENCODER_H264` brings Zephyr's
+  driver, ST's encoder library (BSD-3-Clause, with the HAL) and its 3 MB
+  pool in PSRAM; the recorder calls the library itself with RGB888 input
+  (the frame buffer's XRGB8888 as it is: the driver's API takes only NV12
+  or RGB565). A cooperative thread wakes at the start of each refresh's
+  active area (`gfx_sleep_to_active`), encodes the buffer on screen
+  (`gfx_front`) every second refresh (30 fps; the client may ask for 60
+  with a first line "fps 60") in about 7 ms (9 to 17 ms under video
+  playback), between `gfx_reader_begin`/`end`: the UI does not start a
+  frame that draws into that buffer meanwhile (`reader_waits` in stats;
+  0 so far). Four 512 KB output buffers in PSRAM; QP 20 fixed, an IDR
+  picture every 60 with SPS/PPS. The sound is a tap on the audio thread
+  (`audio_tap`, every block handed to the DAC into a PSRAM ring, streamed
+  as REC_AUDIO), and each picture carries the DAC frame playing as it
+  appeared (`audio_tap_total() - audio_queued_frames()`): record.py places
+  the pictures on the sound's clock (a line fitted through those against
+  the refresh numbers), measures the DAC's real rate from the board's own
+  clock, and writes .h264, .csv, .wav, .mkv (PCM) and .mp4 (AAC) to
+  captures/rec/ (ignored). Needs PyAV (`pip install av` in the venv).
+  `ctl.py rec` reports it. Not recorded: the Camera screen. While the
+  display is single-buffered (the NPU has buffer B) the recorder takes no
+  picture (`held`), so a recording holds the picture before it. Recorded
+  there, the encoder took 12 to 17 ms with its bus starved by the NPU's
+  PSRAM traffic, reported its own hardware timeout about 1.7 times a
+  second (H264ENC_HW_TIMEOUT within 67 ms, so the hardware's bus watchdog,
+  not the driver's wait), and the display waited for it (17 dropped
+  frames in 2 minutes). Open: pause hand tracking while recording, or copy
+  the picture out first, or record the camera's own frames.
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
   Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
   explorer, touchlab, hostlink, coremap, cinema, specimen, hood, settings, camera. Home shows two
@@ -426,6 +459,52 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   with a pow, a cos and five divisions a column it took 2 to 6 ms of
   Signal Lab's first frame and dropped it; the float prototype formulas
   with a tan table take a fraction of a millisecond, and a flat EQ none.
+- **The data cache is written back and dropped at the moment ST's encoder
+  library starts the hardware: `__wrap_EWLEnableHW` in recorder.c, linked
+  with `-Wl,--wrap=EWLEnableHW` (app/CMakeLists.txt).** **Why:** the
+  library writes the stream's headers (SPS, PPS) with the CPU into the
+  output buffer and the hardware writes the picture after them in memory;
+  the driver does no cache maintenance. Invalidating after the encode threw
+  the headers away ("non-existing PPS 0", nothing decoded); cleaning only
+  before the call misses them. At the hardware's start both are right, and
+  the wrap leaves the Zephyr tree alone. Read the output through the cache
+  afterwards, never invalidate it.
+- **The encoder library's linear memory goes through the recorder
+  (`__wrap_EWLMallocLinear`, `EWLFreeLinear`, `EWLMallocRefFrm`,
+  `EWLFreeRefFrm`), not the Zephyr driver.** **Why:** the driver's
+  EWLMallocLinear() records each allocation at `chunks[total_chunks++]` in
+  an array of 32 (`MEM_CHUNKS`) and EWLFreeLinear() never takes it out:
+  after a few encoder starts (each H264EncInit allocates several) the
+  count runs past the array and corrupts the driver's state and the pool
+  (MPU fault in EWLMallocLinear after 3 or 4 restarts, also after a few
+  recordings). The wraps use the driver's EWLmalloc()/EWLfree() on the
+  same pool. An upstream bug worth reporting. After an encoder error the
+  recorder resets the encoder through its reset line before releasing
+  anything (a late write or interrupt from a stalled picture), and the
+  wait for the hardware is up to 500 ms (`long_waits`).
+- **A bus master reading what is on screen holds `gfx_reader_begin(buf)`
+  for as long as it reads, and starts at the beginning of an active area
+  (`gfx_sleep_to_active`).** **Why:** LVGL draws into a presented buffer
+  again right after the next present; the interlock makes that frame wait
+  instead of tearing the encoder's input. With the encoder done in 7 to
+  17 ms after the active area began, and the next present a refresh later,
+  it has not had to wait (`reader_waits=0`). Single-buffered (the Camera
+  screen) the display draws into the buffer it shows: there the wait was
+  real (up to 18 ms, frames dropped), so the recorder takes no pictures
+  while single-buffered.
+- **The video player decodes the frame due `SHOW_LEAD_MS` (30 ms) ahead of
+  the sample at the DAC; the end of a clip is still where its sound ends.**
+  **Why:** chosen for "now", a frame was decoded and converted (about
+  14 ms) and shown at the next present: the board's own recording of the
+  A/V sync clip put each flash 23 to 53 ms (mean 33) after its beep. With
+  the lead: -8 to +13 ms, mean +5 (60 fps recording; the first flash after
+  play is still about 30 ms late). Check with `tools/avsync.py` (records
+  the sync clip with the board's recorder and measures each flash against
+  its beep in DAC frames).
+- **`record.py` lets go of the control port before recording
+  (`ctl.close`).** **Why:** `ctl.send` keeps its connection open and the
+  port serves one client: a recording made the tour unable to connect at
+  all, which looked like a board that had stopped answering.
 - **One owner of the audio output at a time; the next takes it only after
   the last has faded and let go (`audio_owner()` in siglab.c).** **Why:**
   `audio_set_source()` simply replaces the source. Taken at once, the

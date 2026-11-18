@@ -65,6 +65,17 @@ void audio_set_volume(int percent);
 /* Peak level of the last block sent, 0..32767 per channel (for meters). */
 void audio_get_peak(uint16_t *left, uint16_t *right);
 
+/* The recorder's tap (media/recorder.h): from audio_tap(true) on, every block
+ * handed to the DAC (stereo s16 frames) goes into a ring of AUDIO_TAP_FRAMES
+ * in PSRAM, counted from 0. audio_tap_span() gives the frames from `from`
+ * that can be read in one piece (to the newest or to the ring's end), 0 if
+ * they have been overwritten. The frame at the DAC at any moment is
+ * audio_tap_total() - audio_queued_frames(). */
+#define AUDIO_TAP_FRAMES 65536 /* 1.4 s */
+int audio_tap(bool on);
+uint32_t audio_tap_total(void);
+uint32_t audio_tap_span(uint32_t from, const int16_t **p);
+
 /* Test aid: record the next ms (up to 3 s) of what is handed to the DAC into
  * PSRAM, interleaved 16-bit stereo. Writes "addr= frames= filled=" to buf;
  * ms = 0 only reports. Read the samples with the ctl "dump" command.

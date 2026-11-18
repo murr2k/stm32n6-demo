@@ -59,6 +59,11 @@ static volatile uint32_t tone_left, tone_step, tone_phase;
 #define CAP_FRAMES (3 * AUDIO_RATE)
 static int16_t *cap_buf;
 static volatile uint32_t cap_fill, cap_left;
+/* the recorder's tap: every block handed to the DAC, while on */
+static int16_t *tap_buf;
+static volatile bool tap_on;
+static volatile uint32_t tap_total;
+BUILD_ASSERT((AUDIO_TAP_FRAMES % AUDIO_BLOCK_FRAMES) == 0 && (AUDIO_TAP_FRAMES & (AUDIO_TAP_FRAMES - 1)) == 0);
 
 #if DT_NODE_HAS_STATUS_OKAY(AUDIO_NODE) && DT_NODE_HAS_STATUS_OKAY(CODEC_NODE)
 
@@ -263,6 +268,13 @@ static void audio_thread(void *p1, void *p2, void *p3)
 			memcpy(cap_buf + cap_fill * 2, dst, n * 4);
 			cap_fill += n;
 			cap_left -= n;
+		}
+		if (tap_on) {
+			uint32_t at = tap_total;
+
+			/* a whole block always fits before the ring's end: its size divides the ring's */
+			memcpy(tap_buf + (at & (AUDIO_TAP_FRAMES - 1)) * 2, dst, HALF_FRAMES * 4);
+			tap_total = at + HALF_FRAMES;
 		}
 		for (uint32_t i = 0; i < got; i += 4) { /* a coarse peak is enough for a meter */
 			l = MAX(l, abs(dst[2 * i]));
@@ -577,6 +589,37 @@ void audio_tone(uint32_t hz, uint32_t ms)
 	tone_step = (uint32_t)(((uint64_t)hz << 32) / AUDIO_RATE);
 	tone_phase = 0;
 	tone_left = ms * (AUDIO_RATE / 1000);
+}
+
+int audio_tap(bool on)
+{
+	if (on) {
+		if (tap_buf == NULL) {
+			tap_buf = psram_alloc(AUDIO_TAP_FRAMES * 4, 32);
+		}
+		if (tap_buf == NULL) {
+			return -ENOMEM;
+		}
+		tap_total = 0; /* the audio thread is above this one: it sees both together */
+	}
+	tap_on = on;
+	return 0;
+}
+
+uint32_t audio_tap_total(void)
+{
+	return tap_total;
+}
+
+uint32_t audio_tap_span(uint32_t from, const int16_t **p)
+{
+	uint32_t total = tap_total, at = from & (AUDIO_TAP_FRAMES - 1);
+
+	if (tap_buf == NULL || total - from > AUDIO_TAP_FRAMES) {
+		return 0;
+	}
+	*p = tap_buf + at * 2;
+	return MIN(total - from, AUDIO_TAP_FRAMES - at);
 }
 
 void audio_get_counters(uint32_t *blocks, uint32_t *errors)

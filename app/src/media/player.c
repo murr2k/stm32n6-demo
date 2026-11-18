@@ -850,14 +850,27 @@ static uint32_t audio_source(int16_t *dst, uint32_t frames, void *ctx)
 	}
 	return done;
 }
-static uint32_t clock_frame(void)
+/* How far ahead of the sound to decode: a frame chosen for the sample at the
+ * DAC was decoded and converted (about 14 ms) and then shown at the UI's next
+ * present (8 to 25 ms later), so the picture trailed its sound. Recorded by
+ * the board itself (tools/record.py, the A/V sync clip at 60 fps), each
+ * flash came 23 to 53 ms (mean 33) after its beep. */
+#define SHOW_LEAD_MS 30
+
+static uint32_t lead_samples(void)
+{
+	return use_audio && cur != NULL ? SHOW_LEAD_MS * cur->hdr.audio_rate / 1000 : 0;
+}
+
+/* The clip frame whose sound plays `lead` samples from now. */
+static uint32_t clock_frame_at(uint32_t lead)
 {
 	if (!playing || scrub_on) {
 		return base_frame; /* paused, or held under the finger on the slider */
 	}
 	if (use_audio) {
 		/* the sample at the DAC right now: what was handed over minus what is still queued */
-		int32_t heard = (int32_t)a_pos - (int32_t)audio_queued_frames();
+		int32_t heard = (int32_t)a_pos - (int32_t)audio_queued_frames() + (int32_t)lead;
 		uint32_t f = heard > 0 ? (uint32_t)heard / spf : 0;
 
 		return MAX(f, base_frame);
@@ -865,6 +878,11 @@ static uint32_t clock_frame(void)
 	uint64_t elapsed = (uint32_t)(gfx_now_us() - base_us);
 
 	return base_frame + (uint32_t)(elapsed * cur->hdr.fps_num / ((uint64_t)cur->hdr.fps_den * 1000000));
+}
+
+static uint32_t clock_frame(void)
+{
+	return clock_frame_at(0);
 }
 
 static void rebase(uint32_t frame)
@@ -941,7 +959,8 @@ void player_play(void)
 void player_pause(void)
 {
 	if (cur && !close_req && playing) {
-		uint32_t f = MIN(clock_frame(), cur->hdr.n_frames - 1);
+		/* the frame on screen, which runs SHOW_LEAD_MS ahead of the sound */
+		uint32_t f = MIN(clock_frame_at(lead_samples()), cur->hdr.n_frames - 1);
 
 		playing = false;
 		rebase(f);
@@ -1096,14 +1115,19 @@ static void player_thread(void *p1, void *p2, void *p3)
 		 * position must not be taken for the answer to the seek (it was: such
 		 * seeks counted as stalls and as dropped frames).
 		 */
-		uint32_t target, gen;
+		uint32_t target, gen, now_f;
 
 		do {
 			gen = jump_gen;
-			target = clock_frame();
+			now_f = clock_frame();
+			target = clock_frame_at(lead_samples()); /* what will be due when it is on screen */
 		} while (gen != jump_gen);
 
-		if (target >= c->hdr.n_frames) {
+		/* the end of the clip is where its sound ends, not SHOW_LEAD_MS before */
+		if (now_f < c->hdr.n_frames && target >= c->hdr.n_frames) {
+			target = c->hdr.n_frames - 1;
+		}
+		if (now_f >= c->hdr.n_frames) {
 			if (loop_clip) {
 				rebase(0);
 				target = 0;

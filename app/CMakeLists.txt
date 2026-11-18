@@ -11,6 +11,19 @@ file(GLOB_RECURSE app_sources CONFIGURE_DEPENDS src/*.c)
 target_sources(app PRIVATE ${app_sources})
 target_include_directories(app PRIVATE src)
 
+# The recorder (src/media/recorder.c) puts its own code in the path between
+# ST's encoder library and the Zephyr VENC driver's EWL layer, at link time,
+# so the Zephyr tree stays unmodified: the cache is cleaned as the hardware
+# starts (EWLEnableHW), the wait for the hardware is longer (EWLWaitHwRdy),
+# and the linear memory bypasses the driver's chunk table, which overflows
+# after a few encoder starts (EWLMallocLinear and friends).
+if(CONFIG_VIDEO_STM32_VENC)
+  zephyr_ld_options(
+    -Wl,--wrap=EWLEnableHW -Wl,--wrap=EWLWaitHwRdy
+    -Wl,--wrap=EWLMallocLinear -Wl,--wrap=EWLFreeLinear
+    -Wl,--wrap=EWLMallocRefFrm -Wl,--wrap=EWLFreeRefFrm)
+endif()
+
 # LVGL's Helium (MVE) blend routines. The Zephyr module build lists the C
 # sources but not this assembly file, so without it CONFIG_LV_DRAW_SW_ASM_HELIUM
 # fails at link time.

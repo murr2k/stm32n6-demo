@@ -17,7 +17,8 @@ refresh, no fake data, and show the measurements.
 > been checked by hand on the panel. Left alone for 90 seconds it tours
 > itself. Signal Lab also plays the board's own microphone into the
 > headphones, 8.7 ms late, through a five-band equalizer you shape with your
-> fingers on the spectrum. See [Status](#status) and the
+> fingers on the spectrum. And it records itself, screen and sound, with
+> its own hardware H.264 encoder. See [Status](#status) and the
 > [changelog](CHANGELOG.md).
 
 | | |
@@ -64,7 +65,7 @@ display and Zephyr, for developers starting their own project on it:
 git clone https://github.com/murr2k/stm32n6-demo.git
 cd stm32n6-demo
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install west pyserial pillow numpy
+.\.venv\Scripts\python.exe -m pip install west pyserial pillow numpy av
 .\.venv\Scripts\west.exe init -l app
 .\.venv\Scripts\west.exe update
 .\.venv\Scripts\python.exe -m pip install -r zephyr\scripts\requirements-base.txt `
@@ -237,6 +238,8 @@ tools/
   dataset.py            move Explorer's data set from PSRAM into the flash
   gen_fonts.py          TTF to LVGL bitmap fonts (needs npm install in tools/fontconv)
   n6v.py                encode video clips; upload them to the card, or pack and flash them
+  record.py             the board records its own screen and sound (hardware H.264): MKV and MP4
+  avsync.py             the A/V sync clip recorded by the board: each flash against its beep
   nn.py                 NPU networks: fetch, convert, flash, check against the PC; watch and grab the tracker
   gdbrun.ps1            scripted ST-LINK gdbserver + GDB session for bring-up
 docs/plan.html          the plan
@@ -524,6 +527,50 @@ up to 7 % of full scale. Every voice now ends in a release ramp
 blaming hardware: extract the PCM from the `.n6v`, compare it with the WAV,
 and look for isolated steps in both.
 
+## The board records itself
+
+The N6 has a hardware H.264 encoder, and the demo uses it to record its own
+screen together with the sound it sends to the headphones. That's for a
+video of the demo made by the demo, with no screen recorder or camera rig
+(plan: [`docs/plan.html`](docs/plan.html), V1 to V5).
+
+- **The picture:** at the start of every second panel refresh, the encoder
+  reads the frame buffer that's on screen, straight from the SRAM in its
+  32-bit form. The CPU makes no copy and no colour conversion.
+  - It takes about 7 ms a picture; 60 fps fits as well.
+  - The display never draws into a buffer the encoder is still reading.
+  - While recording, the tour shows 0 dropped frames and 0 audio underruns.
+- **The sound:** every block handed to the DAC is streamed with the
+  pictures. Each picture carries the DAC frame that was playing as it
+  appeared, so the PC puts the picture on the sound's clock. The PC also
+  measures the DAC's real rate (47.7 kHz) from the board's own clock.
+- **Proof that they line up:** `tools/avsync.py` records the A/V sync clip
+  and finds each flash and each beep, measured in DAC frames. The first run
+  showed the player itself putting its pictures 33 ms behind their sound.
+  The player now decodes 30 ms ahead, and flash and beep land within one
+  refresh of each other (−8 to +13 ms).
+- **The cache:** ST's encoder library writes the stream's headers with the
+  CPU and the picture data with the hardware, into the same buffer. The data
+  cache is written back at the moment the library starts the hardware,
+  through a link-time wrap of the Zephyr driver's `EWLEnableHW()`. Cleaned
+  any earlier, or invalidated afterwards, the stream lost its headers.
+- **A driver bug, worked around:** Zephyr's VENC driver keeps a table of
+  32 allocations that it never shrinks. After a few encoder starts it
+  overflows and corrupts the memory pool; here the board faulted after 3 or
+  4 restarts. The recorder routes the library's allocations past that
+  table, also at link time.
+- **Not recorded yet: the Camera screen.** While it shows, the display is
+  single-buffered and the NPU's PSRAM traffic starves the encoder. It
+  reported its own bus timeouts and made the display wait, so frames
+  dropped. For now the recorder skips that screen, and a recording holds
+  the picture from just before it.
+
+```powershell
+.\.venv\Scripts\python.exe tools\record.py --secs 20              # 20 s: captures\rec\<name>.mkv (PCM) and .mp4 (AAC)
+.\.venv\Scripts\python.exe tools\record.py --attract --fps 60      # one lap of attract mode at 60 fps
+.\.venv\Scripts\python.exe tools\avsync.py                         # flash against beep, in DAC frames
+```
+
 ## Hand tracking on the NPU
 
 ![Two hands tracked on the Camera screen: 21 points each, a gesture each, which hand](docs/img/camera-hands.png)
@@ -621,6 +668,7 @@ presence 0.50 against 0.01.
 | Touch | 5 points, verified by hand: orientation, multi-touch, pinch and pan |
 | Video | 800 x 480, 30 fps from flash and from the microSD card, no dropped frames in the automated run |
 | Audio out | 48 kHz stereo to the headphone jack in 128-frame (2.7 ms) blocks, zero underruns in the automated run (card upload and attract lap included), checked by ear. The sample clock comes from the HSI-fed PLL2 and measures 47.6 to 47.7 kHz (0.7 % low) |
+| Recording itself | Working: the hardware H.264 encoder reads the frame buffer on screen, 30 fps (60 fits), about 7 ms a picture; the sound streamed with it and every picture placed on the sound's clock; flash and beep of the A/V sync clip within one refresh in the recording. Not yet: the Camera screen (held as a still picture: the NPU starves the encoder there). One lap for the planned video still to record and approve (V3) |
 | Listening to the microphone | Working: microphone to headphones in 8.7 ms (digital path), through a five-band EQ dragged on the spectrum; the EQ's gain measured in closed loop through headphones by the board matches the drawn curve within 0.2 dB. Checked by ear by the user on 2026-11-17: excellent fidelity, latency very acceptable |
 | Stand-alone boot (BOOT1 = L) | Working: with the switch at L the demo starts by itself after a reset (the console shows the boot ROM loading MCUboot from flash, then the application) |
 | Camera | Working: 30.0 fps, 0 dropped UI frames; opening and closing the screen costs no frame (the stream starts and stops on the capture thread). The image tuning is ST's ISP middleware, a west module under ST's licence SLA0044, fetched at build time and never committed here. Hand tracking on the NPU: both networks give the original models' answers (landmarks within 0.9 px of the PC), the whole pipeline names the thumbs up in MediaPipe's test picture on the board, and real hands in front of the camera track at 26 to 30 fps alone and 15 fps in pairs, either hand, palm or back (checked on the panel, also the left/right labels). The NPU borrows the display's second frame buffer while the screen is up (the display runs single-buffered meanwhile, 0 dropped frames in the tour). ST's NPU runtime and the converted networks are under ST's licence SLA0044 and stay out of this repository: `tools/nn.py` fetches and converts, and the build leaves the NPU out without them |

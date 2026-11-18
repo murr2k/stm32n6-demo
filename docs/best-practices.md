@@ -31,6 +31,7 @@ datasheet figures. This project's full list of rules is in
 - [Threads and blocking](#threads-and-blocking)
 - [Audio](#audio)
 - [Video decode](#video-decode)
+- [Video encode](#video-encode)
 - [microSD card](#microsd-card)
 - [Network](#network)
 - [Camera](#camera)
@@ -579,9 +580,72 @@ the playback.
 
 See [`jpegdec.c`](../app/src/media/jpegdec.c).
 
-**Let the audio clock drive the video.** The video player takes its time
-from the DAC's measured rate (see [Audio](#audio)), so picture and sound
-never drift apart.
+**Let the audio clock drive the video, and decode ahead of it.**
+- The video player takes its time from the DAC's measured rate (see
+  [Audio](#audio)), so picture and sound never drift apart.
+- Picking the frame whose sound is playing now is still late: it is shown
+  only after the decode, the conversion and the next present.
+- Here that was 33 ms, measured as described under
+  [Video encode](#video-encode). Decoding 30 ms ahead brought it within a
+  refresh.
+
+## Video encode
+
+**Feed the encoder library 32-bit RGB directly.**
+- Zephyr's VENC driver accepts only NV12 or RGB565 frames.
+- ST's library underneath it (VC8000NanoE) reads `H264ENC_RGB888`, which
+  is this panel's XRGB8888 frame buffer as it is.
+- Enable the driver (`CONFIG_VIDEO_ENCODER_H264`) for its OS layer (EWL:
+  registers, interrupt, memory pool), then call `H264EncInit()` and its
+  siblings yourself. No copy, no conversion
+  ([`recorder.c`](../app/src/media/recorder.c)).
+- The board puts the pool in PSRAM by default. Its default size, 7 MB, is
+  sized for full HD; 800 x 480 needs less than 3 MB.
+
+**Write the cache back at the moment the hardware starts, not before the
+call and not after it.**
+- The library writes the stream's headers with the CPU, and the hardware
+  writes the picture after them in memory, all in the same output buffer.
+- Invalidate afterwards, and the headers are lost: nothing decodes
+  ("non-existing PPS 0").
+- Clean only before the call, and the headers written during it are
+  missed.
+- The fix: a link-time wrap of the driver's `EWLEnableHW()`
+  (`-Wl,--wrap=EWLEnableHW`) that writes the whole data cache back and
+  drops it before the hardware runs. The Zephyr tree stays unmodified.
+
+**Don't trust Zephyr 4.4.0's VENC driver to start the encoder more than a
+few times.**
+- `EWLMallocLinear()` records every allocation in a table of 32 entries,
+  and `EWLFreeLinear()` never takes one out.
+- Each encoder init allocates several buffers, so after three or four
+  starts the table overflows. That corrupts the driver's state and the
+  memory pool: here an MPU fault inside `EWLMallocLinear()`.
+- The workaround: wrap the library's four linear-memory calls at link time
+  and allocate from the same pool with `EWLmalloc()`/`EWLfree()`.
+
+**Keep the encoder off the PSRAM while the NPU runs.**
+- With the NPU's networks running, the encoder took 12 to 17 ms instead
+  of 7, and it reported its own bus timeouts (`H264ENC_HW_TIMEOUT`) about
+  twice a second.
+- After such an error, reset the encoder through its reset line before
+  freeing its memory: a stalled picture can still be writing.
+
+**Read the buffer on screen at the start of an active area, and keep the
+display from drawing into it meanwhile.**
+- After a present, LVGL draws into that buffer again only after the next
+  present.
+- An encoder that starts as the active area begins and finishes within a
+  refresh (7 ms here) never meets the display.
+- An interlock makes the display wait if it ever would.
+
+**Stamp every picture with the sample playing as it appeared, and measure
+sync with a test clip rather than by eye.**
+- Here each picture carries `frames handed to the DAC - frames still
+  queued`.
+- A flash-and-beep clip recorded this way found the board's own video
+  player 33 ms late on its picture: it decoded a frame when its sound was
+  due, not 30 ms before.
 
 ## microSD card
 

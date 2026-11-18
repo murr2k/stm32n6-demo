@@ -22,6 +22,7 @@
 #include "dsp/sig.h"
 #include "dsp/theremin.h"
 #include "media/player.h"
+#include "media/recorder.h"
 #include "media/sdcard.h"
 #include "gfx.h"
 #include "mic.h"
@@ -426,11 +427,21 @@ static int handle(char *line, char *out, size_t out_len)
 		return snprintf(out, out_len,
 				"frames=%u fps=%u.%u render_avg_us=%u render_last_us=%u "
 				"render_worst_us=%u period_worst_us=%u tail_worst_us=%u dropped=%u refresh_mhz=%u "
-				"margin_min_us=%d late_swaps=%u\n",
+				"margin_min_us=%d late_swaps=%u reader_waits=%u reader_wait_worst_us=%u\n",
 				g->frames, g->fps_x10 / 10, g->fps_x10 % 10, g->avg_render_us,
 				g->last_render_us, g->worst_render_us, g->worst_period_us, g->worst_tail_us,
 				g->dropped, g->refresh_uhz / 1000,
-				g->margin_min_us == INT32_MAX ? 0 : (int)g->margin_min_us, g->late_swaps);
+				g->margin_min_us == INT32_MAX ? 0 : (int)g->margin_min_us, g->late_swaps,
+				g->reader_waits, g->reader_wait_worst_us);
+	} else if (!strcmp(cmd, "rec")) {
+		struct rec_status r;
+
+		recorder_get(&r);
+		return snprintf(out, out_len,
+				"recording=%d pictures=%u missed=%u held=%u errors=%u last_error=%d long_waits=%u "
+				"encode_us=%u encode_worst_us=%u bytes=%u idr_bytes=%u p_bytes=%u\n",
+				r.recording, r.pictures, r.missed, r.held, r.errors, r.last_error, r.long_waits,
+				r.encode_us, r.encode_worst_us, r.bytes, r.idr_bytes, r.p_bytes);
 	} else if (!strcmp(cmd, "svct")) {
 		int k = shell_costs(out, out_len - 1);
 

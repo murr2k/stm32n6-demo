@@ -5,6 +5,31 @@ names what a user of the demo or of its tools would notice; the commit log
 has the detail, and `CLAUDE.md` the reasons behind the rules that came out of
 them.
 
+## 2026-11-18
+
+### Fixed
+
+- **The video player showed each frame 33 ms after its sound** (23 to 53),
+  found by the board's own recorder measuring the A/V sync clip in DAC
+  frames: a frame was chosen for the sample at the DAC, then decoded,
+  converted and shown at the next present. It now decodes 30 ms ahead:
+  -8 to +13 ms.
+
+### Added
+
+- **The board records itself**: its screen through the N6's hardware H.264
+  encoder, with the sound it sends to the headphones, streamed to a PC on
+  tcp/5559 (`tools/record.py`, `--fps 60`, `--attract` for one lap of
+  attract mode).
+  - The encoder reads the frame buffer on screen directly (no copy, no
+    conversion by the CPU): about 7 ms a picture, 60 fps fits.
+  - The PC side puts every picture on the sound's clock and writes MKV and
+    MP4 files.
+  - `tools/avsync.py` records the A/V sync clip and measures each flash
+    against its beep; `ctl.py rec` reports the recorder.
+  - Not recorded yet: the Camera screen, where the NPU starves the encoder.
+    A recording holds the picture from just before it.
+
 ## 2026-11-17
 
 ### Fixed

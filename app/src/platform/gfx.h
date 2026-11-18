@@ -39,6 +39,10 @@ struct gfx_stats {
 	/* frames handed over after the vertical sync began but still swapped in
 	 * the blanking: with a swap at line 0 each would have been a dropped frame */
 	uint32_t late_swaps;
+	/* frames that waited for a reader (the recorder) to finish with the
+	 * buffer they draw into, and the longest wait */
+	uint32_t reader_waits;
+	uint32_t reader_wait_worst_us;
 	uint32_t fps_x10;      /* presented frames per second, 1 s window */
 	uint32_t avg_render_us; /* 1 s window */
 	uint16_t head;          /* next write index in the rings below */
@@ -145,5 +149,23 @@ void gfx_lend_back_buffer(bool lend);
 bool gfx_borrow_begin(void);
 void gfx_borrow_end(void);
 bool gfx_back_buffer_lent(void);
+
+/*
+ * Reading what is on screen with a bus master (the recorder's encoder).
+ * gfx_sleep_to_active() returns just after the next active area of the panel
+ * began (its time, gfx_now_us()): the buffer on screen, gfx_front(), stays on
+ * screen until the next blanking. Between gfx_reader_begin(buf) and
+ * gfx_reader_end() the UI thread does not start a frame that draws into buf:
+ * it waits (at most 30 ms) and counts the wait in the stats. In double
+ * buffering that buffer is drawn into only after the next present, so a
+ * reader that is done within a refresh never makes it wait; single-buffered
+ * (gfx_single_buffered(), the Camera screen) the display draws into the
+ * buffer it shows, and a picture read meanwhile may tear.
+ */
+uint32_t gfx_sleep_to_active(void);
+const uint8_t *gfx_front(void);
+bool gfx_single_buffered(void);
+void gfx_reader_begin(const uint8_t *buf);
+void gfx_reader_end(void);
 
 #endif

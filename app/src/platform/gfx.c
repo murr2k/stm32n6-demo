@@ -66,6 +66,9 @@ static bool lend_want;                      /* UI thread only */
 static atomic_t lent;                       /* FB B may be used by the borrower */
 static atomic_t in_use;                     /* the borrower holds it right now */
 
+static atomic_ptr_t reader; /* a buffer a bus master is reading (gfx_reader_begin) */
+static K_SEM_DEFINE(reader_done, 0, 1);
+
 static atomic_t snap_request;
 static K_SEM_DEFINE(snap_done, 0, 1);
 static K_MUTEX_DEFINE(snap_lock);
@@ -444,12 +447,39 @@ bool gfx_back_buffer_lent(void)
 	return atomic_get(&lent) != 0;
 }
 
+/* The buffer this frame draws into: the one not on screen, or A when
+ * single-buffered. */
+static const uint8_t *draw_target(void)
+{
+	return lend_state != DOUBLE ? FB_A : front == FB_A ? FB_B : FB_A;
+}
+
+/* Do not draw into a buffer a reader still has (gfx_reader_begin). */
+static void wait_reader(void)
+{
+	const uint8_t *target = draw_target();
+
+	if (atomic_ptr_get(&reader) != target) {
+		return;
+	}
+	uint32_t t0 = gfx_now_us();
+
+	while (atomic_ptr_get(&reader) == target && gfx_now_us() - t0 < 30000) {
+		k_sem_take(&reader_done, K_MSEC(5));
+	}
+	uint32_t us = gfx_now_us() - t0;
+
+	stats.reader_waits++;
+	stats.reader_wait_worst_us = MAX(stats.reader_wait_worst_us, us);
+}
+
 void gfx_run_frame(void)
 {
 	uint32_t t0 = gfx_now_us();
 
 	t_run_start = t0;
 	lend_step();
+	wait_reader();
 
 	presented = false;
 	lv_timer_handler();
@@ -517,6 +547,7 @@ void gfx_stats_reset_worst(void)
 	stats.worst_period_us = 0;
 	stats.worst_tail_us = 0;
 	stats.margin_min_us = INT32_MAX;
+	stats.reader_wait_worst_us = 0;
 }
 
 void gfx_trace_begin(int from, int to)
@@ -546,6 +577,39 @@ const struct gfx_trace *gfx_trace(void)
 const struct gfx_drop *gfx_last_drop(void)
 {
 	return &last_drop;
+}
+
+uint32_t gfx_sleep_to_active(void)
+{
+	uint32_t y = panel_line();
+	/* to a line into the next active area: whatever was swapped in the
+	 * blanking before it is on screen then, and stays until the next one */
+	uint32_t lines = y < ln_act0 ? ln_act0 - y : ln_total - y + ln_act0;
+
+	k_usleep((int32_t)lines_us(lines + 1));
+	return gfx_now_us();
+}
+
+const uint8_t *gfx_front(void)
+{
+	return front;
+}
+
+bool gfx_single_buffered(void)
+{
+	return lend_state != DOUBLE;
+}
+
+void gfx_reader_begin(const uint8_t *buf)
+{
+	k_sem_reset(&reader_done);
+	atomic_ptr_set(&reader, (atomic_ptr_val_t)buf);
+}
+
+void gfx_reader_end(void)
+{
+	atomic_ptr_set(&reader, NULL);
+	k_sem_give(&reader_done);
 }
 
 lv_display_t *gfx_display(void)

@@ -9,6 +9,8 @@
  *                              before the swap deadline at a hand-over, since the reset)
  *   swtrace                    the frames of the last screen transition: where each one's time went (gfx.h)
  *   droptrace                  the same for the frames up to the last dropped one
+ *   rec                        the recorder (tcp/5559, media/recorder.h): recording, pictures, missed,
+ *                              errors, encode time, bytes, the last IDR and P picture sizes
  *   svct                       the main loop before LVGL: telemetry, bar, each screen's service and
  *                              tick, worst/mean us per frame since the reset (shell.h)
  *   mem                        kernel heap, LVGL pool, PSRAM, least stack left (a soak test's leak check)
