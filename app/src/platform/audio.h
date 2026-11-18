@@ -36,8 +36,15 @@ uint32_t audio_queued_frames(void);
 
 /* Blocks of AUDIO_BLOCK_FRAMES handed to the driver, and stream restarts (underruns): the
  * block rate is a direct measurement of the DAC sample clock.
+ *
+ * A block is half of the circular DMA buffer, refilled while the other half
+ * plays: 128 frames is 2.7 ms, and the source's first sample reaches the DAC
+ * one to two blocks after it was asked for. 512 (10.7 ms) made the
+ * microphone monitor 35 ms late and the theremin's touch to sound 11 to
+ * 21 ms. The refill now has 2.7 ms: a cooperative thread that runs longer
+ * than that without waiting underruns the output (tour.py counts them).
  */
-#define AUDIO_BLOCK_FRAMES 512
+#define AUDIO_BLOCK_FRAMES 128
 void audio_get_counters(uint32_t *blocks, uint32_t *errors);
 
 /* Stop and restart the stream, clearing the counters. */

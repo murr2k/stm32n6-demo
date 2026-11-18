@@ -39,7 +39,11 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 .\.venv\Scripts\python.exe tools\ctl.py "nn cfg 2 500"   # at most 2 hands; with fewer tracked, look for another every 500 ms
 .\.venv\Scripts\python.exe tools\ctl.py "screen 2" "sigsrc 2" "thm 0 440 -12" thm   # theremin: a voice without touching (hz 0 lifts, "thm -1" back to touch), its state
 .\.venv\Scripts\python.exe tools\ctl.py "thmwave 3" "thmsnap 1" "thmghost 1" "thmsound 0"   # timbre 0..3, semitone snap, the attract ghost, the SOUND switch
+.\.venv\Scripts\python.exe tools\ctl.py "screen 2" "sigsrc 1" "monlisten 1" mon   # microphone to the headphones through the EQ, and its state
+.\.venv\Scripts\python.exe tools\ctl.py "monlisten 0" "monband 2 1000 120 100" "montone 1000 -200" mon   # closed loop (headphones by the board): EQ gain measured vs curve
 .\.venv\Scripts\python.exe tools\nn.py watch 20    # tracker counters over 20 s: searches, palms found, confirmed, lost, time tracked
+.\.venv\Scripts\python.exe tools\soak.py --hours 9 --sound 0   # unattended soak: attract and camera phases, polled every second, captures/soak/<start>/summary.txt
+.\.venv\Scripts\python.exe tools\ctl.py swtrace droptrace svct mem stacks   # frames of the last transition, before the last drop; main loop per service; heap, pool, PSRAM, stacks
 .\.venv\Scripts\python.exe tools\nn.py grab 5 --hand   # frames as the tracker saw them (captures/hands, ignored) and the PC's models on them and on variants
 .\.venv\Scripts\python.exe tools\ctl.py "nn thr 50 50"   # the palm and presence thresholds, percent
 .\run.cmd                   # host companion: live data for Host Link and Core Map; finds boards by broadcast (--host to name one)
@@ -61,7 +65,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   CMake change rebuilds LVGL and takes 6 to 8 min. Batch config changes.
 
 - Board stays in development boot: BOOT1 = H, BOOT0 = L. Console is the
-  ST-LINK VCP, COM17, 115200.
+  ST-LINK VCP, COM18, 115200 (the replacement DK since 2026-11-17; the first
+  board's was COM17; `N6_PORT` overrides).
 - The board's DHCP address has been 192.168.254.86 (fixed MAC 02:80:e1:4e:36:01).
 - Host tools run from the project `.venv`. ffmpeg is installed but only on the
   user PATH; a shell started before the install needs the full path under
@@ -72,9 +77,12 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 - `app/` is the Zephyr app and the west manifest repo; the project root is the
   workspace. Sysbuild builds two images: `build/mcuboot` (FSBL variant, runs
   from RAM) and `build/app` (default variant, XIP from XSPI2 NOR at slot 0).
-- Display: `CONFIG_STM32_LTDC_FB_NUM=0`. The app owns the frame buffers and
-  passes full frames to `display_write()`, which swaps the LTDC pointer in the
-  line interrupt and blocks until the swap. No copy.
+- Display: `CONFIG_STM32_LTDC_FB_NUM=0`. The app owns the frame buffers;
+  LVGL renders in DIRECT mode and `present()` in gfx.c cleans the data cache
+  and swaps the LTDC layer's address itself: at once if the panel is in its
+  vertical blanking, otherwise with a reload at the start of the next
+  blanking, sleeping until it happened. `display_write()` is used only at
+  boot, to measure the refresh. No copy.
 - `tools/n6.py` is the only supported way to flash and start the board.
 - UI loop (main.c): `tele_poll`, `shell_tick` (edge swipes, bar, every
   screen's `service`, the visible screen's `tick`), then `gfx_run_frame`
@@ -124,11 +132,11 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   SAI's, so one microphone sample is one DAC frame), CCK 3.072 MHz, Sinc5 / 16,
   reshape / 4: 48 kHz, 24 bit, read as 32-bit words by a circular GPDMA1
   channel 6 transfer into AHBSRAM1 (buffer at +0x2000, list node at +0x3000,
-  beside the audio output's). A cooperative thread copies each 512-sample
-  half into a 16384-sample ring in PSRAM; readers use `mic_total()` and
+  beside the audio output's). A cooperative thread copies each 128-sample
+  half (`MIC_BLOCK`) into a 16384-sample ring in PSRAM; readers use `mic_total()` and
   `mic_copy()`. `ctl.py "mictune 1 1 1 8 5 8 1 0 0 3" "micinject 1000 1"`
   injects a 1 kHz square wave at the data pin with U13 asleep (capture
-  self-test; `"micinject 0 0 0" "mictune 0 1 1 4 5 16 1 0 0 3"` restores).
+  self-test; `"micinject 0 0 0" "mictune 1 1 1 4 5 16 1 0 0 3"` restores).
   `ctl.py "mictune 1 1 1 8 5 8 1 0 0 3" "micpdm 1000 50 2 160"` puts a
   synthetic microphone's 1 kHz PDM stream on the data pin instead, for
   Signal Lab (`micpdm 0` and the default `mictune` restore).
@@ -188,13 +196,44 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   source while Signal Lab shows with THEREMIN selected (`theremin_enable`,
   given back after a fade with `audio_release_source`, which clears only if
   it is still the owner) and reads `touch_get()` itself at the start of each
-  512-frame block on the audio thread: touch to sound 11 to 21 ms (the
-  panel's report to the block's first sample at the DAC; `thm` reports it).
+  128-frame block on the audio thread: touch to sound 3.8 to 4.8 ms in the
+  tour (11 to 21 ms with 512-frame blocks; the panel's report to the
+  block's first sample at the DAC; `thm` reports it).
   Everything it plays goes into a PSRAM ring that sig.c analyses; pitch and
   analysis use the DAC's rate measured from its block count (47.7 kHz).
   In attract mode a ghost plays keyframes (a flying saucer); any touch ends
   it. Signal Lab's spectrum and waterfall are one pane (`plot_pane`) whose
   draw handler splits it: 146/164 px as analyser, 252/58 px as instrument.
+- Microphone monitor (dsp/monitor.c, Signal Lab with MICROPHONE): the
+  microphone to the headphones through a five-band parametric equalizer
+  (low shelf, three peaks, high shelf), for judging it by ear. It is the
+  audio output's source while that mode shows, as the theremin is with
+  THEREMIN; `audio_owner()` in siglab.c hands the output from one to the
+  other only after the first has faded and let go. It reads the microphone
+  ring a fixed distance behind its newest sample (one clock: the distance
+  never moves; 160 samples) and runs gain, the five filters (Simper's
+  state-variable filter in float, the Audio EQ Cookbook's responses, eased
+  per 32 samples), a limiter at -6 dBFS and the LISTEN fade on the audio
+  thread; its output goes to a ring that sig.c analyses instead of the raw
+  microphone while it runs, so the spectrum shows what is heard. LISTEN is
+  off whenever the mode starts (`monitor_set_listen(false)` on leaving).
+  LISTEN on counts as someone using the demo (`shell_note_input()` each
+  frame, as a tracked hand on the Camera screen): no attract mode takes the
+  screen and the sound from a listener who does not touch.
+  The header's three middle boxes become LISTEN, GAIN (+20/+30/+40 dB) and
+  EQ (tap: in or bypassed; hold: all bands flat); the spectrum takes the
+  instrument's tall split and the fingers drag the bands' handles
+  (`eq_touch`, read from the touch table once per frame: across is
+  frequency, up and down is gain on the EQ's own +/-15 dB scale with a
+  detent at 0, a second finger near a held handle sets its width). The
+  curve is drawn from the analogue prototypes in float (`monitor_curve`).
+  `ctl.py mon`, `monlisten`, `mongain`, `moneq`, `monband`, `monflat`,
+  `monreset`, `montone` (ctl.h). Closed-loop check with headphones lying by
+  the board: `montone <Hz> <dB x10>` sends a tone to the DAC instead of the
+  microphone and `mon` reports it in the microphone before and after the
+  equalizer, with the curve's gain there (the scratch script that runs ten
+  cases agreed within 0.2 dB). Keep LISTEN off for that, or the microphone
+  feeds the headphones beside it.
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
   Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
   explorer, touchlab, hostlink, coremap, cinema, specimen, hood, settings, camera. Home shows two
@@ -278,7 +317,27 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   by blending in the frame buffer.** **Why:** a software veil over the content
   area dropped one frame on every transition; the hardware fade costs nothing
   and hides the frame that builds the new screen. `LTDC->BCCR` must stay equal
-  to `C_BG0` or the fade flashes a different colour.
+  to `C_BG0` or the fade flashes a different colour. The settle (the picture
+  10 px lower, rising while it fades in) is the layer's window position
+  (`gfx_set_offset`), not the screen's objects moved. **Why:** moved by LVGL,
+  every frame of the fade-in redrew the whole screen while it was visible
+  (9 to 13 ms on Flight Deck and Under the Hood), and Flight Deck's label
+  updates (`lv_obj_align_to` forces a layout of a moving screen, up to
+  4.4 ms) on one of those frames dropped it at the same point of the attract
+  lap, twice in the 9-hour soak and once in 13 minutes of laps; 0 since.
+- **Frames are presented by `present()` in gfx.c, not by `display_write()`.**
+  **Why:** Zephyr's LTDC driver cleans the data cache by address over the
+  whole 1.5 MB buffer before every swap (541 us measured, nearly all of it
+  the loop: the lines are clean already) and swaps in its line interrupt at
+  line 0, the middle of the blanking. `SCB_CleanDCache()` (set and way)
+  takes 25 us, and a frame handed over in the blanking still shows in the
+  next refresh (the active area is lines 12 to 491 of 501; an immediate swap
+  reads the line and writes the reload with interrupts locked and keeps two
+  lines' guard). About 1 ms more for every frame. Hidden before: neither
+  `render_us` nor the trace saw the driver's loop, and a frame "406 us
+  early" missed. `ctl.py stats` reports `late_swaps` (frames on a deadline
+  handed over after line 0: each one a dropped frame with the driver's swap)
+  and `margin_min_us`.
 - **A screen switch is work done after a present, inside the budget of the
   frame that builds the new screen: keep `show()`/`hide()` short and a
   screen's first frame well under 15 ms.** `switch_to` (the old screen's
@@ -290,9 +349,18 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   1 ms) missed a refresh on about one attract lap in three (5 drops in 16
   switches); its side panel now waits one frame (0 in 16). The miss falls in
   the black hold of the fade, so nobody sees it, but the counter on Deck does.
-  Deck's own first frame is 13 to 15 ms with a 0.8 ms tail: about 1 ms of
-  margin, one drop in 45 minutes of attract mode. The tour's transition test
-  enters every screen and makes the film to Under the Hood switch six times.
+  The tour's transition test enters every screen and makes the film to Under
+  the Hood switch six times. To see where a transition's time goes:
+  `ctl.py swtrace` (each frame of the last one: wake, tail, main loop
+  before LVGL, LVGL, time other threads took, margin before the swap
+  deadline, the layer's alpha), `droptrace` (the same for the 8 frames up
+  to the last dropped one; alpha 0 = the panel was dark), `svct` (the main
+  loop per service and tick, worst and mean). Measured 2026-11-17 in attract
+  laps under the soak's load: the tightest frames are first frames in the
+  dark, Explorer's after Signal Lab the tightest (switch 1.5 to 2.1 ms, main
+  loop 1.8 to 2.2, LVGL 10 to 13.3 ms: it can still miss now and then,
+  unseen). Signal Lab's analysis runs in its `service` on every frame on
+  every screen, for Home's thumbnail: 0.8 ms mean, 2.9 ms worst.
 - **A screenshot (`shot.py`, tcp/5555) costs the UI one frame.** **Why:** the
   1.5 MB copy to PSRAM takes about 18 ms. Never grab inside a window whose
   dropped-frame count is being measured (tour.py reads the stats first).
@@ -331,11 +399,38 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   `raster_area`.** **Why:** a fill to the floor costs with how loud the
   spectrum is: five loud voices filled most of the 252 px pane, 12 ms frames
   and dropped frames. The glow is 28 px deep whatever the sound. Synthesis is
-  not the cost (0.25 to 0.8 ms per 10.7 ms block for five voices, `thm`).
+  not the cost (0.1 to 0.23 ms per 2.7 ms block for five voices, `thm`).
 - **The theremin's sound never steps: phase-continuous oscillators, pitch
   glides in log frequency, every level ramps, lifts decay, a soft limiter
   (ceiling -0.9 dBFS).** The tour records a glide, a chord and lifts and
   counts the discontinuities: 0.
+- **Audio blocks are 128 frames, 2.7 ms (`AUDIO_BLOCK_FRAMES` in audio.h,
+  `MIC_BLOCK` in mic.h).** **Why:** with 512 the microphone monitor reached
+  the headphones 35 ms late (10.7 ms waiting for the microphone's DMA half,
+  the DAC's queue of one to two halves), and the user had had much less in
+  practice; with 128 it is 8.7 ms. The cost: a refill has 2.7 ms after its
+  interrupt, so a cooperative thread that runs longer than that without
+  waiting underruns the output (the audio thread is cooperative and cannot
+  pre-empt one). The tour's underrun counts, card upload included, are the
+  check.
+- **The monitor's filters run in float (state-variable filters), not double.**
+  **Why:** five double-precision biquads cost 0.75 ms per 10.7 ms block on
+  the audio thread, about 1160 cycles a sample, although every double
+  operation was an inline FPU instruction (checked in the disassembly): the
+  M55's double unit is slow for chains of dependent multiply-adds. Float
+  biquads would be too coarse near 20 Hz; Simper's SVF is not, keeps its
+  state meaningful while a band moves, and has the cookbook's responses
+  (closed loop and a numerical check agree). The curve likewise: in double
+  with a pow, a cos and five divisions a column it took 2 to 6 ms of
+  Signal Lab's first frame and dropped it; the float prototype formulas
+  with a tan table take a fraction of a millisecond, and a flat EQ none.
+- **One owner of the audio output at a time; the next takes it only after
+  the last has faded and let go (`audio_owner()` in siglab.c).** **Why:**
+  `audio_set_source()` simply replaces the source. Taken at once, the
+  leaving source's fade is cut off and its state never finishes: the
+  theremin, for one, lets go only when its own callback reports the fade
+  done, so it would stay "enabled" without being the source, and its next
+  `theremin_enable(true)` would not take the output back.
 - **Core Map zoom is capped at 2.5x.** **Why:** it is fill-rate bound; at 3.5x
   tall posts overdrew the whole view several times (11.8 ms draw, dropped
   frames). Faces of one post overlap by a pixel under the face drawn after
@@ -466,8 +561,15 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   its clock source is chosen with `LL_RCC_SetMDFClockSource` (a plain
   CCIPR5 write), not `HAL_RCCEx_PeriphCLKConfig`, which reprograms the IC
   divider behind the Zephyr clock driver's back.
-- **The onboard microphone U13 delivers noise on this board; do not tune
-  the firmware against it.** Measured 2026-11-15: Gaussian noise at
+- **The first board's onboard microphone U13 delivered noise only; the
+  replacement DK's hears (2026-11-17), so do not tune the firmware against
+  a silent microphone: prove the chain first.**
+  On the replacement (same revision, MB1939 C-02) this firmware worked unchanged: quiet -96 dBFS,
+  claps 41 to 63 dB above it, taps 35 to 57 dB, in normal SPI mode and in
+  low-frequency master mode alike (now the default, `lf_master = 1` in
+  mic.c: normal SPI mode ran the processing clock at exactly 4 times the
+  microphone clock, RM0486 asks for more than 4). What follows is the first
+  board. Measured 2026-11-15: Gaussian noise at
   -60 dBFS (about 50 dB above the MP23DB01HP's own noise, a slope of 2 dB
   an octave, no tones), unchanged by the clock edge, the serial interface
   mode, the kernel clock source (RC PLL, crystal bus clock, RC), a PDM clock
@@ -542,8 +644,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   unmodified MDF_AudioRecorder passed taps on 2026-05-31 and nothing on
   2026-11-17 (above). **Results, the board circuit around U13 (SB19, U14,
   MIC_DET, CN5), what to check on this board and on its replacement, and
-  links to every source: `docs/microphone.md`.** The user will swap in a
-  replacement DK. First round of research (MDF settings of ST and others):
+  links to every source: `docs/microphone.md`.** The replacement DK went in
+  on 2026-11-17 and hears (above). First round of research (MDF settings of ST and others):
   `reports/STM32N6 DK microphone noise only.md`. The second round's working
   notes stay local and are not committed (the user: no need to commit what
   can be retrieved from the sources; document the results with links).
@@ -731,14 +833,18 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   `pack` and `flash` in the media partition at 0x7042_0000. Outputs go to
   `media/out/` (not committed).
 - Not built: mounting a card put in after boot without a host command (the
-  card-detect pin is not watched; `n6v.py mount` asks for it, and that path
-  has not been tried with a real insertion), fast seeks in
+  card-detect pin is not watched; `n6v.py mount` asks for it), and recovering
+  a card pulled and put back while mounted: tried by accident on 2026-11-17,
+  `n6v.py ls` then fails (`cannot read /SD:/clips`), `n6v.py mount` answers
+  ok because the card counts as mounted and changes nothing, and only a
+  restart brings it back (the driver would have to re-initialise the card
+  and FatFs remount). Fast seeks in
   very large files (FatFs walks the cluster chain: a backward seek in a
   1 GB clip on FAT32 may take a few hundred ms; untested), FAT timestamps.
-- Microphone: the capture path runs (48 kHz, 0 errors) and Signal Lab can
-  show it, but it has not shown a real sound yet: U13 gives noise only (see
-  the invariant). Open: a known good microphone on CN5 (the PUI part needs
-  `mictune 0 1 1 8 5 8 1`: 1.536 MHz, Sinc5 / 8), or a tap test on U13.
+- Microphone: works on the replacement DK (2026-11-17, claps and taps with
+  spoken prompts, see the invariant); Signal Lab shows real sound. The first
+  board's U13 gave noise only; open there: VDD_MIC at CN5 pin 2 and SB19
+  (docs/microphone.md), if anyone reworks that board.
 - Unexplained, once (2026-11-15): during a tour the board stopped answering
   the network and the debug probe could no longer see the processor at all,
   even after the probe's own power cycle (`No STM32 target found`); the
@@ -766,6 +872,9 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   step by step. A search for a second hand costs the first a 130 ms frame
   twice a second. The palm detector varies 58 to 165 ms (142 to 165 in
   attract laps, cause not known; it only delays finding a hand). Faces (N3)
-  and the soak test (N4) next.
+  next. The soak test (N4) passed on 2026-11-17: 9 hours, 20 minutes of
+  each on the Camera screen with both networks every frame (`nn hands 3`),
+  no reset, fault or leak, frame times unchanged; its 2 dropped frames were
+  Flight Deck's fade-in (see the settle in the fade invariant).
 - The shell holds 12 screens and all 12 are used: a thirteenth needs
   `MAX_SCREENS` raised in shell.c.

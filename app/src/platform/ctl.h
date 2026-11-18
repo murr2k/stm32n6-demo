@@ -23,7 +23,7 @@
  *   ds                         Explorer's data set: in flash or generated, address, checksum
  *   hometiles <n>              Home: n placeholder tiles after the real ones
  *   home                       Home: tiles, pan position and range
- *   audio                      DAC half-buffer count and underruns
+ *   audio                      DAC half-buffer count, frames per half (block_frames) and underruns
  *   tone <hz> <ms>             test tone at -12 dBFS
  *   volume <0..100>            headphone volume
  *   mic                        microphone: samples, errors, measured rate, level of the last block
@@ -37,6 +37,13 @@
  *   thm [voice hz db]          theremin state; a voice by remote (hz 0 lifts it), voice -1: back to touch
  *   thmwave <0..3>, thmsnap <0|1>, thmghost <0|1>   theremin waveform, semitone snap, the ghost player
  *   thmsound <0|1>             the theremin's SOUND switch (off: it plays to the analysis only)
+ *   mon                        the microphone monitor (Signal Lab with MICROPHONE): state, read
+ *                              distance, delay, DSP time, limiter, the bands as hz/dB x10/Q x100
+ *   monlisten <0|1>, mongain <dB>, moneq <0|1>   the headphones, the gain, the EQ in or bypassed
+ *   monband <0..4> <hz> <dB x10> <Q x100>        set a band; monflat: all at 0 dB; monreset: as at start
+ *   montone <hz> [dBFS x10]    closed-loop test: the tone to the DAC instead of the microphone (hz 0 ends
+ *                              it); "mon" then adds it in the microphone before and after the EQ,
+ *                              the gain measured between them and the curve's gain there
  *   mcap [ms]                  record the next ms of microphone samples (3 s at most), like acap
  *   acap [ms]                  record the next ms of DAC output (3 s at most);
  *                              without ms: where it is and how far it has got

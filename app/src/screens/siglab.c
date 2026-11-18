@@ -10,15 +10,25 @@
  * draws the trail, each finger gets a crosshair and a readout, and a SOUND
  * switch takes PEAK's place in the header.
  *
+ * With the MICROPHONE source the microphone goes to the headphones through a
+ * five-band parametric equalizer (dsp/monitor.h), to judge it by ear. The
+ * header gets LISTEN (the headphones, off whenever the screen shows), GAIN
+ * and EQ (in or bypassed; held: every band flat); the spectrum, as tall as
+ * the instrument's, shows what is heard, with the equalizer's curve over it
+ * and a handle per band that the fingers drag.
+ *
  * SPDX-License-Identifier: Apache-2.0
  */
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <zephyr/kernel.h>
 
+#include "dsp/monitor.h"
 #include "dsp/sig.h"
 #include "dsp/theremin.h"
+#include "platform/touch.h"
 #include "screens.h"
 #include "ui/raster.h"
 #include "ui/theme.h"
@@ -42,12 +52,20 @@ static int cursor_col = -1, press_row;
 static uint32_t cursor_until;
 static int32_t ybuf[SIG_COLS], ybuf2[SIG_COLS];
 
-static bool visible, thm_mode, ghost_by_attract, captions_due;
+static bool visible, thm_mode, mon_mode, ghost_by_attract, captions_due;
 static int sound_shown = -1;
 static int pre_attract_source = -1;
 static struct thm_status thm; /* this frame's copy, for the draw handlers */
+static struct mon_status mon; /* the same for the monitor */
 
-static void set_mode(bool t);
+enum { M_ANALYSER, M_INSTRUMENT, M_MONITOR };
+static void set_mode(int m);
+
+/* The instrument and the monitor take the tall spectrum. */
+static inline bool tall(void)
+{
+	return thm_mode || mon_mode;
+}
 
 /* Colour map for the waterfall: screen background through navy and azure to a
  * pale blue, with amber reserved for the top few dB.
@@ -223,6 +241,248 @@ static void draw_voices(const struct raster *r, lv_layer_t *layer)
 	}
 }
 
+/* ---- the monitor's equalizer, played with the fingers -----------------------
+ * Each band has a handle on the spectrum: across is its frequency (the
+ * spectrum's own axis), up and down its gain on the equalizer's own scale
+ * (0 dB in the middle, +/-15 dB near the edges). A finger that comes down
+ * near a handle takes it and drags it from where it took it (the handle does
+ * not jump to the finger); a second finger that comes down near a held
+ * handle sets that band's width by its distance from the first, apart being
+ * wider (lower Q). Fingers that come down anywhere else (a button, an edge
+ * swipe) or were down when the screen showed do nothing. The touch table is
+ * read once per frame on the UI thread; the sound follows within a block.
+ */
+#define EQ_GRAB    56                       /* px from a handle within which a finger takes it */
+#define EQ_WIDTH_R 150                      /* px from a held handle within which a second finger sets its width */
+#define EQ_SPAN    ((SPEC_H_T - 3) / 2 - 14) /* px from 0 dB to MON_DB_MAX */
+
+enum { F_UP, F_DRAG, F_WIDTH, F_IGNORED };
+struct finger {
+	uint8_t state;
+	int8_t band;
+	float dx, dy; /* handle minus finger when it was taken */
+	float q0, d0; /* width: the band's Q and the fingers' distance then */
+};
+static struct finger fing[TOUCH_MAX_POINTS];
+static bool eq_fresh, eq_touched;
+static int16_t eq_cdb[SIG_COLS]; /* the equalizer's response, 0.01 dB */
+static uint32_t eq_curve_ver = UINT32_MAX;
+
+static float eq_x(float hz)
+{
+	return (float)PX + sig_hz_colf(hz);
+}
+
+static float eq_yc(void)
+{
+	return (float)(UI_CONTENT_Y + SPEC_Y + SPEC_H_T / 2);
+}
+
+static float eq_y(float db)
+{
+	return eq_yc() - db * ((float)EQ_SPAN / MON_DB_MAX);
+}
+
+static int finger_on(int band, int state)
+{
+	for (int s = 0; s < TOUCH_MAX_POINTS; s++) {
+		if (fing[s].state == state && fing[s].band == band) {
+			return s;
+		}
+	}
+	return -1;
+}
+
+static void eq_touch(void)
+{
+	struct touch_state ts;
+	struct mon_band nb[MON_BANDS];
+	bool changed = false;
+	/* where a finger may come down: the spectrum, clear of the edge-swipe zones */
+	int x1 = MAX(PX, EDGE), x2 = MIN(PX + SIG_COLS - 1, GFX_W - 1 - EDGE);
+	int y1 = UI_CONTENT_Y + SPEC_Y, y2 = y1 + SPEC_H_T - 1;
+
+	touch_get(&ts);
+	memcpy(nb, mon.band, sizeof(nb));
+	if (eq_fresh) {
+		/* just shown: whatever is down already came down before */
+		for (int s = 0; s < TOUCH_MAX_POINTS; s++) {
+			fing[s].state = ts.pt[s].down ? F_IGNORED : F_UP;
+		}
+		eq_fresh = false;
+	}
+	for (int s = 0; s < TOUCH_MAX_POINTS; s++) {
+		const struct touch_point *p = &ts.pt[s];
+		struct finger *f = &fing[s];
+
+		if (!p->down) {
+			f->state = F_UP;
+			continue;
+		}
+		if (f->state == F_UP) {
+			f->state = F_IGNORED;
+			if (shell_gesture_active() || p->x < x1 || p->x > x2 || p->y < y1 || p->y > y2) {
+				continue;
+			}
+			/* near a handle another finger holds: that band's width */
+			int other = -1;
+			float best = EQ_WIDTH_R;
+
+			for (int o = 0; o < TOUCH_MAX_POINTS; o++) {
+				int b = fing[o].band;
+
+				if (o == s || fing[o].state != F_DRAG || finger_on(b, F_WIDTH) >= 0) {
+					continue;
+				}
+				float d = hypotf((float)p->x - eq_x(nb[b].hz), (float)p->y - eq_y(nb[b].db));
+
+				if (d < best) {
+					best = d;
+					other = o;
+				}
+			}
+			if (other >= 0) {
+				f->state = F_WIDTH;
+				f->band = fing[other].band;
+				f->q0 = nb[f->band].q;
+				f->d0 = MAX(fabsf((float)(p->x - ts.pt[other].x)), 12.0f);
+				continue;
+			}
+			/* otherwise the nearest handle nobody holds */
+			int band = -1;
+
+			best = EQ_GRAB;
+			for (int b = 0; b < MON_BANDS; b++) {
+				if (finger_on(b, F_DRAG) >= 0) {
+					continue;
+				}
+				float d = hypotf((float)p->x - eq_x(nb[b].hz), (float)p->y - eq_y(nb[b].db));
+
+				if (d < best) {
+					best = d;
+					band = b;
+				}
+			}
+			if (band >= 0) {
+				f->state = F_DRAG;
+				f->band = (int8_t)band;
+				f->dx = eq_x(nb[band].hz) - (float)p->x;
+				f->dy = eq_y(nb[band].db) - (float)p->y;
+				eq_touched = true;
+			}
+			continue;
+		}
+		if (f->state == F_DRAG) {
+			int b = f->band;
+			float x = CLAMP((float)p->x + f->dx, (float)PX, (float)(PX + SIG_COLS - 1));
+			float y = CLAMP((float)p->y + f->dy, eq_y(MON_DB_MAX), eq_y(-MON_DB_MAX));
+			float db = (eq_yc() - y) * (MON_DB_MAX / (float)EQ_SPAN);
+
+			nb[b].hz = sig_colf_hz(x - (float)PX);
+			nb[b].db = fabsf(db) < 0.4f ? 0.0f : db; /* a detent at 0 dB: a band can be flattened by finger */
+			changed = true;
+		} else if (f->state == F_WIDTH) {
+			int o = finger_on(f->band, F_DRAG);
+
+			if (o < 0) {
+				f->state = F_IGNORED; /* the first finger lifted: this one is done */
+				continue;
+			}
+			float d = MAX(fabsf((float)(p->x - ts.pt[o].x)), 12.0f);
+
+			nb[f->band].q = f->q0 * f->d0 / d;
+			changed = true;
+		}
+	}
+	if (changed) {
+		for (int b = 0; b < MON_BANDS; b++) {
+			if (memcmp(&nb[b], &mon.band[b], sizeof(nb[b])) != 0) {
+				monitor_set_band(b, nb[b].hz, nb[b].db, nb[b].q);
+			}
+		}
+	}
+}
+
+/* The equalizer over the spectrum: its 0 dB line and scale on the right, its
+ * response, a handle per band (a readout on the held ones), and above it all
+ * what the headphones get. */
+static void draw_eq(const struct raster *r, lv_layer_t *layer)
+{
+	static const int marks[] = {12, 6, -6, -12};
+	int yc = r->box.y1 + SPEC_H_T / 2;
+	uint32_t col = mon.eq ? C_MINT : C_TEXT3;
+	char buf[64], hz[16];
+
+	raster_hline_dash(r, r->box.x1, r->box.x2, yc, C_MINT, 90, 6, 4);
+	for (size_t i = 0; i < ARRAY_SIZE(marks); i++) {
+		int y = yc - marks[i] * EQ_SPAN / (int)MON_DB_MAX;
+
+		raster_fill_a(r, r->box.x2 - 6, y, r->box.x2, y, C_MINT, 160);
+		snprintf(buf, sizeof(buf), "%+d", marks[i]);
+		ui_draw_text(layer, &font_mono_12, C_TEXT3, r->box.x2 - 10 - ui_text_width(&font_mono_12, buf), y - 7,
+			     buf);
+	}
+	ui_draw_text(layer, &font_mono_12, C_TEXT3, r->box.x2 - 46, yc - 15, "EQ 0");
+
+	for (int c = 0; c < SIG_COLS; c++) {
+		int32_t y = yc * RQ_ONE + RQ_ONE / 2 - (int32_t)eq_cdb[c] * (EQ_SPAN * RQ_ONE) / (int32_t)(MON_DB_MAX * 100);
+
+		ybuf2[c] = CLAMP(y, (r->box.y1 + 1) * RQ_ONE, (r->box.y2 - 1) * RQ_ONE);
+	}
+	raster_trace(r, r->box.x1, ybuf2, SIG_COLS, col, 14, mon.eq ? 255 : 160);
+
+	for (int b = 0; b < MON_BANDS; b++) {
+		/* eq_x()/eq_y() are panel coordinates, as the touch is; the box is where the
+		 * pane is drawn */
+		int x = r->box.x1 + (int)(eq_x(mon.band[b].hz) + 0.5f) - PX;
+		int y = r->box.y1 + (int)(eq_y(mon.band[b].db) + 0.5f) - (UI_CONTENT_Y + SPEC_Y);
+		bool held = finger_on(b, F_DRAG) >= 0;
+		int cx = x * RQ_ONE + RQ_ONE / 2, cy = y * RQ_ONE + RQ_ONE / 2;
+
+		if (held) {
+			raster_fill_a(r, x, r->box.y1, x, r->box.y2, col, 90);
+		}
+		raster_ring(r, cx, cy, 11 * RQ_ONE, 2 * RQ_ONE, col, held ? 255 : 170);
+		raster_disc(r, cx, cy, 3 * RQ_ONE, col, 255);
+		snprintf(buf, sizeof(buf), "%d", b + 1);
+		ui_draw_text(layer, &font_mono_12, held ? C_TEXT : C_TEXT2, x - 3, MAX(y - 30, r->box.y1 + 2), buf);
+		if (!held) {
+			continue;
+		}
+		fmt_hz(hz, sizeof(hz), mon.band[b].hz);
+		snprintf(buf, sizeof(buf), "%s  %s  %+.1f dB  Q %.2f", monitor_band_name(b), hz, (double)mon.band[b].db,
+			 (double)mon.band[b].q);
+		int w = ui_text_width(&font_mono_12, buf), tx = x + 18, ty = CLAMP(y - 26, r->box.y1 + 40, r->box.y2 - 18);
+
+		if (tx + w > r->box.x2 - 40) {
+			tx = x - 18 - w;
+		}
+		raster_fill_a(r, tx - 5, ty - 2, tx + w + 4, ty + 14, C_BG2, 225);
+		ui_draw_text(layer, &font_mono_12, C_TEXT, tx, ty, buf);
+	}
+
+	/* what the headphones get, top right */
+	if (!mon.listen) {
+		snprintf(buf, sizeof(buf), "HEADPHONES OFF  TAP LISTEN");
+	} else if (mon.reduce_db < -0.5f) {
+		snprintf(buf, sizeof(buf), "LIMITER %.0f dB  DELAY %u MS", (double)mon.reduce_db,
+			 (unsigned int)((mon.delay_us + 500) / 1000));
+	} else {
+		snprintf(buf, sizeof(buf), "%sDELAY %u MS", mon.eq ? "" : "EQ BYPASSED  ",
+			 (unsigned int)((mon.delay_us + 500) / 1000));
+	}
+	int w = ui_text_width(&font_mono_12, buf);
+
+	ui_draw_text(layer, &font_mono_12, mon.listen ? C_TEXT3 : C_AMBER, r->box.x2 - 8 - w, r->box.y1 + 8, buf);
+
+	if (!eq_touched) {
+		const char *hint = "Drag a point: across is frequency, up and down is gain; a second finger beside it sets the width";
+
+		w = ui_text_width(&font_text_14, hint);
+		ui_draw_text(layer, &font_text_14, C_TEXT2, (r->box.x1 + r->box.x2 - w) / 2, r->box.y2 - 44, hint);
+	}
+}
+
 /* The spectrum, in the upper part of the plot pane (r.box is that part). */
 static void spec_draw(struct raster r, lv_layer_t *layer)
 {
@@ -265,9 +525,9 @@ static void spec_draw(struct raster r, lv_layer_t *layer)
 		ybuf[i] = db_to_y(&r.box, v->col_db[i]);
 		ybuf2[i] = db_to_y(&r.box, v->col_peak[i]);
 	}
-	if (thm_mode) {
-		/* the instrument: a glow under the spectrum, not a fill to the floor (five
-		 * loud voices filled most of the tall pane: 12 ms frames) */
+	if (tall()) {
+		/* the instrument and the monitor: a glow under the spectrum, not a fill to
+		 * the floor (five loud voices filled most of the tall pane: 12 ms frames) */
 		raster_glow(&r, r.box.x1, ybuf, SIG_COLS, 28, r.box.y2 - 1, C_AZURE, 120);
 	} else {
 		raster_area(&r, r.box.x1, ybuf, SIG_COLS, r.box.y1, r.box.y2 - 1, C_AZURE, 110);
@@ -280,6 +540,8 @@ static void spec_draw(struct raster r, lv_layer_t *layer)
 			draw_notes(&r, layer);
 		}
 		draw_voices(&r, layer);
+	} else if (mon_mode) {
+		draw_eq(&r, layer);
 	} else if (cursor_col >= 0) {
 		int x = r.box.x1 + cursor_col;
 
@@ -321,21 +583,22 @@ static void wf_draw(struct raster r)
 	}
 }
 
-/* The split of the plot pane: analyser, or instrument with a tall spectrum.
- * Only these numbers change between the two (no object moves or resizes). */
+/* The split of the plot pane: analyser, or instrument or monitor with a tall
+ * spectrum. Only these numbers change between them (no object moves or
+ * resizes). */
 static int spec_h(void)
 {
-	return thm_mode ? SPEC_H_T : SPEC_H;
+	return tall() ? SPEC_H_T : SPEC_H;
 }
 
 static int wf_off(void)
 {
-	return (thm_mode ? WF_Y_T : WF_Y) - SPEC_Y;
+	return (tall() ? WF_Y_T : WF_Y) - SPEC_Y;
 }
 
 static int wf_h(void)
 {
-	return thm_mode ? WF_H_T : SIG_WF_H;
+	return tall() ? WF_H_T : SIG_WF_H;
 }
 
 /* A part of the pane's raster, rows y1..y2. False if none of it is redrawn. */
@@ -388,8 +651,8 @@ static void plot_touch(lv_event_t *e)
 {
 	int col, row;
 
-	if (thm_mode) {
-		return; /* the theremin reads the touch panel itself, every finger */
+	if (tall()) {
+		return; /* the theremin and the equalizer read the touch panel themselves, every finger */
 	}
 	plot_point(e, &col, &row);
 	if (row < spec_h()) {
@@ -433,11 +696,15 @@ static void source_click(lv_event_t *e)
 	}
 }
 
+/* The header's three middle boxes: WAVE, SNAP and SOUND for the theremin;
+ * GAIN, EQ and LISTEN for the monitor. */
 static void wave_click(lv_event_t *e)
 {
 	ARG_UNUSED(e);
 	if (thm_mode) {
 		theremin_set_wave(thm.wave + 1);
+	} else if (mon_mode) {
+		monitor_set_gain(mon.gain_db >= 40 ? 20 : mon.gain_db + 10); /* +20, +30, +40 dB */
 	}
 }
 
@@ -446,6 +713,16 @@ static void snap_click(lv_event_t *e)
 	ARG_UNUSED(e);
 	if (thm_mode) {
 		theremin_set_snap(!thm.snap);
+	} else if (mon_mode) {
+		monitor_set_eq(!mon.eq);
+	}
+}
+
+static void eq_long(lv_event_t *e)
+{
+	ARG_UNUSED(e);
+	if (mon_mode) {
+		monitor_flat();
 	}
 }
 
@@ -454,21 +731,24 @@ static void sound_click(lv_event_t *e)
 	ARG_UNUSED(e);
 	if (thm_mode) {
 		theremin_set_sound(!thm.sound);
+	} else if (mon_mode) {
+		monitor_set_listen(!mon.listen);
 	}
 }
 
-/* The SOUND switch as it is now: moves only when it changes. */
-static void sound_switch_update(void)
+/* The switch (the theremin's SOUND, the monitor's LISTEN) as it is now:
+ * moves only when it changes. */
+static void switch_update(bool on)
 {
-	if ((int)thm.sound == sound_shown) {
+	if ((int)on == sound_shown) {
 		return;
 	}
-	sound_shown = thm.sound;
-	lv_obj_set_style_bg_color(sw_track, ui_c(thm.sound ? C_MINT : C_LINE2), 0);
-	lv_obj_set_style_bg_color(sw_knob, ui_c(thm.sound ? C_TEXT : C_TEXT2), 0);
-	lv_obj_set_x(sw_knob, thm.sound ? 18 : 2);
-	lv_label_set_text_static(l_sound, thm.sound ? "ON" : "OFF");
-	lv_obj_set_style_text_color(l_sound, ui_c(thm.sound ? C_MINT : C_TEXT2), 0);
+	sound_shown = on;
+	lv_obj_set_style_bg_color(sw_track, ui_c(on ? C_MINT : C_LINE2), 0);
+	lv_obj_set_style_bg_color(sw_knob, ui_c(on ? C_TEXT : C_TEXT2), 0);
+	lv_obj_set_x(sw_knob, on ? 18 : 2);
+	lv_label_set_text_static(l_sound, on ? "ON" : "OFF");
+	lv_obj_set_style_text_color(l_sound, ui_c(on ? C_MINT : C_TEXT2), 0);
 }
 
 static void pill(lv_obj_t *o, uint32_t color)
@@ -540,7 +820,7 @@ static void create(lv_obj_t *root)
 	lv_obj_set_pos(cap_fft, 500, 8);
 	l_fft = ui_label(root, &font_mono_14, C_TEXT, "-");
 	lv_obj_set_pos(l_fft, 500, 22);
-	tap_box(root, 494, 130, snap_click);
+	lv_obj_add_event_cb(tap_box(root, 494, 130, snap_click), eq_long, LV_EVENT_LONG_PRESSED, NULL);
 
 	l_hold = ui_label(root, &font_mono_14, C_MINT, "RUN");
 	lv_obj_align(l_hold, LV_ALIGN_TOP_RIGHT, -PX, 22);
@@ -572,15 +852,18 @@ static void tick(uint32_t now_ms)
 	const struct sig_view *v = sig_view();
 	char buf[40], hz[16];
 
-	/* the instrument while THEREMIN is the source and the screen shows */
-	set_mode(visible && sig_source() == SIG_SRC_THEREMIN);
+	/* the instrument while THEREMIN is the source and the screen shows, the
+	 * monitor with MICROPHONE */
+	int s = sig_source();
+
+	set_mode(!visible ? M_ANALYSER : s == SIG_SRC_THEREMIN ? M_INSTRUMENT : s == SIG_SRC_MIC ? M_MONITOR : M_ANALYSER);
 	if (captions_due) {
-		lv_label_set_text_static(cap_peak, thm_mode ? "SOUND  TAP" : "PEAK");
-		lv_label_set_text_static(cap_level, thm_mode ? "WAVE  TAP" : "LEVEL");
-		lv_label_set_text_static(cap_fft, thm_mode ? "SNAP  TAP" : "1024-PT FFT");
-		show_if(l_peak, !thm_mode);
-		show_if(sw_track, thm_mode);
-		show_if(l_sound, thm_mode);
+		lv_label_set_text_static(cap_peak, thm_mode ? "SOUND  TAP" : mon_mode ? "LISTEN  TAP" : "PEAK");
+		lv_label_set_text_static(cap_level, thm_mode ? "WAVE  TAP" : mon_mode ? "GAIN  TAP" : "LEVEL");
+		lv_label_set_text_static(cap_fft, thm_mode ? "SNAP  TAP" : mon_mode ? "EQ  TAP  HOLD: FLAT" : "1024-PT FFT");
+		show_if(l_peak, !tall());
+		show_if(sw_track, tall());
+		show_if(l_sound, tall());
 		captions_due = false;
 	}
 	if (ghost_by_attract && !shell_in_attract()) {
@@ -589,7 +872,21 @@ static void tick(uint32_t now_ms)
 	}
 	theremin_get(&thm);
 	if (thm_mode) {
-		sound_switch_update();
+		switch_update(thm.sound);
+	} else if (mon_mode) {
+		monitor_get(&mon);
+		eq_touch();
+		monitor_get(&mon); /* with what the fingers just set */
+		if (mon.version != eq_curve_ver) {
+			monitor_curve(&mon, eq_cdb, SIG_COLS);
+			eq_curve_ver = mon.version;
+		}
+		switch_update(mon.listen);
+		if (mon.listen && !shell_in_attract()) {
+			/* someone has the headphones on: no attract mode while they listen
+			 * without touching (it would take the screen and the sound away) */
+			shell_note_input();
+		}
 	}
 
 	lv_obj_invalidate(scope_pane);
@@ -631,6 +928,10 @@ static void tick(uint32_t now_ms)
 	if (thm_mode) {
 		lv_label_set_text_static(l_level, theremin_wave_name(thm.wave));
 		lv_label_set_text_static(l_fft, thm.snap ? "SEMITONES" : "OFF");
+	} else if (mon_mode) {
+		snprintf(buf, sizeof(buf), "%+d dB", mon.gain_db);
+		lv_label_set_text(l_level, buf);
+		lv_label_set_text_static(l_fft, mon.eq ? "ON" : "BYPASSED");
 	} else {
 		snprintf(buf, sizeof(buf), "%.1f dBFS", (double)v->rms_db);
 		lv_label_set_text(l_level, buf);
@@ -639,40 +940,77 @@ static void tick(uint32_t now_ms)
 	}
 }
 
-/* Analyser or instrument. Cheap, so it may run in show() and hide() (inside a
- * screen switch's time budget): no LVGL object moves or resizes, the plot
- * pane's draw handler splits its area by thm_mode, and the two captions that
- * change are relabelled by tick(). Resizing panes and moving labels instead
- * cost 2.1 ms of switch time, and an attract lap dropped a frame on it. */
-static void set_mode(bool t)
+/* One owner of the audio output at a time: the one leaving fades out and lets
+ * go first, and only then does the other take it. Taking it at once would
+ * cut the fade off and leave the one leaving waiting for a fade that never
+ * runs. Every frame, from set_mode(). */
+static void audio_owner(void)
 {
-	if (t == thm_mode) {
-		return;
-	}
-	thm_mode = t;
-	captions_due = true;
-	cursor_col = -1;
-	lv_obj_add_flag(l_cursor, LV_OBJ_FLAG_HIDDEN);
-	if (t) {
-		/* the spectrum's part of the pane, in panel coordinates */
-		int x1 = PX, y1 = UI_CONTENT_Y + SPEC_Y;
+	struct thm_status st;
 
-		theremin_set_field(x1, y1, x1 + SIG_COLS - 1, y1 + SPEC_H_T - 1, MAX(x1, EDGE),
-				   MIN(x1 + SIG_COLS - 1, GFX_W - 1 - EDGE));
+	if (!thm_mode) {
+		theremin_enable(false); /* a short fade, then the output is given back */
 	}
-	theremin_enable(t); /* off: a short fade, then the output is given back */
+	if (!mon_mode) {
+		monitor_enable(false);
+	}
+	theremin_get(&st);
+	if (thm_mode && !monitor_enabled()) {
+		theremin_enable(true);
+	}
+	if (mon_mode && !st.enabled) {
+		monitor_enable(true);
+	}
+}
+
+/* Analyser, instrument or monitor. Cheap, so it may run in show() and hide()
+ * (inside a screen switch's time budget): no LVGL object moves or resizes,
+ * the plot pane's draw handler splits its area by the mode, and the captions
+ * that change are relabelled by tick(). Resizing panes and moving labels
+ * instead cost 2.1 ms of switch time, and an attract lap dropped a frame on
+ * it. */
+static void set_mode(int m)
+{
+	bool t = m == M_INSTRUMENT, mo = m == M_MONITOR;
+
+	if (t != thm_mode || mo != mon_mode) {
+		if (mon_mode && !mo) {
+			monitor_set_listen(false); /* the headphones are off whenever the monitor comes back */
+		}
+		thm_mode = t;
+		mon_mode = mo;
+		captions_due = true;
+		sound_shown = -1;
+		cursor_col = -1;
+		lv_obj_add_flag(l_cursor, LV_OBJ_FLAG_HIDDEN);
+		if (t) {
+			/* the spectrum's part of the pane, in panel coordinates */
+			int x1 = PX, y1 = UI_CONTENT_Y + SPEC_Y;
+
+			theremin_set_field(x1, y1, x1 + SIG_COLS - 1, y1 + SPEC_H_T - 1, MAX(x1, EDGE),
+					   MIN(x1 + SIG_COLS - 1, GFX_W - 1 - EDGE));
+		}
+		if (mo) {
+			eq_fresh = true;
+			eq_touched = false;
+			eq_curve_ver = UINT32_MAX;
+		}
+	}
+	audio_owner();
 }
 
 static void show(void)
 {
+	int s = sig_source();
+
 	visible = true;
-	set_mode(sig_source() == SIG_SRC_THEREMIN);
+	set_mode(s == SIG_SRC_THEREMIN ? M_INSTRUMENT : s == SIG_SRC_MIC ? M_MONITOR : M_ANALYSER);
 }
 
 static void hide(void)
 {
 	visible = false;
-	set_mode(false);
+	set_mode(M_ANALYSER);
 	if (ghost_by_attract) {
 		theremin_ghost(false);
 		ghost_by_attract = false;
@@ -694,13 +1032,14 @@ static void attract_start(void)
 	sig_set_source(SIG_SRC_THEREMIN);
 	theremin_ghost(true);
 	ghost_by_attract = true;
-	set_mode(true);
+	set_mode(M_INSTRUMENT);
 }
 
 static void service(uint32_t now_ms)
 {
 	sig_service(now_ms);
 	theremin_service();
+	monitor_service();
 }
 
 static void mini(const struct raster *r)

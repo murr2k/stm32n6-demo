@@ -4,6 +4,7 @@
 Visits every screen, lets it run, records frame statistics and a screenshot,
 then exercises the multi-touch paths with injected contacts (Touch Lab,
 Explorer, Core Map), plays Signal Lab's theremin and records its sound,
+drags the microphone monitor's equalizer bands,
 checks that touch releases never change screen, runs a
 set of screen transitions, audio and video playback from flash, an upload to
 the microSD card with playback and seeks from it, and one lap of attract
@@ -99,7 +100,7 @@ def media_tests(host: str) -> None:
     time.sleep(4.0)
     a1, t1 = kv(host, "audio"), time.time()
     if a1.get("ok"):
-        rate = (a1["blocks"] - a0["blocks"]) * 512 / (t1 - t0)
+        rate = (a1["blocks"] - a0["blocks"]) * a1.get("block_frames", 512) / (t1 - t0)
         print(f"audio: DAC clock {rate / 1000:.2f} kHz (nominal 48.00), underruns {int(a1['errors'])}")
     else:
         print("audio: not running")
@@ -202,6 +203,61 @@ def theremin_test(host: str) -> None:
     print(f"theremin: off the top {above[2]} Hz, {above[3]} dB (held {above[1]}); past the left end {past[2]} Hz, "
           f"{past[3]} dB; down off the field, slid on: held {stray[1]} (0 expected); SOUND off: playing "
           f"{shown[1]} at {shown[3]} dB, DAC peak {max((abs(l) for l, _ in muted), default=0)} (0 expected)")
+
+
+def monitor_test(host: str) -> None:
+    """Signal Lab's microphone monitor and its equalizer, with nothing to hear
+    (no headphones needed): with MICROPHONE the monitor takes the audio output
+    and keeps its read distance (no resync); a handle dragged by an injected
+    finger moves its band (up is gain, across is frequency); a second finger
+    beside it sets the width; a finger that comes down off the field moves
+    nothing; the curve and handles cost no frame; leaving the screen gives the
+    output back with LISTEN off."""
+    def mon() -> dict[str, str]:
+        return {k: v for k, v in re.findall(r"(\w+)=([-\w/]+)", send(host, ["mon"])[0])}
+
+    def band(st: dict[str, str], b: int) -> tuple[int, ...]:
+        return tuple(int(x) for x in st[f"b{b}"].split("/"))  # Hz, dB x10, Q x100
+
+    def x_of(hz: float) -> int:  # panel x of a frequency: the pane starts at x 16, 768 columns, 20 Hz..20 kHz
+        return round(16 + math.log(hz / 20) / math.log(1000) * 767)
+
+    siglab = SCREENS.index("siglab")
+    send(host, [f"screen {siglab}", "sleep 1.2", "sigsrc 1", "sleep 1.0", "monreset", "moneq 1", "monlisten 0",
+                "mongain 30", "sleep 0.3"])
+    # handle 3 (PEAK 3, 1500 Hz, 0 dB): the EQ's 0 dB line is the middle of the 252 px spectrum from y 144;
+    # 110 px is 15 dB
+    x0, y0 = x_of(1500), 144 + 126
+    drag = [c for i in range(1, 31) for c in (f"touch 0 {x0 + 2 * i} {y0 - round(55 * i / 30)} 1", "sleep 0.03")]
+    send(host, ["reset"])
+    g0 = stats(host)
+    send(host, [f"touch 0 {x0} {y0} 1", "sleep 0.05"] + drag + ["sleep 0.2"])
+    dragged = band(mon(), 2)
+    # a second finger 40 px to the right of the held handle, spread to 80 px: half the Q
+    send(host, [f"touch 1 {x0 + 100} {y0 - 55} 1", "sleep 0.1", f"touch 1 {x0 + 120} {y0 - 55} 1", "sleep 0.05",
+                f"touch 1 {x0 + 140} {y0 - 55} 1", "sleep 0.2"])
+    widened = band(mon(), 2)
+    send(host, [f"touch 1 {x0 + 140} {y0 - 55} 0", "sleep 0.05", f"touch 0 {x0 + 60} {y0 - 55} 0", "sleep 0.3"])
+    # a finger that comes down over the scope and slides onto the handle
+    send(host, [f"touch 0 {x0 + 60} 110 1", "sleep 0.1", f"touch 0 {x0 + 60} {y0 - 55} 1", "sleep 0.1",
+                f"touch 0 {x0 + 60} {y0 - 90} 1", "sleep 0.2"])
+    stray = band(mon(), 2)
+    send(host, [f"touch 0 {x0 + 60} {y0 - 90} 0", "sleep 0.3"])
+    g1 = stats(host)
+    m = mon()
+    grab(host).save(OUT / f"{siglab}-siglab-monitor.png")
+    # leave with LISTEN on (gain 0 dB: no feedback through headphones lying by the board)
+    send(host, ["mongain 0", "monlisten 1", "sleep 0.3", "screen 0", "sleep 0.6"])
+    left = mon()
+    send(host, ["mongain 30", "monreset", f"screen {siglab}", "sleep 1.0", "sigsrc 0", "sleep 0.3"])
+    hz, db, q = dragged
+    want_hz = 1500 * 1000 ** (60 / 767)
+    print(f"monitor: read distance {m['lag']} samples (min {m['lag_min']}, max {m['lag_max']}), resyncs {m['resyncs']}, "
+          f"delay {int(m['delay_us']) / 1000:.1f} ms, DSP worst {m['dsp_worst_us']} us a block; a dragged handle: "
+          f"{hz} Hz, {db / 10:+.1f} dB (expected {want_hz:.0f} Hz, +7.5 dB); a second finger: Q {widened[2] / 100:.2f} "
+          f"(expected 0.50); a finger from off the field: {'moved nothing' if stray == widened else f'moved it to {stray}'}; "
+          f"frame worst {g1['render_worst_us'] / 1000:.2f} ms, dropped {int(g1['dropped'] - g0['dropped'])}; after "
+          f"leaving: output taken {left['enabled']} (0 expected), LISTEN {left['listen']} (0 expected)")
 
 
 def media(host: str) -> dict[str, int]:
@@ -520,6 +576,7 @@ def run(a: argparse.Namespace) -> None:
     if not a.no_touch:
         touch_tests(a.host)
         theremin_test(a.host)
+        monitor_test(a.host)
     transition_test(a.host)
     if not a.no_media:
         media_tests(a.host)

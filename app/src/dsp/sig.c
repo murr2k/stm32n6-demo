@@ -13,6 +13,7 @@
 #include "platform/gfx.h"
 #include "platform/mic.h"
 #include "platform/psram.h"
+#include "monitor.h"
 #include "sig.h"
 #include "theremin.h"
 
@@ -22,7 +23,8 @@
 #define TWO_PI      6.28318530718f
 
 /* The sample rate the analysis assumes: nominal for the generator (it makes
- * its own samples at 48 kHz), the DAC's measured rate for the theremin. */
+ * its own samples at 48 kHz), the DAC's measured rate for the theremin and
+ * the microphone (which runs from the DAC's clock: 47.7 kHz, not 48). */
 static float fs_now = SIG_FS;
 #define BIN_HZ (fs_now / SIG_FFT)
 
@@ -140,6 +142,7 @@ void sig_init(void)
 	}
 	set_rate(SIG_FS);
 	theremin_init();
+	monitor_init();
 	for (int c = 0; c < SIG_COLS; c++) {
 		col_db[c] = col_peak[c] = SIG_DB_MIN;
 	}
@@ -188,6 +191,52 @@ static bool take_microphone(void)
 	return any;
 }
 
+/* ---- the microphone monitor: what it sends to the headphones ---------------
+ * While it runs (Signal Lab showing with MICROPHONE), the analysis reads its
+ * output, gain and equalizer included, so the spectrum shows what is heard.
+ */
+static uint32_t mon_at;
+static bool from_monitor;
+
+static bool take_monitor(void)
+{
+	static int16_t tmp[256];
+	uint32_t end = monitor_total();
+	bool any = false;
+
+	if (end - mon_at > RING / 2) {
+		mon_at = end - RING / 2;
+	}
+	while (mon_at != end) {
+		uint32_t n = monitor_copy(mon_at, tmp, MIN(end - mon_at, (uint32_t)ARRAY_SIZE(tmp)));
+
+		if (n == 0) {
+			mon_at = end;
+			break;
+		}
+		for (uint32_t i = 0; i < n; i++) {
+			ring[ring_w++ & (RING - 1)] = tmp[i];
+		}
+		mon_at += n;
+		any = true;
+	}
+	return any;
+}
+
+/* The source's caption: the gain is the monitor's while it runs, the fixed
+ * +30 dB of take_microphone() otherwise. */
+static const char *mic_caption(void)
+{
+	static const char *const cap[] = {"MICROPHONE  +20 dB", "MICROPHONE  +30 dB", "MICROPHONE  +40 dB"};
+	struct mon_status st;
+
+	if (!from_monitor) {
+		return cap[1];
+	}
+	monitor_get(&st);
+	return st.gain_db <= 20 ? cap[0] : st.gain_db >= 40 ? cap[2] : cap[1];
+}
+
 /* ---- theremin: what it sent to the DAC ------------------------------------ */
 static uint32_t thm_at;
 
@@ -224,8 +273,10 @@ void sig_set_source(int src)
 	source = src;
 	mic_at = mic_total();
 	thm_at = theremin_total();
-	set_rate(src == SIG_SRC_THEREMIN ? theremin_rate() : SIG_FS);
-	view.source = src == SIG_SRC_MIC        ? "MICROPHONE  +30 dB"
+	mon_at = monitor_total();
+	from_monitor = false;
+	set_rate(src == SIG_SRC_GENERATOR ? SIG_FS : theremin_rate());
+	view.source = src == SIG_SRC_MIC        ? mic_caption()
 		      : src == SIG_SRC_THEREMIN ? "THEREMIN  TOUCH TO PLAY"
 						: "SIGNAL GENERATOR";
 	for (int c = 0; c < SIG_COLS; c++) {
@@ -361,7 +412,19 @@ void sig_service(uint32_t now_ms)
 		return;
 	}
 	if (source == SIG_SRC_MIC) {
-		if (!take_microphone()) {
+		bool m = monitor_running();
+
+		if (m != from_monitor) {
+			/* the monitor started or stopped: read from the other one, from now */
+			from_monitor = m;
+			mon_at = monitor_total();
+			mic_at = mic_total();
+		}
+		view.source = mic_caption();
+		if (fabsf(theremin_rate() - fs_now) > 1.0f) {
+			set_rate(theremin_rate());
+		}
+		if (!(m ? take_monitor() : take_microphone())) {
 			return;
 		}
 	} else if (source == SIG_SRC_THEREMIN) {

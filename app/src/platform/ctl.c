@@ -3,6 +3,7 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +18,7 @@
 #include "audio.h"
 #include "ctl.h"
 #include "dsp/dataset.h"
+#include "dsp/monitor.h"
 #include "dsp/sig.h"
 #include "dsp/theremin.h"
 #include "media/player.h"
@@ -189,6 +191,53 @@ static int handle(char *line, char *out, size_t out_len)
 					(int)(st.v[v].hz + 0.5f), (int)(st.v[v].db - 0.5f));
 		}
 		return len + snprintf(out + len, out_len - len, "\n");
+	} else if (!strncmp(cmd, "mon", 3)) {
+		/* the microphone monitor (Signal Lab with MICROPHONE): monlisten <0|1>,
+		 * mongain <dB>, moneq <0|1>, monband <band 0..4> <Hz> <dB x10> <Q x100>,
+		 * monflat, monreset, montone <Hz> [dBFS x10] (the test tone; 0 ends it);
+		 * "mon" and each of them reply with the state */
+		struct mon_status st;
+
+		if (!strcmp(cmd, "montone") && n >= 2) {
+			monitor_tone((float)a[0], n >= 3 ? (float)a[1] / 10.0f : -20.0f);
+		} else if (!strcmp(cmd, "monlisten") && n >= 2) {
+			monitor_set_listen(a[0] != 0);
+		} else if (!strcmp(cmd, "mongain") && n >= 2) {
+			monitor_set_gain(a[0]);
+		} else if (!strcmp(cmd, "moneq") && n >= 2) {
+			monitor_set_eq(a[0] != 0);
+		} else if (!strcmp(cmd, "monband") && n >= 5) {
+			monitor_set_band(a[0], (float)a[1], (float)a[2] / 10.0f, (float)a[3] / 100.0f);
+		} else if (!strcmp(cmd, "monflat")) {
+			monitor_flat();
+		} else if (!strcmp(cmd, "monreset")) {
+			monitor_reset();
+		} else if (strcmp(cmd, "mon")) {
+			return snprintf(out, out_len, "err mon, monlisten, mongain, moneq, monband, monflat, monreset\n");
+		}
+		monitor_get(&st);
+		int len = snprintf(out, out_len,
+				   "ok enabled=%d listen=%d eq=%d gain_db=%d blocks=%u resyncs=%u lag=%u lag_min=%u "
+				   "lag_max=%u delay_us=%u dsp_us=%u dsp_worst_us=%u reduce_db10=%d limited=%u",
+				   st.enabled, st.listen, st.eq, st.gain_db, st.blocks, st.resyncs, st.lag,
+				   st.lag_min == UINT32_MAX ? 0 : st.lag_min, st.lag_max, st.delay_us, st.dsp_us,
+				   st.dsp_worst_us, (int)(st.reduce_db * 10.0f), st.limited);
+
+		for (int b = 0; b < MON_BANDS; b++) {
+			len += snprintf(out + len, out_len - len, " b%d=%d/%d/%d", b, (int)(st.band[b].hz + 0.5f),
+					(int)lroundf(st.band[b].db * 10.0f), (int)lroundf(st.band[b].q * 100.0f));
+		}
+		if (st.tone_hz > 0.0f) {
+			/* the test tone: in the microphone before and after the equalizer,
+			 * the gain measured between them, and the curve's gain there */
+			len += snprintf(out + len, out_len - len,
+					" tone_hz=%d tone_db10=%d pre_db10=%d post_db10=%d eq_db10=%d curve_db10=%d",
+					(int)(st.tone_hz + 0.5f), (int)lroundf(st.tone_db * 10.0f),
+					(int)lroundf(st.tone_pre_db * 10.0f), (int)lroundf(st.tone_post_db * 10.0f),
+					(int)lroundf((st.tone_post_db - st.tone_pre_db) * 10.0f),
+					(int)lroundf((st.eq ? monitor_response_db(&st, st.tone_hz) : 0.0f) * 10.0f));
+		}
+		return len + snprintf(out + len, out_len - len, "\n");
 	} else if (!strcmp(cmd, "micbits") && n >= 4) {
 		return mic_bitbang(a[0], a[1], a[2], a[3], out, out_len);
 	} else if (!strcmp(cmd, "micscope") && n >= 2) {
@@ -256,8 +305,8 @@ static int handle(char *line, char *out, size_t out_len)
 		uint32_t blocks, errors;
 
 		audio_get_counters(&blocks, &errors);
-		return snprintf(out, out_len, "ok=%d blocks=%u errors=%u uptime_ms=%u\n", audio_ok(), blocks, errors,
-				k_uptime_get_32());
+		return snprintf(out, out_len, "ok=%d blocks=%u block_frames=%u errors=%u uptime_ms=%u\n", audio_ok(), blocks,
+				(unsigned int)AUDIO_BLOCK_FRAMES, errors, k_uptime_get_32());
 	} else if (!strcmp(cmd, "video")) {
 		struct player_status st;
 

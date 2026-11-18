@@ -39,7 +39,7 @@
 
 LOG_MODULE_REGISTER(audio, LOG_LEVEL_INF);
 
-#define HALF_FRAMES AUDIO_BLOCK_FRAMES          /* 512 frames: 10.7 ms */
+#define HALF_FRAMES AUDIO_BLOCK_FRAMES          /* 128 frames: 2.7 ms */
 #define HALF_WORDS  (HALF_FRAMES * 2)           /* 16-bit samples per half */
 #define MCLK_HZ     12288000                    /* 256 x 48 kHz, IC7 = PLL2 / 125 */
 

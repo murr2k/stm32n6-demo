@@ -8,7 +8,7 @@
  * it comes down on the field until it lifts: off the field's top or bottom it
  * keeps its last level. The synthesizer is the audio output's
  * source while it is enabled and reads the touch state itself at the start of
- * each 512-frame block, from the audio thread: a touch reaches the sound in
+ * each audio block (AUDIO_BLOCK_FRAMES), from the audio thread: a touch reaches the sound in
  * one or two blocks, not through the UI frame. Every change is a ramp (pitch
  * glides in log frequency, levels follow, a lift decays), so the sound never
  * steps. What it plays is kept in a ring for Signal Lab's analysis.

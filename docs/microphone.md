@@ -1,13 +1,16 @@
 # The onboard microphone (U13): findings and sources
 
-**Result:** on this board (STM32N6570-DK, MB1939 C-02) the onboard PDM
-microphone U13 (ST MP23DB01HP) has stopped hearing. It still runs: it takes
-its clock, drives its data line and sleeps when the clock stops, but its bit
+**Result:** on the first board (STM32N6570-DK, MB1939 C-02) the onboard PDM
+microphone U13 (ST MP23DB01HP) stopped hearing. It still runs: it takes its
+clock, drives its data line and sleeps when the clock stops, but its bit
 stream holds only noise, about 50 dB above the part's own floor, and nothing
-it hears. The firmware is cleared: ST's own unmodified example gives the same
-on this board today, and the same binary passed taps clearly in May. A
-replacement DK is the plan; the checks below say what to look at on the old
-board before reworking it.
+it hears. The firmware is cleared:
+- ST's own unmodified example gives the same noise on that board today, and
+  the same binary passed taps clearly in May.
+- On a replacement DK of the same revision, this firmware hears at once,
+  unchanged (2026-11-17): quiet at -96 dBFS, claps 41 to 63 dB above it.
+
+The checks below say what to look at on the old board before reworking it.
 
 ## What was measured
 
@@ -20,6 +23,8 @@ board before reworking it.
 | 2026-11-17 | capture chain self-test (`micinject`): U13 asleep, a square wave made with PE8's own pulls | right frequency and harmonics, digital zero for a held line; with U13 clocked its output overrides the wave |
 | 2026-11-17 | synthetic microphone (`micpdm`): a sine through a sigma-delta modulator, put on PE8 by DMA | decoded and shown on Signal Lab; distortion from PE8's slow line only |
 | 2026-11-17 | ST's MDF_AudioRecorder again, the May build, loaded into RAM | constant hiss in the headphones that nothing changes (by ear), its buffer the same in quiet, taps and claps |
+| 2026-11-17 | **replacement DK** (MB1939 C-02), this firmware unchanged (normal SPI mode, Sinc5 / 16), claps and taps with spoken prompts | quiet -96 dBFS (median of 10 ms windows; the old board: -60), claps up to -8.5 dBFS peak and 41 to 63 dB above quiet per band, fingernail taps 35 to 57 dB, back to the floor afterwards |
+| 2026-11-17 | the same in low-frequency master mode (`mictune 1 1 1 4 5 16 1 0 0 3`, since then the default) | the same within how much claps vary: quiet -96.7 dBFS, claps 44 to 62 dB, taps 35 to 58 dB, 0 errors |
 
 ## The board around U13 (MB1939 C-02, schematic sheet 16)
 
@@ -55,11 +60,14 @@ board before reworking it.
 
 ## On the replacement board
 
-- `ctl.py "sigsrc 1" mic` and Signal Lab show the microphone at once; a tap
-  must show. `acap.py --mic` records it.
-- Fix the default MDF setting first: the processing clock is exactly 4 times
-  the microphone clock in normal SPI mode, and RM0486 asks for more than 4
-  (low-frequency master mode, `mictune 1 ...`, keeps 3.072 MHz and 48 kHz).
+- Checked on 2026-11-17 (see the table above): it hears, with the firmware
+  as it was.
+- Low-frequency master mode is now the default, and it records the same.
+  - Why: in normal SPI mode the processing clock was exactly 4 times the
+    microphone clock, and RM0486 asks for more than 4.
+  - It keeps 3.072 MHz and 48 kHz.
+- `ctl.py "sigsrc 1" mic` and Signal Lab show the microphone; `acap.py --mic`
+  records it.
 - The bring-up commands stay: `mictune`, `mcap`, `micbits`, `micscope`,
   `micprobe`, `micinject`, `micpdm` (`app/src/platform/mic.h`).
 

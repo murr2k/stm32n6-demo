@@ -16,6 +16,10 @@
 #include <stdint.h>
 
 #define MIC_RATE 48000 /* nominal; see audio.h for the real figure of this clock */
+/* Samples per DMA half, handed over at once: 128 is 2.7 ms. The newest
+ * samples wait for their half to complete, so this is the capture's share of
+ * the delay from the microphone to the headphones (dsp/monitor.h). */
+#define MIC_BLOCK 128
 
 struct mic_status {
 	bool ok;
@@ -46,7 +50,7 @@ uint32_t mic_copy(uint32_t from, int32_t *dst, uint32_t n);
  * divider, microphone clock divider, sinc order (4/5), CIC decimation, gain
  * step, kernel clock (0 IC7, 1 HCLK, 2 HSI, 3 CLKP, 4 IC8, 5 MSI), pull on the
  * data pin (0 none, 1 up, 2 down), drive strength of the clock pin (0..3).
- * The defaults are 0 1 1 4 5 16 1 0 0 3. n = 0 only reports the settings and
+ * The defaults are 1 1 1 4 5 16 1 0 0 3. n = 0 only reports the settings and
  * the filter's registers. The output rate is kernel clock / processing
  * divider / microphone clock divider / (4 x decimation).
  */

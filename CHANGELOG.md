@@ -7,7 +7,78 @@ them.
 
 ## 2026-11-17
 
+### Fixed
+
+- **A dropped frame in Flight Deck's fade-in, at the same point of the
+  attract lap**, twice in a 9-hour soak test. The new screen's settle moved
+  its objects, so LVGL redrew the whole screen on every frame of the fade-in
+  (9 to 13 ms on Flight Deck, while visible), and Flight Deck's label updates
+  landing on one of those frames forced a layout of the moving screen
+  (up to 4.4 ms). The settle is now done by the display controller (below):
+  0 drops in the same attract laps, and the least margin before a swap went
+  from 1.8 ms over to 2.2 ms spare.
+
+### Changed
+
+- **Audio blocks of 128 frames (2.7 ms) instead of 512**, for the output
+  and the microphone. The microphone reaches the headphones 8.7 ms after
+  it hears something (35 ms before), and the theremin's touch to sound is
+  3.8 ms, worst 4.8 (was 11 to 21 ms). The tour has 0 underruns with them,
+  card upload and attract lap included.
+- Signal Lab's microphone spectrum uses the DAC's measured rate (47.7 kHz,
+  the same clock): its frequency axis read 0.6 % high.
+- **The microphone works on the replacement DK**: Signal Lab's microphone
+  source shows real sound (claps 41 to 63 dB above a quiet room at
+  -96 dBFS). The first board's onboard microphone had failed; the firmware
+  was unchanged. The MDF now samples in low-frequency master mode, which
+  RM0486 asks for at this clock ratio and which records the same.
+- Host tools default to the replacement board's console, COM18
+  (`N6_PORT` sets another).
+- The settle of a screen change (10 px upwards while it fades in) is the
+  LTDC layer's window position, like the fade, so it costs no render time.
+  The title bar settles with the screen now.
+- Frames are swapped by the application instead of Zephyr's display driver:
+  about 1 ms more for every frame on every screen. The driver cleaned the
+  data cache line by line over the whole 1.5 MB buffer before every swap
+  (0.54 ms, nearly all of it a loop over clean lines) and swapped at line 0;
+  a clean of the whole cache takes 25 µs, and a frame handed over during the
+  vertical blanking still makes the next refresh.
+
 ### Added
+
+- **Listen to the microphone, with a parametric equalizer under your
+  fingers** (Signal Lab, MICROPHONE source).
+  - LISTEN sends the microphone to the headphones (off whenever the screen
+    shows); GAIN steps +20, +30 and +40 dB; EQ puts the equalizer in or
+    bypasses it (held: all bands flat).
+  - Five bands (low shelf, three peaks, high shelf) are handles on the
+    spectrum: drag across for frequency, up and down for gain (±15 dB), and
+    a second finger beside a held handle sets its width.
+  - The spectrum shows what is heard, with the curve over it. A limiter at
+    −6 dBFS guards the ears. Attract mode does not start while LISTEN is on.
+  - Remote control: `ctl.py mon`, `monlisten`, `mongain`, `moneq`,
+    `monband`, `monflat`, `monreset`.
+  - `montone` is a closed-loop test: with headphones by the board it plays a
+    tone into them and measures it in the microphone before and after the
+    equalizer. The measured gain matched the curve within 0.2 dB in ten
+    cases.
+  - The tour drags a band with two fingers and checks that leaving the
+    screen gives the output back with LISTEN off.
+- `tools/soak.py`: the board left running for hours (attract mode and the
+  camera with both networks in turn), polled every second, with a summary
+  of resets, faults, leaks, frame-time drift and every dropped frame.
+  First run, 9 hours: no reset or fault, LVGL pool, heap and PSRAM flat,
+  frame times unchanged, 2 dropped frames (fixed above).
+- Frame diagnostics: `ctl.py swtrace` (each frame of the last screen
+  transition: switch time, main loop, LVGL, other threads, margin before
+  the swap deadline, the layer's fade), `droptrace` (the same for the frames
+  up to the last dropped one), `svct` (the main loop's time per screen
+  service and tick), `mem` and `stacks` (heap, LVGL pool, PSRAM, stack left
+  per thread); `stats` adds `margin_min_us` and `late_swaps`.
+- `docs/best-practices.md`: what this project had to figure out about the
+  STM32N6570-DK, its display and Zephyr (flashing, memory, the HAL beside
+  Zephyr, presenting frames, LVGL, touch, audio, card, network, camera, NPU),
+  for developers starting their own project on the board.
 
 - **A theremin on Signal Lab**: a third source (SOURCE cycles generator,
   microphone, theremin) turns the spectrum into an instrument. A fingertip

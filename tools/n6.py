@@ -38,7 +38,7 @@ BOARD = "stm32n6570_dk"
 BUILD = ROOT / "build"
 FLASH_BASE = 0x70000000
 MCUBOOT_RAM_ADDR = 0x34180400
-DEFAULT_PORT = os.environ.get("N6_PORT", "COM17")
+DEFAULT_PORT = os.environ.get("N6_PORT", "COM18")
 
 # No "ap=" option: with ap=1 this probe/chip revision refuses to connect.
 CONNECT = ["-c", "port=swd", "mode=HOTPLUG"]

@@ -42,7 +42,7 @@
 
 LOG_MODULE_REGISTER(mic, LOG_LEVEL_INF);
 
-#define HALF      512 /* samples per DMA half: 10.7 ms */
+#define HALF      MIC_BLOCK /* samples per DMA half */
 #define DMA_WORDS (2 * HALF)
 /* AHBSRAM1: the audio output has 0x0000 (buffer) and 0x1000 (node) */
 #define dma_buf   ((int32_t *)(SRAM1_AHB_BASE_S + 0x2000))
@@ -146,15 +146,15 @@ static void mic_thread(void *p1, void *p2, void *p3)
 		if (++n_blocks == 1) {
 			t_mark = now;
 			n_mark = 1;
-		} else if (n_blocks - n_mark >= 94) { /* about a second */
+		} else if (n_blocks - n_mark >= MIC_RATE / HALF) { /* about a second */
 			rate_hz = (uint32_t)((uint64_t)(n_blocks - n_mark) * HALF * 1000000 / (now - t_mark));
 			t_mark = now;
 			n_mark = n_blocks;
 		}
 	}
 }
-/* Cooperative, just below the audio output's refill: a 2 KB copy every 10.7 ms
- * that has to happen before the DMA comes round again.
+/* Cooperative, just below the audio output's refill: a 512-byte copy every
+ * 2.7 ms that has to happen before the DMA comes round again.
  */
 K_THREAD_DEFINE(mic_tid, 2048, mic_thread, NULL, NULL, NULL, K_PRIO_COOP(3), 0, 0);
 
@@ -218,6 +218,12 @@ static int dma_setup(void)
 
 /* The settings that decide whether the bit stream is read properly; the rest
  * is fixed. mic_tune() restarts the capture with other values (bring-up).
+ *
+ * Low-frequency master mode: the MDF samples the data line with its own
+ * processing clock. In normal SPI mode the processing clock would be exactly
+ * 4 times the microphone clock here (12.288 / 3.072 MHz), and RM0486 asks for
+ * more than 4. Both recorded the same on a working board (2026-11-17, quiet
+ * -96 dBFS, claps 41 to 63 dB above it); this one is within the rules.
  */
 static struct {
 	int lf_master; /* serial interface in low-frequency master mode, not "normal SPI" */
@@ -232,7 +238,7 @@ static struct {
 	int speed;     /* drive strength of the clock pin, 0 (slow edges) to 3 */
 	int hpf;       /* high-pass filter: 1 on, 0 bypassed (to see the DC level) */
 	int rsf;       /* reshape filter: 1 on (/4), 0 bypassed */
-} cfg = {.lf_master = 0, .falling = 1, .proc_div = 1, .cck_div = 4, .sinc = 5, .dec = 16, .gain = 1, .speed = 3, .hpf = 1, .rsf = 1};
+} cfg = {.lf_master = 1, .falling = 1, .proc_div = 1, .cck_div = 4, .sinc = 5, .dec = 16, .gain = 1, .speed = 3, .hpf = 1, .rsf = 1};
 
 static int start(void)
 {
