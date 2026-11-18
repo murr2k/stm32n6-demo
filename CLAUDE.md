@@ -359,8 +359,10 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   laps under the soak's load: the tightest frames are first frames in the
   dark, Explorer's after Signal Lab the tightest (switch 1.5 to 2.1 ms, main
   loop 1.8 to 2.2, LVGL 10 to 13.3 ms: it can still miss now and then,
-  unseen). Signal Lab's analysis runs in its `service` on every frame on
-  every screen, for Home's thumbnail: 0.8 ms mean, 2.9 ms worst.
+  unseen). Signal Lab's analysis (about 1.2 ms a frame) runs in its
+  `service` only while Signal Lab or Home (its thumbnail) shows; on every
+  screen it had cost each of them 0.8 ms mean, 2.9 ms worst (5 to 9 us
+  since, 2026-11-17).
 - **A screenshot (`shot.py`, tcp/5555) costs the UI one frame.** **Why:** the
   1.5 MB copy to PSRAM takes about 18 ms. Never grab inside a window whose
   dropped-frame count is being measured (tour.py reads the stats first).

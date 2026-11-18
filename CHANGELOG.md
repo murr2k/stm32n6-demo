@@ -20,6 +20,9 @@ them.
 
 ### Changed
 
+- Signal Lab's analysis runs only while Signal Lab or Home (its thumbnail)
+  shows: every other screen has about 0.8 ms more a frame (2.9 ms at
+  worst).
 - **Audio blocks of 128 frames (2.7 ms) instead of 512**, for the output
   and the microphone. The microphone reaches the headphones 8.7 ms after
   it hears something (35 ms before), and the theremin's touch to sound is
