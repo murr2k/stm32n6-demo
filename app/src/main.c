@@ -83,7 +83,10 @@ int main(void)
 		default:
 			break;
 		}
+		uint32_t t0 = gfx_now_us();
+
 		tele_poll(k_uptime_get_32());
+		shell_cost_tele(gfx_now_us() - t0);
 		shell_tick();
 		gfx_run_frame();
 	}

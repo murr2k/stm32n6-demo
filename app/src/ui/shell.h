@@ -40,6 +40,13 @@ void shell_init(const struct screen *const *screens, int count);
 /* Once per frame slot from the UI loop, before LVGL runs. */
 void shell_tick(void);
 
+/* Where the main loop's time goes before LVGL (ctl "svct"): for telemetry,
+ * the shell's bar and HUD, and each screen's service and tick, the worst and
+ * mean microseconds per frame since the reset, as "name:worst/mean" pairs. */
+void shell_cost_tele(uint32_t us);
+int shell_costs(char *out, size_t len);
+void shell_costs_reset(void);
+
 void shell_goto(int index);
 int shell_current(void);
 int shell_count(void);

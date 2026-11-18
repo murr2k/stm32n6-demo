@@ -32,6 +32,13 @@ struct gfx_stats {
 	 * timers that run after the display's, such as animation callbacks):
 	 * not in render_us, but in the next frame's budget. Since the reset. */
 	uint32_t worst_tail_us;
+	/* The least time left before the swap deadline (the end of the blanking
+	 * before the refresh that should show it, gfx.c) when a frame was handed
+	 * over, since the reset; negative: a frame missed it. */
+	int32_t margin_min_us;
+	/* frames handed over after the vertical sync began but still swapped in
+	 * the blanking: with a swap at line 0 each would have been a dropped frame */
+	uint32_t late_swaps;
 	uint32_t fps_x10;      /* presented frames per second, 1 s window */
 	uint32_t avg_render_us; /* 1 s window */
 	uint16_t head;          /* next write index in the rings below */
@@ -60,6 +67,58 @@ const uint8_t *gfx_snapshot(void);
  * blending a veil over the frame buffer. Takes effect at the next vertical blank.
  */
 void gfx_set_fade(uint8_t alpha);
+
+/* Show the whole picture `rows` lines lower, in hardware (the layer's window
+ * starts lower; the background colour fills the lines above it), 0 = in
+ * place. For a transition's settle: moving the screen's objects instead
+ * makes LVGL redraw all of them on every frame of it. Like the fade, it costs
+ * no render time and takes effect at the next vertical blank. */
+void gfx_set_offset(int rows);
+
+/*
+ * Where the time went, frame by frame: through a screen transition (ctl
+ * "swtrace") and before the last dropped frame (ctl "droptrace"). A frame is
+ * on time if it is handed over before the next swap (the line interrupt at
+ * line 0); its budget from the previous swap holds the wake-up after that
+ * swap, that present's tail (a screen switch runs there), the main loop's
+ * work before LVGL and LVGL's own.
+ */
+#define GFX_TRACE_N 26 /* fade-out, switch, hold and fade-in */
+#define GFX_DROP_N  8
+
+struct gfx_trace_frame {
+	uint16_t wake_us; /* the previous swap to the UI thread running again */
+	uint16_t tail_us; /* the previous present to the end of its LVGL pass */
+	uint16_t pre_us;  /* main loop before LVGL: control, telemetry, screen ticks */
+	uint16_t lv_us;   /* LVGL: timers, layout, render, up to the hand-over */
+	uint16_t away_us; /* of tail, pre and lv: time the UI thread was not running */
+	int16_t left_us;  /* the next swap minus the hand-over; negative: missed */
+	uint8_t alpha;    /* the layer's fade when the frame was handed over */
+	bool locked;      /* the previous frame was presented, so the deadline applies */
+};
+
+struct gfx_trace {
+	uint32_t seq;       /* transitions traced since boot */
+	int8_t from, to;
+	uint8_t n;          /* frames recorded so far, up to GFX_TRACE_N */
+	uint8_t at_switch;  /* f[at_switch] is the first frame after the switch (n if not yet) */
+	uint16_t switch_us; /* the switch itself (hide, show, attract start), in that frame's tail */
+	struct gfx_trace_frame f[GFX_TRACE_N];
+};
+
+struct gfx_drop {
+	uint32_t frame;        /* stats.frames when it happened (0: none yet) */
+	uint32_t seq;          /* the transition trace's seq at the time */
+	int8_t screen;         /* on screen, or being switched to */
+	struct gfx_trace_frame f[GFX_DROP_N]; /* oldest first, the late frame last */
+};
+
+/* The shell (UI thread): a transition starts (the fade-out), and the switch
+ * inside it is made. */
+void gfx_trace_begin(int from, int to);
+void gfx_trace_switch(int to, uint32_t switch_us);
+const struct gfx_trace *gfx_trace(void);
+const struct gfx_drop *gfx_last_drop(void);
 
 /* Time of the most recent buffer swap, gfx_now_us() timebase. */
 uint32_t gfx_last_present_us(void);

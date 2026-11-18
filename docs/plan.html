@@ -204,7 +204,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
     <tr><td>N1</td><td><span class="pill ok">done</span> ST's NPU runtime on Zephyr; the palm detector run on one test image</td><td>Correct detections against the PC's result, inference time measured with working memory in PSRAM, UI frame budget kept.</td></tr>
     <tr><td>N2</td><td><span class="pill warn">built</span> Hands: both networks on the camera picture, rotation crop, tracking, gestures, overlay</td><td>Live on the Camera screen with frame rate and NPU times shown; gestures checked by hand on the panel.</td></tr>
     <tr><td>N3</td><td>Faces: BlazeFace, mesh, alignment, SFace, LEARN with names, card storage, recognition</td><td>Accuracy measured on public pairs before the board; a taught face is named live, an untaught one is "unknown"; nothing personal leaves the board.</td></tr>
-    <tr><td>N4</td><td>Proof</td><td>The tour passes; a long soak test with camera, display and NPU running together shows no fault.</td></tr>
+    <tr><td>N4</td><td><span class="pill ok">done</span> Proof: 9 hours on 2026-11-17, each hour 20 minutes of camera, display and NPU (both networks every frame) and 40 of attract mode. No reset, no fault, no leak, frame times unchanged; 2 dropped frames, traced to Flight Deck's fade-in and fixed (the settle is now done by the display controller).</td><td>The tour passes; a long soak test with camera, display and NPU running together shows no fault.</td></tr>
   </table></div>
   <div class="callout">
     <h3>Risks</h3>
@@ -259,6 +259,62 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
   <div class="callout">
     <h3>Open</h3>
     <p>The top of the field stays at -6 dBFS: the present output volume is good. With a working microphone (the replacement board), a fourth view could play the theremin and analyse the microphone: the same tone, as the room returns it.</p>
+  </div>
+</section>
+
+<section>
+  <span class="eyebrow">Planned 2026-11-17 &middot; for later</span>
+  <h2>A video of one attract lap, with an explainer for builders</h2>
+  <p>A video for YouTube, about four to five minutes: one attract lap (about 2 min 20 s) exactly as the panel shows it, frame for frame and with the board's own sound, carried by an explainer that tells other builders what is in it and what they can take into their own projects. The lap is the real demo at real speed, live data and 60 fps, not a re-enactment.</p>
+
+  <div class="two">
+    <div>
+      <h3>Capturing it: the board records itself</h3>
+      <ul>
+        <li>The N6 has a hardware H.264 encoder (VENC, VeriSilicon VC8000NanoE). Zephyr 4.4 has a driver for it (<code>video_stm32_venc</code>), and ST's encoder library is BSD-3-Clause, fetched by west with the HAL: nothing to keep out of the repository.</li>
+        <li>The library reads 32-bit RGB directly (<code>H264ENC_RGB888</code>, red in bits 23 to 16: this panel's frame buffer layout), so the frame just presented is its input, with no conversion and no copy. Zephyr's driver only offers NV12 and RGB565 input; the app carries its own small front end to the library instead, and the Zephyr tree stays unmodified.</li>
+        <li>Timing: a presented buffer stays untouched for one refresh (16.7 ms) before LVGL draws into it again, and the encoder has to finish within it. ST rates the encoder for full-HD camera video, about five times this panel's pixels a frame, so every other frame (30 fps) has room and every frame (60 fps) may: measured in V1.</li>
+        <li>The sound is the DAC feed itself (what <code>acap</code> records for 3 s today), streamed with the pictures on the same clock: bit-exact, no analog cable, no drift between sound and picture.</li>
+        <li>With every frame the board sends its number, present time, render time and screen, so the video can carry a frame-time strip computed from the board's own measurements.</li>
+        <li>One client on a new port (tcp/5559), like the screenshot port; off, and free, when nobody records. A board that records its own screen is also something builders can reuse, for documentation and bug reports.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>The video</h3>
+      <ul>
+        <li><b>Cold open</b>, about 10 s: the theremin's chord or a moment of the film; with real footage of a hand on the board if there is some.</li>
+        <li><b>What it is</b>, 20 to 30 s: the STM32N6570-DK, Cortex-M55 at 800 MHz with Helium, the Neural-ART NPU, the 800 x 480 touch panel, Zephyr and LVGL, Apache-2.0. Cards rendered with the film pipeline's tools (Skia), in the demo's own type and colours.</li>
+        <li><b>The lap</b>: the recording scaled 4 times (3200 x 1920 in a 3840 x 2160 frame, every board pixel a sharp 4 x 4 block), a lower third per screen with what it is and one measured fact, and the frame-time strip from the board's numbers.</li>
+        <li><b>How it is built</b>, about a minute of diagrams: the buffer swap in the vertical blanking, raster draw handlers instead of widgets for dense pictures, audio DMA kept in AHBSRAM, the theremin's synthesizer on the audio thread, the NPU borrowing the second frame buffer, and the tools (tour, soak, control port, and the recorder that made the video).</li>
+        <li><b>Take it into your project</b>: what is reusable and how to start (clone, west, <code>n6.cmd go</code>), the GitHub link, the licence notes (ST's parts are fetched, never committed).</li>
+        <li><b>The project made this video</b> (decided): the lap was recorded by the board itself, with its own encoder; the cards, captions and frame-time strip were rendered by the project's tools from the board's own data; the music is the film's score, generated by code in the repository; no screen recorder, camera rig or editing suite. Said on a closing card and in the description, with the recorder and the render script named so builders can do the same.</li>
+        <li><b>Captions only</b> (decided), no voice: on-screen text carries the explainer, which works muted and translates with YouTube's tools. The captions are timed to the picture and kept short enough to read at a glance.</li>
+        <li>Uploaded in 4K at 60 fps (YouTube gives 4K uploads a higher bitrate, which keeps one-pixel lines and small type crisp), with a chapter per screen in the description.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="scroll"><table>
+    <tr><th>Resource</th><th>Plan</th></tr>
+    <tr><td class="k">PSRAM</td><td>The encoder's reference frames and stream buffers, an estimated 2 MB for 800 x 480 (ST's default pool is 7 MB, sized for full HD). 13.9 of 28 MB are in use now.</td></tr>
+    <tr><td class="k">Memory bus</td><td>The encoder reads 1.5 MB per recorded frame from the frame buffer SRAM, 46 MB/s at 30 fps, on the interconnect where CPU writes once starved the audio DMA (the AHBSRAM invariant). Measured in V1 with the tour's counters: 0 dropped frames, 0 underruns.</td></tr>
+    <tr><td class="k">Network</td><td>H.264 at near-lossless quality for UI content, an estimated 10 to 20 Mbit/s, plus 1.5 Mbit/s of sound: within what the board sends.</td></tr>
+    <tr><td class="k">Camera screen</td><td>The display runs single-buffered while it shows (the NPU has buffer B): the encoder has to read between the end of a frame's drawing and the next frame's start, or that screen tears in the recording. Measured in V1; the fallback is a lower rate for that screen.</td></tr>
+    <tr><td class="k">Privacy</td><td>The video is public: no face on the Camera screen (pointed at a hand or a neutral scene while recording), no host name or anything else personal on Host Link and Core Map, every frame looked at before upload.</td></tr>
+    <tr><td class="k">Fallbacks</td><td>The same library's JPEG encoder (Motion JPEG at a lower rate), or a camera filming the panel, synchronized to the streamed sound.</td></tr>
+  </table></div>
+
+  <div class="scroll"><table class="phase">
+    <tr><th>Step</th><th>Work</th><th>Done when</th></tr>
+    <tr><td>V1</td><td>Spike: the encoder on Zephyr, fed the presented frame buffer directly</td><td>30 fps H.264 of the live UI arrives on the PC and decodes cleanly while the tour still shows 0 dropped frames and 0 underruns; encode time and cost to the UI measured; 60 fps if there is room.</td></tr>
+    <tr><td>V2</td><td>The recorder: sound and per-frame data in the stream, <code>tools/record.py</code> (one lap: starts attract mode, stops when the lap is back at its first screen)</td><td>Sound and picture in sync: the A/V sync check clip's flash and beep land on the same frame of the recording.</td></tr>
+    <tr><td>V3</td><td>The lap: the privacy pass, the theremin's SOUND on, the companion running</td><td>A clean lap recorded with 0 dropped frames; looked at and approved by the user.</td></tr>
+    <tr><td>V4</td><td>The explainer, all rendered by the project's own script from the recording and its frame data: caption text, cards, lower thirds, the frame-time strip, music from the film's own score, the closing card saying the project made the video; a 4K60 render</td><td>The user has approved the caption text and then the render.</td></tr>
+    <tr><td>V5</td><td>Publishing</td><td>The user uploads it to their channel (title, description with chapters and the GitHub link); the README links the video.</td></tr>
+  </table></div>
+  <div class="callout">
+    <h3>For the user to decide</h3>
+    <p>Decided: captions only, no narration; the video says the project made it. Still open: real footage of the board (a phone, hands only; recommended, a few seconds of it show that this is real hardware, and the closing card would say it is the one part not made by the project); a 60 s vertical Short as well; the length, about four to five minutes for the main video.</p>
   </div>
 </section>
 

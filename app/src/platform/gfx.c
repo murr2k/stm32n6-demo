@@ -45,6 +45,20 @@ static bool streak;               /* previous frame slot also presented */
 
 static uint32_t win_frames, win_render_us, win_start_us;
 
+/* the traces (gfx.h), and what each frame's entry is made from */
+static struct gfx_trace trace = {.n = GFX_TRACE_N};
+static struct gfx_drop last_drop;
+static struct gfx_trace_frame recent[GFX_DROP_N]; /* ring, the frame just handed over at recent_at */
+static uint8_t recent_at;
+static int8_t on_screen = -1;
+static uint8_t fade_alpha = 255;
+static uint32_t wvpcr0; /* the layer window the driver set up (gfx_set_offset) */
+static uint32_t t_run_start;    /* gfx_run_frame() entered */
+static uint32_t last_wake_us;   /* the last swap to the UI thread running */
+static uint32_t t_deadline;     /* the next frame must be handed over by then */
+static uint32_t last_tail_us;   /* that present's tail, 0 if the frame was not presented */
+static uint32_t ui_cyc_present; /* UI thread cycles at that present */
+
 /* lending frame buffer B: see gfx.h */
 enum lend_state { DOUBLE, ENTERING, SINGLE, RETURNING };
 static enum lend_state lend_state = DOUBLE; /* UI thread only */
@@ -85,6 +99,12 @@ static void account_frame(uint32_t render_us, uint32_t now)
 		}
 		if (period > stats.period_us + stats.period_us / 2) {
 			stats.dropped += (period + stats.period_us / 2) / stats.period_us - 1;
+			last_drop.frame = stats.frames;
+			last_drop.seq = trace.seq;
+			last_drop.screen = on_screen;
+			for (int i = 0; i < GFX_DROP_N; i++) {
+				last_drop.f[i] = recent[(recent_at + 1 + i) % GFX_DROP_N];
+			}
 		}
 	} else {
 		stats.period_us_ring[stats.head] = 0;
@@ -132,20 +152,119 @@ static void wait_refresh_start(void)
 	}
 }
 
+static uint32_t ui_cycles(void)
+{
+	k_thread_runtime_stats_t st;
+
+	return k_thread_runtime_stats_get(k_current_get(), &st) == 0 ? (uint32_t)st.execution_cycles : 0;
+}
+
+/* At the hand-over of a frame: how much of its budget was left, and where
+ * the rest went. */
+static void trace_frame(uint32_t now)
+{
+	int32_t left = (int32_t)(t_deadline - now);
+	uint32_t ran = (uint32_t)k_cyc_to_us_floor64(ui_cycles() - ui_cyc_present);
+	uint32_t wall = now - t_last_present;
+
+	if (streak && left < stats.margin_min_us) {
+		stats.margin_min_us = left;
+	}
+	recent_at = (recent_at + 1) % GFX_DROP_N;
+
+	struct gfx_trace_frame *f = &recent[recent_at];
+
+	f->wake_us = MIN(last_wake_us, UINT16_MAX);
+	f->tail_us = MIN(last_tail_us, UINT16_MAX);
+	f->pre_us = MIN(t_run_start - t_frame_start, UINT16_MAX);
+	f->lv_us = MIN(now - t_run_start, UINT16_MAX);
+	f->away_us = MIN(wall > ran ? wall - ran : 0, UINT16_MAX);
+	f->left_us = (int16_t)CLAMP(left, INT16_MIN, INT16_MAX);
+	f->alpha = fade_alpha;
+	f->locked = streak;
+	if (trace.n < GFX_TRACE_N) {
+		trace.f[trace.n++] = *f;
+	}
+}
+
+/*
+ * Presenting a frame. The panel's refresh, in LTDC lines: line 0 starts the
+ * vertical sync, the active area runs from act0 to act1 (12 to 491 of 501
+ * here), and the lines from act1 + 1 round to act0 - 1 are blanking, where
+ * the layer may change buffers without tearing.
+ *
+ * This is done here rather than by display_write(): the driver cleans the
+ * data cache by address over the whole 1.5 MB buffer (about 540 us a frame,
+ * nearly all of it the loop, the lines being clean already) and swaps at
+ * line 0, the middle of the blanking. A clean of the whole cache by set and
+ * way takes 25 us, and a frame finished in the blanking can still be shown
+ * in the next refresh: about 1 ms more for every frame.
+ */
+#define SWAP_GUARD 2 /* lines before the active area that an immediate swap must keep */
+
+static uint32_t ln_total, ln_act0, ln_act1, line_ns;
+
+static uint32_t lines_us(uint32_t lines)
+{
+	return (uint32_t)((uint64_t)lines * line_ns / 1000);
+}
+
+static uint32_t panel_line(void)
+{
+	return LTDC->CPSR & LTDC_CPSR_CYPOS;
+}
+
+/* Swap to buf (its lines already cleaned from the cache) and return once the
+ * panel will show it in its next active area: at once in the blanking,
+ * otherwise at its start (the shadow registers' reload at vertical
+ * blanking). */
+static void present(const uint8_t *buf)
+{
+	if (buf == front) {
+		return;
+	}
+	LTDC_Layer1->CFBAR = (uint32_t)buf;
+
+	/* no interrupt between reading the line and the reload */
+	unsigned int key = irq_lock();
+	uint32_t y = panel_line();
+	bool blanking = y > ln_act1 || y + SWAP_GUARD < ln_act0;
+
+	if (blanking) {
+		LTDC->SRCR = LTDC_SRCR_IMR;
+	}
+	irq_unlock(key);
+	if (blanking) {
+		if (streak && y < ln_act0) {
+			stats.late_swaps++;
+		}
+	} else {
+		LTDC->SRCR = LTDC_SRCR_VBR;
+		uint32_t wait = lines_us(ln_act1 + 1 - y);
+
+		if (wait > 300) {
+			k_usleep(wait - 200);
+		}
+		for (uint32_t t0 = gfx_now_us(); (LTDC->SRCR & LTDC_SRCR_VBR) && gfx_now_us() - t0 < 40000;) {
+		}
+	}
+	front = buf;
+}
+
 static void flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *px_map)
 {
 	ARG_UNUSED(area);
 
 	if (lv_display_flush_is_last(d)) {
-		const struct display_buffer_descriptor desc = {
-			.buf_size = GFX_FB_BYTES, .width = GFX_W, .height = GFX_H, .pitch = GFX_W,
-		};
-		/* everything the UI thread did for this frame: screen tick, layout, render */
-		uint32_t render_us = gfx_now_us() - t_frame_start;
+		SCB_CleanDCache(); /* what LVGL wrote, out to the SRAM the LTDC reads */
 
-		/* Blocks until the LTDC has switched to this buffer. */
-		display_write(panel, 0, 0, &desc, px_map);
-		front = px_map;
+		uint32_t now = gfx_now_us();
+		/* everything the UI thread did for this frame: screen tick, layout, render */
+		uint32_t render_us = now - t_frame_start;
+		bool swap = px_map != front;
+
+		trace_frame(now);
+		present(px_map);
 		if (lend_state == ENTERING && front == FB_A) {
 			/* the panel scans A, LVGL draws into A: B is free */
 			lend_state = SINGLE;
@@ -156,7 +275,26 @@ static void flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *px_map)
 			wait_refresh_start();
 		}
 		presented = true;
-		account_frame(render_us, gfx_now_us());
+		now = gfx_now_us();
+
+		uint32_t y = panel_line();
+
+		if (swap) {
+			/* shown from the next start of the active area; the frame after
+			 * it has until shortly before the start of the one after that */
+			int32_t to_show = y > ln_act1 ? (int32_t)(ln_total - y + ln_act0) : (int32_t)ln_act0 - (int32_t)y;
+
+			last_wake_us = y > ln_act1 ? lines_us(y - ln_act1 - 1) : 0;
+			t_deadline = now + (uint32_t)((int32_t)lines_us(ln_total - SWAP_GUARD) +
+						      (to_show >= 0 ? (int32_t)lines_us(to_show)
+								    : -(int32_t)lines_us(-to_show)));
+		} else {
+			/* single-buffered: the next frame must start before the next refresh does */
+			last_wake_us = lines_us(MIN(y, ln_total));
+			t_deadline = now - last_wake_us + stats.period_us;
+		}
+		ui_cyc_present = ui_cycles();
+		account_frame(render_us, now);
 	}
 	lv_display_flush_ready(d);
 }
@@ -187,7 +325,13 @@ static void measure_refresh(void)
 	}
 	stats.period_us = (gfx_now_us() - t0) / n;
 	stats.refresh_uhz = (uint32_t)(1000000000000ULL / stats.period_us);
-	front = FB_A;
+	/* from here on present() swaps, not the driver */
+	front = (const uint8_t *)LTDC_Layer1->CFBAR;
+	ln_total = (LTDC->TWCR & LTDC_TWCR_TOTALH) + 1;
+	ln_act0 = (LTDC->BPCR & LTDC_BPCR_AVBP) + 1;
+	ln_act1 = LTDC->AWCR & LTDC_AWCR_AAH;
+	line_ns = stats.period_us * 1000 / ln_total;
+	t_deadline = gfx_now_us() + stats.period_us;
 }
 
 int gfx_init(void)
@@ -220,6 +364,8 @@ int gfx_init(void)
 	lv_display_set_flush_cb(disp, flush_cb);
 
 	t_last_present = win_start_us = t_frame_start = gfx_now_us();
+	stats.margin_min_us = INT32_MAX;
+	wvpcr0 = LTDC_Layer1->WVPCR;
 	/* what shows through when the layer is faded: the theme's screen colour (0x080C12) */
 	LTDC->BCCR = 0x080C12;
 	LTDC->SRCR = LTDC_SRCR_VBR;
@@ -302,6 +448,7 @@ void gfx_run_frame(void)
 {
 	uint32_t t0 = gfx_now_us();
 
+	t_run_start = t0;
 	lend_step();
 
 	presented = false;
@@ -312,11 +459,13 @@ void gfx_run_frame(void)
 		uint32_t tail = gfx_now_us() - t_last_present;
 
 		streak = true;
+		last_tail_us = tail;
 		if (tail > stats.worst_tail_us) {
 			stats.worst_tail_us = tail;
 		}
 	} else {
 		streak = false;
+		last_tail_us = 0;
 		/* Nothing to draw: idle part of a frame slot so timers and input keep
 		 * their cadence and lower-priority threads get to run.
 		 */
@@ -344,8 +493,17 @@ const struct gfx_stats *gfx_stats(void)
 
 void gfx_set_fade(uint8_t alpha)
 {
+	fade_alpha = alpha;
 	LTDC_Layer1->CACR = alpha;
 	LTDC->SRCR = LTDC_SRCR_VBR; /* load the shadow register at the next vertical blank */
+}
+
+void gfx_set_offset(int rows)
+{
+	rows = CLAMP(rows, 0, GFX_H / 2);
+	LTDC_Layer1->WVPCR = (wvpcr0 & ~LTDC_LxWVPCR_WVSTPOS_Msk) |
+			     ((wvpcr0 & LTDC_LxWVPCR_WVSTPOS_Msk) + (uint32_t)rows);
+	LTDC->SRCR = LTDC_SRCR_VBR;
 }
 
 uint32_t gfx_last_present_us(void)
@@ -358,6 +516,36 @@ void gfx_stats_reset_worst(void)
 	stats.worst_render_us = 0;
 	stats.worst_period_us = 0;
 	stats.worst_tail_us = 0;
+	stats.margin_min_us = INT32_MAX;
+}
+
+void gfx_trace_begin(int from, int to)
+{
+	trace.seq++;
+	trace.from = (int8_t)from;
+	trace.to = (int8_t)to;
+	trace.switch_us = 0;
+	trace.n = 0;
+	trace.at_switch = GFX_TRACE_N;
+}
+
+void gfx_trace_switch(int to, uint32_t switch_us)
+{
+	on_screen = (int8_t)to;
+	if (trace.n < GFX_TRACE_N && trace.to == to) {
+		trace.at_switch = trace.n;
+		trace.switch_us = (uint16_t)MIN(switch_us, UINT16_MAX);
+	}
+}
+
+const struct gfx_trace *gfx_trace(void)
+{
+	return &trace;
+}
+
+const struct gfx_drop *gfx_last_drop(void)
+{
+	return &last_drop;
 }
 
 lv_display_t *gfx_display(void)

@@ -289,9 +289,13 @@ static void fade_exec(void *var, int32_t v)
 	gfx_set_fade((uint8_t)v);
 }
 
-static void rise(void *obj, int32_t v)
+/* The settle is done by the display controller too (the layer window): moved
+ * by LVGL, the new screen's objects were all redrawn on every frame of it,
+ * each a full-screen render while the screen was already fading in. */
+static void settle(void *var, int32_t v)
 {
-	lv_obj_set_y(obj, UI_CONTENT_Y + v);
+	ARG_UNUSED(var);
+	gfx_set_offset(v);
 }
 
 static void fade_in_done(lv_anim_t *a)
@@ -327,14 +331,14 @@ static void fade_out_done(lv_anim_t *a)
 	lv_anim_start(&in);
 
 	lv_anim_init(&in);
-	lv_anim_set_var(&in, roots[current]);
-	lv_anim_set_exec_cb(&in, rise);
+	lv_anim_set_var(&in, &fade_target);
+	lv_anim_set_exec_cb(&in, settle);
 	lv_anim_set_values(&in, 10, 0);
 	lv_anim_set_duration(&in, FADE_IN_MS);
 	lv_anim_set_delay(&in, FADE_HOLD_MS);
 	lv_anim_set_path_cb(&in, lv_anim_path_ease_out);
 	lv_anim_start(&in);
-	lv_obj_set_y(roots[current], UI_CONTENT_Y + 10);
+	gfx_set_offset(10);
 }
 
 void shell_goto(int index)
@@ -354,6 +358,7 @@ void shell_goto(int index)
 	}
 	fading = true;
 	fade_target = index;
+	gfx_trace_begin(current, index);
 	lv_anim_init(&out);
 	lv_anim_set_var(&out, &fading);
 	lv_anim_set_exec_cb(&out, fade_exec);
@@ -432,6 +437,8 @@ ow, which was sampled at the top of the frame.
 
 static void switch_to(int index)
 {
+	uint32_t t0 = gfx_now_us();
+
 	if (current >= 0) {
 		if (screens[current]->hide) {
 			screens[current]->hide();
@@ -452,6 +459,7 @@ static void switch_to(int index)
 			screens[current]->attract_start();
 		}
 	}
+	gfx_trace_switch(current, gfx_now_us() - t0);
 }
 
 int shell_current(void)
@@ -519,9 +527,55 @@ void shell_init(const struct screen *const *list, int count)
 	shell_goto(0);
 }
 
+struct cost {
+	uint32_t worst, sum, n;
+};
+static struct cost cost_svc[MAX_SCREENS], cost_tick[MAX_SCREENS], cost_bar, cost_tele;
+
+static void cost_add(struct cost *c, uint32_t us)
+{
+	c->worst = MAX(c->worst, us);
+	c->sum += us;
+	c->n++;
+}
+
+void shell_cost_tele(uint32_t us)
+{
+	cost_add(&cost_tele, us);
+}
+
+static int cost_fmt(char *out, size_t len, const char *name, int i, const struct cost *c)
+{
+	char key[16];
+
+	snprintf(key, sizeof(key), i < 0 ? "%s" : "%s%d", name, i);
+	return c->n ? snprintf(out, len, "%s:%u/%u ", key, c->worst, c->sum / c->n) : 0;
+}
+
+int shell_costs(char *out, size_t len)
+{
+	int k = cost_fmt(out, len, "tele", -1, &cost_tele);
+
+	k += cost_fmt(out + k, len - k, "bar", -1, &cost_bar);
+	for (int i = 0; i < n_screens && k < (int)len - 48; i++) {
+		k += cost_fmt(out + k, len - k, "svc", i, &cost_svc[i]);
+		k += cost_fmt(out + k, len - k, "tick", i, &cost_tick[i]);
+	}
+	return k;
+}
+
+void shell_costs_reset(void)
+{
+	memset(cost_svc, 0, sizeof(cost_svc));
+	memset(cost_tick, 0, sizeof(cost_tick));
+	memset(&cost_bar, 0, sizeof(cost_bar));
+	memset(&cost_tele, 0, sizeof(cost_tele));
+}
+
 void shell_tick(void)
 {
 	uint32_t now = k_uptime_get_32();
+	uint32_t t0 = gfx_now_us(), t1;
 
 	if (touch_user_button_pressed()) {
 		shell_toggle_hud();
@@ -530,12 +584,19 @@ void shell_tick(void)
 	update_attract(now);
 	update_bar(now);
 	update_hud(now);
+	t1 = gfx_now_us();
+	cost_add(&cost_bar, t1 - t0);
 	for (int i = 0; i < n_screens; i++) {
 		if (screens[i]->service) {
+			t0 = t1;
 			screens[i]->service(now);
+			t1 = gfx_now_us();
+			cost_add(&cost_svc[i], t1 - t0);
 		}
 	}
 	if (current >= 0 && screens[current]->tick) {
+		t0 = t1;
 		screens[current]->tick(now);
+		cost_add(&cost_tick[current], gfx_now_us() - t0);
 	}
 }

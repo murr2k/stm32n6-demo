@@ -28,8 +28,40 @@
 #include "netcfg.h"
 #include "psram.h"
 #include "screens/screens.h"
+#include "tele.h"
 #include "touch.h"
 #include "ui/shell.h"
+
+/* "mem": the thread with the least unused stack, idle left out (its margin is
+ * small by design and never changes); "stacks": every thread's */
+struct stack_scan {
+	size_t free;
+	char name[16];
+	char *list;
+	size_t list_len, list_at;
+};
+
+static void stack_scan(const struct k_thread *thread, void *data)
+{
+	struct stack_scan *s = data;
+	const char *name = k_thread_name_get((k_tid_t)thread);
+	size_t unused;
+
+	if (k_thread_stack_space_get(thread, &unused) != 0) {
+		return;
+	}
+	name = name && name[0] ? name : "?";
+	if (s->list) {
+		int n = snprintf(s->list + s->list_at, s->list_len - s->list_at, "%s:%u ", name, (unsigned int)unused);
+
+		if (n > 0 && s->list_at + n < s->list_len) {
+			s->list_at += n;
+		}
+	} else if (unused < s->free && strcmp(name, "idle") != 0) {
+		s->free = unused;
+		snprintf(s->name, sizeof(s->name), "%s", name);
+	}
+}
 
 LOG_MODULE_REGISTER(ctl, LOG_LEVEL_INF);
 
@@ -90,6 +122,7 @@ static int handle(char *line, char *out, size_t out_len)
 		post(CTL_ATTRACT, 0);
 	} else if (!strcmp(cmd, "reset")) {
 		gfx_stats_reset_worst();
+		shell_costs_reset();
 	} else if (!strcmp(cmd, "tap") && n >= 3) {
 		touch_inject(0, a[0], a[1], true);
 		k_msleep(60);
@@ -315,15 +348,73 @@ static int handle(char *line, char *out, size_t out_len)
 	} else if (!strcmp(cmd, "where")) {
 		/* which screen is up, and whether the demo is running itself */
 		return snprintf(out, out_len, "screen=%d attract=%d\n", shell_current(), shell_in_attract());
+	} else if (!strcmp(cmd, "mem")) {
+		/* for a soak test's leak check: kernel heap and LVGL pool (in use, peak,
+		 * size), PSRAM handed out, and the thread with the least stack never used.
+		 * The stack scan reads every painted stack (milliseconds): this thread is
+		 * below the UI's, so it does not cost a frame. */
+		const struct tele *t = tele_get();
+		struct stack_scan low = {.free = SIZE_MAX, .name = "-"};
+
+		k_thread_foreach_unlocked(stack_scan, &low);
+		return snprintf(out, out_len,
+				"heap_used=%u heap_peak=%u heap_size=%u ui_used=%u ui_peak=%u ui_size=%u psram_kb=%u "
+				"stack_min_free=%u stack_min_thread=%s uptime_s=%u\n",
+				t->heap_used, t->heap_peak, t->heap_size, t->ui_used, t->ui_peak, t->ui_size,
+				(unsigned int)(psram_used() / 1024), (unsigned int)low.free, low.name,
+				(unsigned int)(k_uptime_get() / 1000));
+	} else if (!strcmp(cmd, "stacks")) {
+		/* every thread's stack never used, bytes: name:free ... (as many as fit) */
+		struct stack_scan all = {.list = out, .list_len = out_len - 1};
+
+		out[0] = '\0';
+		k_thread_foreach_unlocked(stack_scan, &all);
+		out[all.list_at] = '\n';
+		return (int)all.list_at + 1;
 	} else if (!strcmp(cmd, "stats")) {
 		const struct gfx_stats *g = gfx_stats();
 
 		return snprintf(out, out_len,
 				"frames=%u fps=%u.%u render_avg_us=%u render_last_us=%u "
-				"render_worst_us=%u period_worst_us=%u tail_worst_us=%u dropped=%u refresh_mhz=%u\n",
+				"render_worst_us=%u period_worst_us=%u tail_worst_us=%u dropped=%u refresh_mhz=%u "
+				"margin_min_us=%d late_swaps=%u\n",
 				g->frames, g->fps_x10 / 10, g->fps_x10 % 10, g->avg_render_us,
 				g->last_render_us, g->worst_render_us, g->worst_period_us, g->worst_tail_us,
-				g->dropped, g->refresh_uhz / 1000);
+				g->dropped, g->refresh_uhz / 1000,
+				g->margin_min_us == INT32_MAX ? 0 : (int)g->margin_min_us, g->late_swaps);
+	} else if (!strcmp(cmd, "svct")) {
+		int k = shell_costs(out, out_len - 1);
+
+		out[k] = '\n';
+		return k + 1;
+	} else if (!strcmp(cmd, "swtrace") || !strcmp(cmd, "droptrace")) {
+		/* the frames of the last screen transition, or before the last
+		 * dropped frame, each as wake/tail/pre/lv/away/left/alpha in us
+		 * (gfx.h); "u" at the end: the frame before was not presented, so no
+		 * deadline applied */
+		const struct gfx_trace *t = gfx_trace();
+		const struct gfx_drop *d = gfx_last_drop();
+		const struct gfx_trace_frame *fr;
+		int nf, k;
+
+		if (cmd[0] == 's') {
+			k = snprintf(out, out_len, "seq=%u from=%d to=%d at_switch=%u switch_us=%u n=%u f=", t->seq,
+				     t->from, t->to, t->at_switch, t->switch_us, t->n);
+			fr = t->f;
+			nf = t->n;
+		} else {
+			k = snprintf(out, out_len, "frame=%u seq=%u screen=%d f=", d->frame, d->seq, d->screen);
+			fr = d->f;
+			nf = d->frame ? GFX_DROP_N : 0;
+		}
+		for (int i = 0; i < nf && k < (int)out_len - 46; i++) {
+			const struct gfx_trace_frame *f = &fr[i];
+
+			k += snprintf(out + k, out_len - k, "%s%u/%u/%u/%u/%u/%d/%u%s", i ? "," : "", f->wake_us,
+				      f->tail_us, f->pre_us, f->lv_us, f->away_us, f->left_us, f->alpha,
+				      f->locked ? "" : "u");
+		}
+		return k + snprintf(out + k, out_len - k, "\n");
 	} else {
 		return snprintf(out, out_len, "err unknown: %s\n", cmd);
 	}
@@ -333,7 +424,7 @@ static int handle(char *line, char *out, size_t out_len)
 static void ctl_thread(void *p1, void *p2, void *p3)
 {
 	struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(CTL_PORT)};
-	static char line[96], out[640];
+	static char line[96], out[1024];
 	int srv;
 
 	net_wait_ip();
