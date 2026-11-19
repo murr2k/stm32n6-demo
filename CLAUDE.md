@@ -43,6 +43,7 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 .\.venv\Scripts\python.exe tools\ctl.py "monlisten 0" "monband 2 1000 120 100" "montone 1000 -200" mon   # closed loop (headphones by the board): EQ gain measured vs curve
 .\.venv\Scripts\python.exe tools\record.py --secs 20 [--fps 60] [--attract] [--camera]   # the board records its screen and sound: captures/rec/*.mkv, .mp4 (--attract: exactly one lap; --camera: the Camera screen too, camera footage)
 .\.venv\Scripts\python.exe media\film\attract.py; .\.venv\Scripts\python.exe tools\n6v.py upload media\out\_attract.n6v   # the attract lap's clip (music + film), to the card
+.\.venv\Scripts\python.exe media\film\video.py --render   # the YouTube video from the recorded lap: media/out/n6_video_4k60.mp4, about 25 min (--plan: timeline and chapters; --still V; --preview: 1080p30 cut)
 .\.venv\Scripts\python.exe tools\ctl.py attract where "thmunder -80" thm   # start the lap; where it is (lap_ms, lap_len); the theremin's level under its music (dB x10)
 .\.venv\Scripts\python.exe tools\avsync.py         # the sync clip recorded by the board: each flash against its beep, in DAC frames
 .\.venv\Scripts\python.exe tools\nn.py watch 20    # tracker counters over 20 s: searches, palms found, confirmed, lost, time tracked
@@ -356,6 +357,24 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   attract mode starts, so the lap's first sample is in it). A recording
   cuts where the panel fades: the fade and settle are the LTDC's, on the
   way to the panel, not in the frame buffer the encoder reads.
+- Video (media/film/video.py; approved by the user and uploaded on
+  2026-11-19, https://youtu.be/fsazWDnm2qg): the lap recorded at 60 fps
+  with the companion running (`TAKE`, captures/rec/video-lap-20261118;
+  camera footage, never committed, nor anything in media/out) in a 4K60
+  frame, the panel scaled 4 times, the fades put back from the frame log,
+  the board's sound under the cold open and the lap, the film's score
+  elsewhere. Skia's CPU raster is too slow at 4K (the ground took 1.33 s a
+  frame, the 4x panel 337 ms), so the ground (`Ground`: quarter-resolution
+  blocks, grid lines at full resolution, within 4 LSB of `ground_skia`,
+  kept as the reference) and the panel's scaling (bit-identical) are
+  numpy; Skia draws text and small shapes. Three worker processes, each
+  piping RGBA into its own ffmpeg (x264 medium, crf 16, 5 threads,
+  rc-lookahead 20: about 1.5 GB each; with 8 threads and lookahead 30 they
+  took 2.1 GB each and the PC ran out of commit memory), then a concat with
+  the AAC sound and the BT.709 tags set by `h264_metadata`. Checked by
+  numbers, never by looking at frames (the gesture bars are the user's
+  hands): the sound 0.00 ms from the take's at four points, the panel the
+  take's picture due at four points.
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
   Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
   explorer, touchlab, hostlink, coremap, cinema, specimen, hood, settings, camera. Home shows two

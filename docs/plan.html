@@ -154,10 +154,10 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
 <div class="page">
 
 <header class="top">
-  <span class="eyebrow">STM32N6570-DK &middot; plan and progress &middot; planned 2026-11-14 &middot; this version 2026-11-18</span>
+  <span class="eyebrow">STM32N6570-DK &middot; plan and progress &middot; planned 2026-11-14 &middot; this version 2026-11-19</span>
   <h1>N6 Demo Plan</h1>
   <p class="lede">A twelve-screen touch demo for the STM32N6570-DK: live dashboards, dense real-time data visualization, full-screen video with sound, and a live camera with hand tracking on the NPU, all locked to the panel refresh. Built for people who look for dropped frames, banding and fake data. Every number on screen is measured on the board or arrives over its Ethernet link, and the board now records its own screen and sound.</p>
-  <p class="muted">This version: 2026-11-18, after the second soak and the new attract lap set to the film's music. A lap recorded by the board is in <code>captures/rec</code>, for the user's eyes only; the lap for the published video is V3.</p>
+  <p class="muted">This version: 2026-11-19, after the video (V4) was rendered and approved. It is made from the lap the board recorded (V3); the recording stays in <code>captures/rec</code> and the renders in <code>media/out</code>, never committed.</p>
   <dl class="specs">
     <div><dt>Panel</dt><dd>800 x 480, 59.98 Hz</dd></div>
     <div><dt>Core</dt><dd>Cortex-M55, 800 MHz, Helium</dd></div>
@@ -266,10 +266,36 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
     <tr><th>Step</th><th>Work</th><th>Done when</th></tr>
     <tr><td>V1 <span class="pill ok">done</span></td><td>Spike: the encoder on Zephyr, fed the presented frame buffer directly</td><td>30 fps H.264 of the live UI decodes cleanly on the PC while the tour shows 0 dropped frames and 0 underruns. Met on 2026-11-17, with 60 fps fitting too.</td></tr>
     <tr><td>V2 <span class="pill ok">done</span></td><td>The recorder: sound and per-picture data in the stream, <code>tools/record.py</code> (<code>--attract</code> records one lap: it starts attract mode and stops when the lap is back at its first screen)</td><td>The A/V sync clip's flash and beep land on the same frame of the recording. Met on 2026-11-18, after the player fix (<code>tools/avsync.py</code>).</td></tr>
-    <tr><td>V3 <span class="pill info">take 1 with the user</span></td><td>The lap (<code>record.py --attract --fps 60</code> records exactly one): the privacy pass for Host Link and Core Map, the theremin's SOUND on, the companion running. Take 1, 2026-11-18: every picture, 0 dropped; Host Link and Core Map show only the two private LAN addresses, the PC's core layout and load</td><td>A clean lap recorded with 0 dropped frames; looked at and approved by the user.</td></tr>
-    <tr><td>V4</td><td>Rendered by the project's own script from the recording and its frame data: title and caption text, cards, lower thirds, the frame-time strip, the closing card; the panel's fade and 10 px settle at every screen change, re-created at the switch times in the frame log (the encoder reads the frame buffer, and the display controller fades on the way to the panel, so a recording cuts where the panel fades); a 4K60 render</td><td>The user has approved the caption text and then the render.</td></tr>
-    <tr><td>V5</td><td>Publishing</td><td>The user uploads it to their channel (title, description with chapters and the GitHub link); the README links the video.</td></tr>
+    <tr><td>V3 <span class="pill ok">done</span></td><td>The lap (<code>record.py --attract --fps 60</code> records exactly one): the privacy pass for Host Link and Core Map, the theremin's SOUND on, the companion running. Take 1, 2026-11-18: every picture, 0 dropped; Host Link and Core Map show only the two private LAN addresses, the PC's core layout and load</td><td>A clean lap recorded with 0 dropped frames; looked at and approved by the user.</td></tr>
+    <tr><td>V4 <span class="pill ok">done</span></td><td>Rendered by the project's own script (<code>media/film/video.py</code>) from the recording and its frame data: title and caption text, cards, lower thirds, the frame-time strip, the closing card; the panel's fade and 10 px settle at every screen change, re-created at the switch times in the frame log (the encoder reads the frame buffer, and the display controller fades on the way to the panel, so a recording cuts where the panel fades); a 4K60 render</td><td>The user has approved the caption text and then the render. Met on 2026-11-19: 4 min 36 s at 3840 x 2160, 60 fps; the sound 0.00 ms from the board's recording and the panel the picture due, checked at four points each.</td></tr>
+    <tr><td>V5 <span class="pill ok">done</span></td><td>Publishing: title "STM32N6 demo, recorded by the board itself (4K60)", chosen 2026-11-19; the thumbnail is the user's photo of the board on the Camera screen (a hand only, the serial stickers blurred)</td><td>The user uploads it to their channel (title, description with chapters and the GitHub link); the README links the video. Met on 2026-11-19: <a href="https://youtu.be/fsazWDnm2qg">on YouTube</a>, unlisted, processed up to 2160p60.</td></tr>
   </table></div>
+</section>
+
+<section>
+  <span class="eyebrow">Later &middot; noted 2026-11-19</span>
+  <h2>Home power, when the internet is there</h2>
+  <p>The user's idea: when the board can reach the internet, a tile appears on Home that opens a panel of the household's electricity, like the power part of the user's energy-monitor dashboard (not its gas or heating, not its tech stack). The monitor's address is set on the board, like the network settings, and not written into this repository.</p>
+  <div class="two">
+    <div>
+      <h3>What the source gives (looked at 2026-11-19)</h3>
+      <ul>
+        <li><code>/api/stats</code>, 4.7 KB of JSON: the power now (W); the last 24 hours' minimum, mean and peak (W) and their cost; the price per kWh; and the billing period: energy so far (kWh), the bill so far with its tiers, GST and levies, and a projected bill with its range.</li>
+        <li><code>/api/dashboard?range=</code> <code>1h</code>, <code>6h</code>, <code>24h</code>, <code>7d</code> or <code>30d</code>: the chart's series (time and power per bucket) with the range's minimum, mean, peak, energy and cost; 25 KB for 24 hours.</li>
+        <li><code>/api/stream</code>: server-sent events, for the live reading. The meter is read about every 30 s.</li>
+        <li>Plain HTTP answers, so the board needs no TLS for it (TLS needs tens of KB of RAM; internal RAM has 10 KB left, so its heap would go in PSRAM).</li>
+      </ul>
+    </div>
+    <div>
+      <h3>What the board would need</h3>
+      <ul>
+        <li>A DNS resolver and an HTTP client (neither is in <code>prj.conf</code> yet: one config change, the 6 to 8 minute rebuild) and a small JSON reader, the responses in a PSRAM buffer.</li>
+        <li>"Internet available" decided on a network thread: the name resolves and <code>/api/stats</code> answers; tried again now and then, so the tile comes and goes without a restart. Nothing on the UI thread waits for the network.</li>
+        <li>A thirteenth screen: the shell holds 12 and all are used, so <code>MAX_SCREENS</code> goes up; Home already takes more than eight tiles.</li>
+        <li>The panel in the demo's own style: the power now as a large number and a gauge, the 24-hour figures, a chart with the five ranges, the bill so far and the projected bill; on screen, where the data comes from (the home's meter, over the internet) and how old the reading is.</li>
+      </ul>
+    </div>
+  </div>
 </section>
 
 <section>
@@ -713,7 +739,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
   </div>
   <div class="callout">
     <h3>What needed your eyes and ears</h3>
-    <p>Checked by the user on the panel: touch, navigation, motion and colour (2026-11-14); sound, transitions and attract mode (2026-11-15); the slider fix and five-finger touch (2026-11-15); hand tracking with both hands (2026-11-16); the theremin and listening to the microphone (2026-11-17). Still to see: the microSD library by eye and ear, and the recorded lap (V3).</p>
+    <p>Checked by the user on the panel: touch, navigation, motion and colour (2026-11-14); sound, transitions and attract mode (2026-11-15); the slider fix and five-finger touch (2026-11-15); hand tracking with both hands (2026-11-16); the theremin and listening to the microphone (2026-11-17); the recorded lap (2026-11-18); the video (2026-11-19). Still to see: the microSD library by eye and ear.</p>
   </div>
 </section>
 
@@ -763,8 +789,8 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
   <h2>Decisions open now</h2>
   <div class="scroll"><table>
     <tr><th>#</th><th>Question</th><th>Default</th></tr>
-    <tr><td class="num">1</td><td><b>V3, the lap.</b> A session at the board: the privacy pass (no face, nothing personal on Host Link and Core Map), then one recorded lap for you to approve.</td><td>When you are next at the board.</td></tr>
-    <tr><td class="num">2</td><td><b>The video's extras.</b> A few seconds of real footage of the board (a phone, hands only), a 60 s vertical Short, the length.</td><td>No footage, no Short, four to five minutes.</td></tr>
+    <tr><td class="num">1</td><td><b>The video's visibility.</b> Uploaded unlisted.</td><td>Public when you are ready.</td></tr>
+    <tr><td class="num">2</td><td><b>The video's extras.</b> A 60 s vertical Short.</td><td>No Short. The video itself: no footage, 4 min 36 s.</td></tr>
     <tr><td class="num">3</td><td><b>Faces (N3)</b> after the video?</td><td>Yes, next after V5.</td></tr>
     <tr><td class="num">4</td><td><b>Web remote and firmware update over the network.</b> Still wanted?</td><td>Kept in the plan, not scheduled.</td></tr>
   </table></div>

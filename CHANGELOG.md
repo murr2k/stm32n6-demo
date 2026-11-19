@@ -5,6 +5,22 @@ names what a user of the demo or of its tools would notice; the commit log
 has the detail, and `CLAUDE.md` the reasons behind the rules that came out of
 them.
 
+## 2026-11-19
+
+### Added
+
+- **The demo's video, made from the board's own recording**
+  ([YouTube](https://youtu.be/fsazWDnm2qg), 4 min 36 s, 4K60).
+  `media/film/video.py` sets one attract lap recorded at 60 fps
+  (`record.py --attract --fps 60`) in a 3840 x 2160 frame: every board
+  pixel a 4 x 4 block, a caption per screen above the panel, a frame-time
+  strip and dropped-frame count from each picture's own numbers, the
+  panel's fades put back at the recorded screen changes, cards and
+  diagrams of how it is built, and the board's own sound under the lap.
+  `--plan` prints the timeline and the chapters, `--still` one frame,
+  `--preview` a 1080p30 cut, `--render` the whole video (about 25 minutes
+  on the PC).
+
 ## 2026-11-18
 
 ### Fixed

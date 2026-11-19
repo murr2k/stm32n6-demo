@@ -21,6 +21,9 @@ refresh, no fake data, and show the measurements.
 > its own hardware H.264 encoder. See [Status](#status) and the
 > [changelog](CHANGELOG.md).
 
+**Video:** [one attract lap, recorded by the board itself](https://youtu.be/fsazWDnm2qg)
+(4 min 36 s, 4K60).
+
 | | |
 |---|---|
 | ![Home](docs/img/home.png) | ![Two hands tracked on the NPU, over the live camera](docs/img/camera-hands.png) |
@@ -567,7 +570,10 @@ and look for isolated steps in both.
 The N6 has a hardware H.264 encoder, and the demo uses it to record its own
 screen together with the sound it sends to the headphones. That's for a
 video of the demo made by the demo, with no screen recorder or camera rig
-(plan: [`docs/plan.html`](docs/plan.html), V1 to V5).
+(plan: [`docs/plan.html`](docs/plan.html), V1 to V5). The result is
+[on YouTube](https://youtu.be/fsazWDnm2qg): one lap recorded at 60 fps, set
+in a 4K frame by `media/film/video.py` with captions, cards and the board's
+own frame-time strip.
 
 - **The picture:** at the start of every second panel refresh, the encoder
   reads the frame buffer that's on screen, straight from the SRAM in its
@@ -616,6 +622,7 @@ video of the demo made by the demo, with no screen recorder or camera rig
 .\.venv\Scripts\python.exe tools\record.py --attract --fps 60      # exactly one attract lap (its length from the board) at 60 fps
 .\.venv\Scripts\python.exe tools\record.py --camera --secs 60      # the Camera screen too: camera footage, no faces
 .\.venv\Scripts\python.exe tools\avsync.py                         # flash against beep, in DAC frames
+.\.venv\Scripts\python.exe media\film\video.py --render            # the video from a lap recording: media\out\n6_video_4k60.mp4
 ```
 
 ## Hand tracking on the NPU

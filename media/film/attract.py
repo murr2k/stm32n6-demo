@@ -91,6 +91,13 @@ def end_title(c, t: float) -> None:
     """The two end titles on the films' ground: in from the end card's black, the attribution,
     the thanks, out to black, then black for the pause."""
     backdrop(c, t, 11.0)
+    end_title_text(c, t)
+    veil = max(1 - ease_io(ramp(t, 0.0, 0.8)), ease_io(ramp(t, CREDITS_S + THANKS_S, FADE_S)))
+    c.drawRect(skia.Rect.MakeWH(W, H), paint((0, 0, 0), 255 * veil))
+
+
+def end_title_text(c, t: float) -> None:
+    """The end titles' words, in 800 x 480 units (media/film/video.py sets them in 4K too)."""
     half = CREDITS_S
     if t < half:
         # the name in a regular weight, the address the line to remember
@@ -112,8 +119,6 @@ def end_title(c, t: float) -> None:
         b = ease_out(ramp(u, 1.4, 0.8))
         c.drawRect(skia.Rect.MakeXYWH(W / 2 - 60 * b, 290, 120 * b, 4), paint(AZURE, 255 * b))
         text(c, thanks, W / 2, 346 + 10 * (1 - b), font("head", 40), TEXT, 255 * b, "center")
-    veil = max(1 - ease_io(ramp(t, 0.0, 0.8)), ease_io(ramp(t, CREDITS_S + THANKS_S, FADE_S)))
-    c.drawRect(skia.Rect.MakeWH(W, H), paint((0, 0, 0), 255 * veil))
 
 
 def end_titles(path: Path, frames: int) -> None:
