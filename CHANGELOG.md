@@ -24,14 +24,21 @@ them.
   every picture after it 40 s behind its sound. Each picture now lasts
   until the next. Joining picture and sound also moved the picture ahead
   by its first time (0.03 to 0.14 s); it now stays on the sound's clock.
+- **The board's recordings were darker and harsher than the panel.** The
+  encoder writes full-range video and the stream did not say so, so every
+  player read it as TV range: the panel's dark navy came out black. The
+  stream now says full range, and a recording matches a screenshot of the
+  same screen.
 
 ### Changed
 
 - **Attract mode is a lap set to the film's music**: it opens with *N6: the
   film*, cuts at 0:43 to the demos, each arriving on a bar line while the
   film's music plays on under them (Home, Flight Deck, Signal Lab, Explorer,
-  Host Link, Core Map, Under the Hood), and ends with the film's last scene
-  and its coda; 2 min 15 s, then again. The live Camera screen is no longer
+  Host Link, Core Map, Under the Hood), and ends with the film's last scene,
+  its coda and end titles (who made it; how: the demos live, the film and
+  its score written as code), then two seconds of black; 2 min 38 s, then
+  again. The live Camera screen is no longer
   in it: after Signal Lab, four bars replay the board's own recording of
   the Camera screen tracking two hands, marked "Recorded on this board".
   Any touch stops it and the music.

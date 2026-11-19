@@ -100,8 +100,18 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   2026-11-18): "N6: the film" to 0:43.2 (bar 18), then Home, Flight Deck,
   Signal Lab, the recorded gestures, Explorer, Host Link, Core Map, Under
   the Hood (2, 4, 3, 4, 8, 4, 6, 5 bars of 2.4 s), then the film's last
-  scene with the score's coda (2 bars): 56 bars, 134.4 s of clip time
-  (2 min 15.3 s at the DAC's 47.7 kHz), then again. The lap never opens the
+  scene with the score's coda (2 bars), then end titles (the user's
+  timings: the attribution 7.2 s, the address readable over 6 s; "how it
+  was made" and "Thank you for watching" held 12 s, a 1.5 s fade; then 2 s
+  of black and silence) while the coda's last chord rings out: 56 bars
+  plus 22.7 s, 157.1 s of clip time (2 min 38 s at the DAC's 47.7 kHz;
+  `LAP_MS` is `56 * BAR_MS + 22700`, the lap's end is not on a bar line),
+  then again. The titles' wording is deliberate: the demos run live on the
+  board, but the film is not made by the board; it is code (`n6_film.py`
+  draws every frame with Skia, `score.py` synthesizes every note from sines
+  and filtered noise, no samples, footage or stock art), rendered on the PC
+  and played from the card. Do not let a title claim the board generates
+  the film. The lap never opens the
   Camera screen: its four gesture bars are Cinema showing the clip's
   picture, a recording of the Camera screen tracking the user's two hands
   (made 2026-11-18 with `record.py --camera`; the window chosen from the
@@ -110,11 +120,12 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   camera footage checked for faces by the user, never committed) with a
   "RECORDED ON THIS BOARD" plate in its quietest corner (the origin label).
   One clip carries it,
-  `/SD:/clips/_attract.n6v` (84 MB, `media/film/attract.py`; names starting
+  `/SD:/clips/_attract.n6v` (100 MB, `media/film/attract.py`; names starting
   with `_` stay out of Cinema's list, `player_attract_clip`): the film's
   pictures to 43.2 s, black frames while the demos show but the gestures
   from bar 27 (frames 1944 to 2231), the film's last
-  4.8 s, over the film's score rendered at lap length (`score.render` with
+  4.8 s, the titles and the pause, over the film's score rendered at lap
+  length (`score.render` with `tail` for the ring-out and
   `breaks`: the film's music sample for sample to 43.2 s, then its groove
   with a whoosh at every change, pad and bass only under Signal Lab, then
   the coda). Cinema plays it looping (`open_lap`, `open_clip == LAP_CLIP`)
@@ -139,7 +150,12 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   play), every screen's first picture 2 to 37 ms after its bar line, the
   gesture pictures within -0.73 to +0.19 frames of the one due at the DAC
   (median -0.25; matched to the source by numbers), the first of them black
-  under the fade-in.
+  under the fade-in. The lap with titles, the same day: the same match in
+  every bar, the music under the titles from -24 to -43 dBFS and out, the
+  pause digital silence. A recording of the lap for the user needs the
+  companion running (`run.cmd`; check `host_link` online in
+  `/status.json` before and after): without it Host Link and Core Map
+  show no data, and the user asked never to render a lap video so.
 - Dense visuals do not use LVGL draw calls: a widget's `LV_EVENT_DRAW_MAIN`
   handler gets a `struct raster` and writes pixels into the layer buffer
   (`ui/raster.c`). Safe because the software renderer runs synchronously
@@ -549,6 +565,16 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   recorder resets the encoder through its reset line before releasing
   anything (a late write or interrupt from a stalled picture), and the
   wait for the hardware is up to 500 ms (`long_waits`).
+- **The recorder's stream says it is full range (`cod.videoFullRange = 1`
+  in recorder.c).** **Why:** the encoder's BT.601 conversion gives YUV
+  over 0..255; without the flag every decoder (ffmpeg, PyAV, players)
+  reads TV range: the frame buffer's (8, 12, 18) background came out
+  (0, 0, 0), recording = 1.11 x frame buffer - 15, blacks crushed. Found
+  2026-11-18 comparing a screenshot with a recording of the same screen;
+  with the flag, 0.998 x - 1.3. Recordings made before that are full-range
+  values flagged as TV range, `media/out/gestures.mkv` among them (attract.py
+  converts it, `scale=in_range=full`). Check after any encoder change: a
+  `shot.py` screenshot against `record.py --secs 2` of a still screen.
 - **A bus master reading what is on screen holds `gfx_reader_begin(buf)`
   for as long as it reads, and starts at the beginning of an active area
   (`gfx_sleep_to_active`).** **Why:** LVGL draws into a presented buffer

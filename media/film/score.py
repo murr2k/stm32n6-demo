@@ -113,19 +113,21 @@ def impact() -> np.ndarray:
     return np.sin(2 * np.pi * (38 + 30 * np.exp(-t / 0.08)) * t) * np.exp(-t / 0.5) + 0.5 * band_noise(2.0, 200, 3000) * np.exp(-t / 0.12)
 
 
-def render(total: float, cuts: list[float], title_hit: float, breaks: tuple[int, ...] = ()) -> np.ndarray:
+def render(total: float, cuts: list[float], title_hit: float, breaks: tuple[int, ...] = (),
+           tail: float = 0.0) -> np.ndarray:
     """Build the stereo mix. `cuts` are the times of the scene transitions (a
     whoosh each); `breaks` are bars of pad and bass only (the attract lap's
-    theremin plays over them, media/film/attract.py).
+    theremin plays over them, media/film/attract.py); `tail` is time after
+    the coda (the lap's end titles) in which its last chord rings out.
 
     The noise is seeded here, so every render starts from the same noise: the
     attract lap's first 18 bars are then the film's, sample for sample. A
     lap-length render is the same music for longer: the bars carry on, the
-    last two are the coda."""
+    last two before the tail are the coda."""
     global rng
     rng = np.random.default_rng(6570)
     mix = np.zeros((int(total * SR) + SR, 2))
-    bars = int(round(total / BAR))
+    bars = int(round((total - tail) / BAR))
     k, h, s = kick(), hat(), snare()
 
     for b in range(bars):
@@ -170,6 +172,15 @@ def render(total: float, cuts: list[float], title_hit: float, breaks: tuple[int,
     add(mix, impact(), title_hit, 0.55)
     for c in cuts:
         add(mix, whoosh(1.0), c - 0.55, 0.16, pan=-0.3)
+
+    if tail > 0:
+        # the coda's last chord, held and dying away (no noise drawn: the rest stays as without a tail)
+        root, tones = CHORDS[(bars - 1) % 4]
+        t0 = bars * BAR
+        decay = np.exp(-tt(tail) / (tail / 2.75))  # about -24 dB by the end, whatever the length
+        for i, n in enumerate(tones):
+            add(mix, pad_note(hz(n), tail - 1.0)[:len(decay)] * decay, t0, 0.050, pan=-0.6 + 0.3 * i)
+        add(mix, pad_note(hz(root + 12), tail - 1.0)[:len(decay)] * decay, t0, 0.030)
 
     mix = mix[: int(total * SR)]
     t = np.arange(mix.shape[0]) / SR

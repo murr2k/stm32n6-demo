@@ -202,6 +202,10 @@ static int enc_open(struct slot *s)
 	}
 	if (r == H264ENC_OK) {
 		cod.idrHeader = 1; /* SPS and PPS before every IDR picture */
+		/* the BT.601 conversion gives full-range YUV (0..255); say so in the SPS,
+		 * or every decoder reads TV range: blacks crushed, the frame buffer's
+		 * (8, 12, 18) background decoded as (0, 0, 0) */
+		cod.videoFullRange = 1;
 		r = H264EncSetCodingCtrl(enc, &cod);
 	}
 	if (r == H264ENC_OK) {

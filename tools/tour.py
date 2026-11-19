@@ -554,7 +554,7 @@ def main() -> None:
     ap.add_argument("--no-attract", action="store_true")
     ap.add_argument("--no-companion", action="store_true", help="do not start host/companion.py for the run")
     ap.add_argument("--run", type=float, default=5.0, help="seconds measured per screen")
-    ap.add_argument("--attract", type=float, default=150.0, help="seconds of attract mode (one lap is about 140 with the companion running)")
+    ap.add_argument("--attract", type=float, default=170.0, help="seconds of attract mode (one lap, end titles and pause included, is about 159)")
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     companion = None

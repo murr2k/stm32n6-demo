@@ -42,10 +42,12 @@ static const struct screen *const screens[] = {
  * under the demos. The ghost plays the theremin quietly over a break. After
  * Signal Lab, Cinema shows four bars of the clip's picture: the Camera screen
  * tracking two hands, recorded on this board (the lap does not open the
- * camera itself). Without the clip (no card), or with one of another length,
- * the screens take turns as before. */
+ * camera itself). After the coda, end titles (7.2 s, then 12 s held and a
+ * 1.5 s fade) and 2 s of black: the lap's end is not on a bar line.
+ * Without the clip (no card), or with one of another length, the screens
+ * take turns as before. */
 #define BAR_MS 2400
-#define LAP_MS (56 * BAR_MS)
+#define LAP_MS (56 * BAR_MS + 22700)
 
 static const struct shell_step lap_steps[] = {
 	{&screen_cinema, 0},              /* the film to 0:43.2 */
@@ -57,7 +59,7 @@ static const struct shell_step lap_steps[] = {
 	{&screen_hostlink, 39 * BAR_MS},
 	{&screen_coremap, 43 * BAR_MS},
 	{&screen_hood, 49 * BAR_MS},
-	{&screen_cinema, 54 * BAR_MS},    /* the film's last scene, the coda */
+	{&screen_cinema, 54 * BAR_MS},    /* the film's last scene, the coda, the end titles */
 };
 
 static bool lap_available(void)

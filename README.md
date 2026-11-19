@@ -328,7 +328,7 @@ clean of the whole cache takes 25 µs, and a frame finished during the
 blanking still makes the next refresh: about 1 ms more for every frame on
 every screen.
 
-After 90 seconds without a touch the demo runs itself, in a lap of 2 min 15 s
+After 90 seconds without a touch the demo runs itself, in a lap of 2 min 38 s
 set to music. It opens with the film, *N6: the film*, and cuts at 0:43 to the
 demos, each arriving on a bar line of the film's music, which plays on under
 all of them: Home, Flight Deck, Signal Lab (a ghost flies a 1950s saucer on
@@ -336,7 +336,10 @@ the theremin, quietly, over a break in the music), four bars of the Camera
 screen tracking two hands and naming their gestures (a recording the board
 made of itself, marked as one: the lap never turns the camera on), Explorer
 zooming, Host Link, Core Map and Under the Hood. Then the film's last scene comes back
-with its musical coda, and the lap starts again. The title bar says so
+with its musical coda, end titles follow (who made it, and how: the demos run
+live on the board; the film and its score are code, every frame drawn and
+every note synthesized by a script, no samples or stock art), and after two
+seconds of black the lap starts again. The title bar says so
 while it does, and any touch hands control back (and stops the music).
 `ctl.py attract` starts it immediately; `ctl.py where` reports where in
 the lap it is (`lap_ms`).
@@ -724,7 +727,7 @@ presence 0.50 against 0.01.
 | Under the Hood | Working: no dropped frame on any of the five height axes in the automated run. On a linear axis the UI thread hid everything else (seen on the panel), hence the logarithmic default. The screen measures itself: with it showing, the UI thread takes about a third more of the CPU |
 | Cinema slider | A crash while scrubbing (picture frozen, a repeating noise) was reported once. Probable cause, found in a console log of real touches: Zephyr's input queue (16 events, drained by a thread at the lowest priority) dropped events, a lost release left the slider pressed, and the player then seeks to the same frame 60 times a second. Touch callbacks now run in the driver's context with no queue. Checked on the panel afterwards: five fingers on Touch Lab register and release cleanly with no event dropped, and the slider no longer hangs the film. Injected touches bypass the driver, which is why 2400 fuzzed actions never showed it. The slider's sound was rough as well (every UI frame restarted it at the finger); it is now short pieces of the clip cross-faded into each other while the finger moves and silence while it rests, measured free of steps and confirmed by ear on the panel. Other defects found on the way are fixed: a drag starting near a screen edge closed the film, seeks were counted as dropped frames and as stalls, Back could cost the UI a frame, the touch target was 44 px |
 | Screen transitions | Working: hardware fade and settle, no frame dropped in the automated run |
-| Attract mode | Working: starts after 90 s idle; a lap of 2 min 5 s set to the film's music (the film to 0:43, seven demos on its bar lines, the film's coda), the theremin's ghost quietly over a break; the board's own recording of it matches the clip's sound sample for sample, 0 dropped frames in two laps and in the tour. Without the clip on the card the screens take turns as before; a hand tracked on the Camera screen counts as someone using it |
+| Attract mode | Working: starts after 90 s idle; a lap of 2 min 38 s set to the film's music (the film to 0:43, seven demos on its bar lines and four bars of recorded hand tracking, marked as recorded, the film's coda, end titles), the theremin's ghost quietly over a break; the board's own recording of it matches the clip's sound sample for sample, 0 dropped frames in two laps and in the tour. Without the clip on the card the screens take turns as before; a hand tracked on the Camera screen counts as someone using it |
 | Theremin | Working: pitch and level as asked (a touch at the 734 Hz, -10 dB point plays 734 Hz at -10 dB), 0 discontinuities through glides, chords and lifts, touch to sound 3.8 to 4.8 ms (11 to 21 ms with the earlier 512-frame blocks), 0 dropped frames while playing (worst 8.5 ms). A finger slid off the top keeps its level, one that comes down off the spectrum does not play, SOUND off sends the DAC nothing (peak 0), all checked by the tour. Played by hand by the user on 2026-11-17; the loudness taper, the level hold and the SOUND switch came from that |
 | Soak test | Passed, 9 hours on 2026-11-17 (`tools/soak.py`: each hour 40 minutes of attract mode and 20 on the Camera screen with both networks every frame, the board polled every second): no reset, no fault, no console warning; LVGL pool, kernel heap and PSRAM the same in the last hour as in the second (86.4 KB, 0 B, 13.8 MB); no thread's stack high-water mark moved by more than 120 B; frame time per screen within 0.07 ms of the first hour. 2 dropped frames in 1251 screen switches, both in Flight Deck's fade-in at the same point of the lap, traced and fixed (screen transitions above) |
 
