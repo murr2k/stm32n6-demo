@@ -59,6 +59,8 @@ struct clip {
 
 static struct clip clips[PLAYER_MAX_CLIPS];
 static int n_clips;
+static struct clip lap_clip, staged_lap;  /* PLAYER_ATTRACT_FILE, outside the list */
+static bool have_lap, staged_have_lap;
 static const uint8_t *flash_clip[FLASH_MAX_CLIPS];
 static int n_flash;
 
@@ -188,6 +190,11 @@ static void scan_card(struct clip *clips, int *count)
 		    strcasecmp(ent.name + len - 4, ".n6v") != 0) {
 			continue;
 		}
+		bool lap = strcasecmp(ent.name, PLAYER_ATTRACT_FILE) == 0;
+
+		if (ent.name[0] == '_' && !lap) {
+			continue; /* a leading underscore keeps a file out of the list */
+		}
 		snprintf(path, sizeof(path), "%s/%s", SD_CLIPS_DIR, ent.name);
 		fs_file_t_init(&f);
 		if (fs_open(&f, path, FS_O_READ) != 0) {
@@ -199,6 +206,11 @@ static void scan_card(struct clip *clips, int *count)
 		if (got != sizeof(h) || !header_ok(&h) || h.n_frames > INDEX_MAX || h.index_off > ent.size ||
 		    (uint64_t)h.n_frames * 4 > ent.size - h.index_off) {
 			LOG_WRN("%s: not a usable clip, skipped", ent.name);
+			continue;
+		}
+		if (lap) {
+			set_clip(&staged_lap, &h, NULL, ent.name);
+			staged_have_lap = true;
 			continue;
 		}
 		/* the same title as a clip in flash: the card's copy takes its place */
@@ -248,6 +260,7 @@ int player_scan(void)
 	for (int i = 0; i < n_flash; i++) {
 		set_clip(&staged[n++], (const struct n6v_header *)flash_clip[i], flash_clip[i], "");
 	}
+	staged_have_lap = false;
 	scan_card(staged, &n);
 	n_staged = n;
 	return n;
@@ -266,7 +279,14 @@ int player_commit(void)
 	}
 	memcpy(clips, staged, sizeof(clips));
 	n_clips = n_staged;
+	lap_clip = staged_lap;
+	have_lap = staged_have_lap;
 	return n_clips;
+}
+
+const struct n6v_header *player_attract_clip(void)
+{
+	return have_lap && use_card ? &lap_clip.hdr : NULL;
 }
 
 int player_init(void)
@@ -895,15 +915,12 @@ static void rebase(uint32_t frame)
 
 /* ---- control ------------------------------------------------------------ */
 
-int player_open(int clip)
+static int open_clip(const struct clip *c)
 {
-	if (clip < 0 || clip >= n_clips) {
-		return -ENOENT;
-	}
 	k_mutex_lock(&codec, K_FOREVER);
 	close_req = false;
 	scrub_on = false;
-	cur = &clips[clip];
+	cur = c;
 	playing = false;
 	decoded_frame = UINT32_MAX;
 	last_acquired = UINT32_MAX;
@@ -929,6 +946,34 @@ int player_open(int clip)
 	k_sem_give(&io_wake);
 	k_sem_give(&wake);
 	return 0;
+}
+
+int player_open(int clip)
+{
+	if (clip < 0 || clip >= n_clips) {
+		return -ENOENT;
+	}
+	return open_clip(&clips[clip]);
+}
+
+int player_open_attract(void)
+{
+	return player_attract_clip() ? open_clip(&lap_clip) : -ENOENT;
+}
+
+uint32_t player_position_ms(void)
+{
+	const struct clip *c = cur;
+
+	if (c == NULL || close_req) {
+		return 0;
+	}
+	if (use_audio && playing && !scrub_on) {
+		int32_t heard = (int32_t)a_pos - (int32_t)audio_queued_frames();
+
+		return heard > 0 ? (uint32_t)((uint64_t)heard * 1000 / c->hdr.audio_rate) : 0;
+	}
+	return (uint32_t)((uint64_t)clock_frame() * 1000 * c->hdr.fps_den / c->hdr.fps_num);
 }
 
 /* Does not wait for the worker, which may be in the middle of a frame with

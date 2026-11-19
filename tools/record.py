@@ -9,10 +9,15 @@ time, size, IDR or P, the screen, whether the display was single-buffered),
 <name>.mkv (each picture at the time of its refresh, no re-encoding; needs
 PyAV, `pip install av` in the project venv) and <name>.mp4 (the same).
 
-Usage: record.py [--host IP] [--secs 10] [--name NAME] [--fps 30|60] [--attract]
+Usage: record.py [--host IP] [--secs 10] [--name NAME] [--fps 30|60] [--attract] [--camera]
   --fps      a picture every second refresh (30, the default) or every one (60)
-  --attract  start attract mode first and record one lap: until the lap
-             is back at the screen it started from (or --secs, if sooner)
+  --camera   record the Camera screen too (otherwise the picture before it is
+             held): camera footage, so keep faces out of the picture, and the
+             files out of the repository (captures/ is ignored)
+  --attract  start attract mode and record one lap: the attract lap's length
+             (from the board) when it runs the lap with its music, otherwise
+             until the screens are back at the one they started from; --secs
+             sets another length
 """
 from __future__ import annotations
 
@@ -37,7 +42,7 @@ OUT = ROOT / "captures" / "rec"
 PORT = 5559
 HDR = struct.Struct("<4sBBBBIIIIII")  # struct rec_hdr
 REC_HEADERS, REC_PICTURE, REC_AUDIO = 1, 2, 3
-FLAG_SINGLE = 0x01
+FLAG_SINGLE, FLAG_COPY = 0x01, 0x02
 
 
 def read_exact(s: socket.socket, n: int) -> bytes:
@@ -75,18 +80,23 @@ def mux(h264: Path, times: list[float], mkv: Path) -> int:
     import av  # PyAV, in the project venv
 
     tb = Fraction(1, 1000)
+    ms, last = [], -1
+    for t in times:
+        last = max(round(t * 1000), last + 1)
+        ms.append(last)
     with av.open(str(h264), format="h264") as inp, av.open(str(mkv), "w") as out:
         src = inp.streams.video[0]
         dst = out.add_stream_from_template(src)
         dst.time_base = tb
         n = 0
-        last = -1
         for pkt in inp.demux(src):
-            if pkt.size == 0 or n >= len(times):
+            if pkt.size == 0 or n >= len(ms):
                 continue
-            pts = max(round(times[n] * 1000), last + 1)
-            pkt.pts = pkt.dts = pts
-            last = pts
+            pkt.pts = pkt.dts = ms[n]
+            # each picture lasts until the next one. The reader's own duration is in its time
+            # base, 1/1200000 s: kept as milliseconds it was 40 s, the file 40 s too long, and a
+            # re-encode at a constant frame rate held the first picture 40 s and delayed the rest
+            pkt.duration = ms[n + 1] - ms[n] if n + 1 < len(ms) else (ms[n] - ms[n - 1] if n else 33)
             pkt.time_base = tb
             pkt.stream = dst
             out.mux(pkt)
@@ -104,38 +114,64 @@ def write_wav(path: Path, pcm: bytes, rate: int) -> None:
         w.writeframes(pcm)
 
 
-def where(host: str) -> tuple[int, bool]:
+def where(host: str) -> dict[str, int]:
+    """screen, attract, and with the attract lap running lap_ms (its position) and lap_len."""
     reply = send(host, ["where"])[0]
-    v = dict(x.split("=") for x in reply.split() if "=" in x)
-    return int(v["screen"]), v["attract"] == "1"
+    return {k: int(v) for k, v in (x.split("=") for x in reply.split() if "=" in x)}
+
+
+def lap_length(host: str) -> int:
+    """The attract lap's length in ms once attract mode runs it (it starts as
+    Cinema comes up), 0 if the screens take turns instead."""
+    t0 = time.time()
+    while time.time() - t0 < 3.0:
+        w = where(host)
+        if w.get("lap_ms", -1) >= 0:
+            return w.get("lap_len", 0)
+        time.sleep(0.05)
+    return 0
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default=DEFAULT_HOST)
-    ap.add_argument("--secs", type=float, default=10.0)
+    ap.add_argument("--secs", type=float, help="how long (default 10 s; with --attract, one lap)")
     ap.add_argument("--name", default=datetime.now().strftime("rec-%Y%m%d-%H%M%S"))
     ap.add_argument("--attract", action="store_true")
     ap.add_argument("--fps", type=int, choices=(30, 60), default=30)
+    ap.add_argument("--camera", action="store_true", help="record the Camera screen too (camera footage)")
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
     h264, table, mkv, mp4 = (OUT / f"{a.name}{x}" for x in (".h264", ".csv", ".mkv", ".mp4"))
 
     refresh_hz = int(dict(x.split("=") for x in send(a.host, ["stats"])[0].split() if "=" in x)["refresh_mhz"]) / 1000
-    start_screen = None
+    start_screen = where(a.host)["screen"] if a.attract else None
+    secs = a.secs if a.secs is not None else 10.0
+
+    # recording first, then attract mode: the lap's first sound is in the recording
+    s = socket.create_connection((a.host, PORT), timeout=10)
+    s.sendall(f"fps {a.fps}{' camera' if a.camera else ''}\n".encode())
+    t0 = time.time()
     if a.attract:
-        start_screen = where(a.host)[0]
         send(a.host, ["attract"])
+        lap_ms = lap_length(a.host)
+        if lap_ms:
+            # the attract lap (app/src/main.c): it starts and ends on Cinema, so the
+            # screens cannot say when it is over; its length can. The DAC runs about
+            # 0.6 % slow, and the lap is clip time: a second more covers it.
+            print(f"the attract lap: {lap_ms / 1000:.1f} s")
+            secs = a.secs if a.secs is not None else lap_ms / 1000 + 1.5
+            start_screen = None
+        elif a.secs is None:
+            secs = 400.0  # until the screens come back round to the first
     # the control port serves one client at a time: let others (tour.py) in while this records
     close(a.host)
+    a.secs = secs
 
-    s = socket.create_connection((a.host, PORT), timeout=10)
-    s.sendall(f"fps {a.fps}\n".encode())
     pictures, sizes, enc_us, kinds = 0, [], [], {0: 0, 1: 0}
-    missed = singles = 0
+    missed = singles = copies = 0
     audio = bytearray()
     left_start = False
-    t0 = time.time()
     with open(h264, "wb") as fh, open(table, "w", newline="") as ft:
         w = csv.writer(ft)
         w.writerow(["refresh", "t_us", "encode_us", "bytes", "coding", "screen", "single", "missed", "audio_pos"])
@@ -161,6 +197,7 @@ def main() -> None:
                 kinds[coding] = kinds.get(coding, 0) + 1
                 missed = miss
                 singles += bool(flags & FLAG_SINGLE)
+                copies += bool(flags & FLAG_COPY)
                 w.writerow([refresh, t_us, e_us, size, "IDR" if coding == 0 else "P", screen,
                             int(bool(flags & FLAG_SINGLE)), miss, apos])
                 if start_screen is not None:
@@ -172,7 +209,7 @@ def main() -> None:
             s.close()
     secs = time.time() - t0
     if a.attract:
-        send(a.host, ["screen %d" % (start_screen or 0)])
+        send(a.host, ["screen %d" % (start_screen or 0)])  # a screen command ends attract mode
         close(a.host)
 
     fps = refresh_hz / (1 if a.fps == 60 else 2)
@@ -193,8 +230,11 @@ def main() -> None:
     if rate > 0:
         wav = mkv.with_suffix(".wav")
         write_wav(wav, bytes(audio), round(rate))
-        subprocess.run(ff + ["-i", str(video), "-i", str(wav), "-map", "0:v", "-map", "1:a", "-c:v", "copy",
-                             "-c:a", "pcm_s16le", str(mkv)], check=True)
+        # -copyts: each picture stays where its time on the sound's clock puts it; by default
+        # ffmpeg starts every input at zero and moves the picture ahead by its first time
+        subprocess.run(ff + ["-copyts", "-i", str(video), "-i", str(wav), "-map", "0:v", "-map", "1:a",
+                             "-c:v", "copy", "-c:a", "pcm_s16le", str(mkv)], check=True)
+        video.unlink()  # the MKV holds the picture now; a left-over copy kept what a recording showed
         subprocess.run(ff + ["-i", str(mkv), "-c:v", "copy", "-c:a", "aac", "-b:a", "320k", str(mp4)], check=True)
         print(f"sound: {len(audio) // 4 / rate:.1f} s at {rate:.1f} Hz (the DAC's measured rate)")
     else:
@@ -204,7 +244,10 @@ def main() -> None:
         print(f"warning: {pictures} pictures received, {placed} found in the stream")
     mbit = sum(sizes) * 8 / max(secs, 1e-3) / 1e6
     print(f"{pictures} pictures in {secs:.1f} s ({pictures / max(secs, 1e-3):.2f} a second, {fps:.3f} due), "
-          f"{missed} missed, {kinds.get(0, 0)} IDR / {kinds.get(1, 0)} P, {singles} single-buffered")
+          f"{missed} missed, {kinds.get(0, 0)} IDR / {kinds.get(1, 0)} P, {singles} single-buffered "
+          f"({copies} from the display's copy)")
+    if copies:
+        print("this recording holds camera footage: keep it out of the repository, delete it when done")
     if enc_us:
         print(f"encode {statistics.mean(enc_us) / 1000:.2f} ms mean, {max(enc_us) / 1000:.2f} ms worst; "
               f"{mbit:.1f} Mbit/s; largest picture {max(sizes) // 1024} KB")

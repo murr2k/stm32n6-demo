@@ -14,6 +14,36 @@ them.
   frames: a frame was chosen for the sample at the DAC, then decoded,
   converted and shown at the next present. It now decodes 30 ms ahead:
   -8 to +13 ms.
+- **`tools/record.py` left a video-only copy of every recording behind**
+  (`<name>-video.mkv`), which outlived the recording when that was
+  deleted. It is removed once the MKV with sound is written.
+- **`tools/record.py`'s files ran 40 s longer than the recording.** Every
+  picture carried a 40 s duration (the H.264 reader's 1/1,200,000 s time
+  base kept as milliseconds): the last picture stood for 40 s, and a
+  re-encode at a constant frame rate held the first one for 40 s and put
+  every picture after it 40 s behind its sound. Each picture now lasts
+  until the next. Joining picture and sound also moved the picture ahead
+  by its first time (0.03 to 0.14 s); it now stays on the sound's clock.
+
+### Changed
+
+- **Attract mode is a lap set to the film's music**: it opens with *N6: the
+  film*, cuts at 0:43 to the demos, each arriving on a bar line while the
+  film's music plays on under them (Home, Flight Deck, Signal Lab, Explorer,
+  Host Link, Core Map, Under the Hood), and ends with the film's last scene
+  and its coda; 2 min 15 s, then again. The live Camera screen is no longer
+  in it: after Signal Lab, four bars replay the board's own recording of
+  the Camera screen tracking two hands, marked "Recorded on this board".
+  Any touch stops it and the music.
+  - The music is the film's score at lap length, with a whoosh at every
+    screen change and a break under the theremin; one clip on the card
+    carries it, `_attract.n6v`, made by `media/film/attract.py` (upload it
+    with `n6v.py upload`). Without it the screens take turns as before.
+  - On Signal Lab the theremin's ghost flies once, in the lap's three bars,
+    quietly under the music instead of replacing it (`ctl.py "thmunder
+    -80"` sets how far under, in tenths of a dB).
+  - `ctl.py where` tells where in the lap it is (`lap_ms`, `lap_len`), and
+    `record.py --attract` records exactly one lap from its first sound.
 
 ### Added
 
@@ -27,8 +57,11 @@ them.
     MP4 files.
   - `tools/avsync.py` records the A/V sync clip and measures each flash
     against its beep; `ctl.py rec` reports the recorder.
-  - Not recorded yet: the Camera screen, where the NPU starves the encoder.
-    A recording holds the picture from just before it.
+  - The Camera screen only when asked for (`record.py --camera`: camera
+    footage, so keep faces out of the picture). There the display copies
+    each finished frame for the encoder (3 ms with hands tracked, 0 dropped
+    frames). Without `--camera` a recording holds the picture from just
+    before it.
 
 ## 2026-11-17
 

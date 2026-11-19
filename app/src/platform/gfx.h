@@ -168,4 +168,16 @@ bool gfx_single_buffered(void);
 void gfx_reader_begin(const uint8_t *buf);
 void gfx_reader_end(void);
 
+/*
+ * A copy of the picture on screen into dst (GFX_FB_BYTES, not read by the
+ * CPU: a bus master's input), made by DMA2D on the UI thread at the end of
+ * its next frame. Single-buffered that is between the frame's end and the
+ * next refresh, where the UI thread would otherwise wait: the display does
+ * not wait for the reader, and the copy is a whole frame, never a half-drawn
+ * one. Blocks the caller; returns the time the copy began (gfx_now_us(),
+ * never 0) and its duration in *us, or 0 if none was made within
+ * timeout_ms. One caller at a time (the recorder on the Camera screen).
+ */
+uint32_t gfx_copy_front(uint8_t *dst, uint32_t timeout_ms, uint32_t *us);
+
 #endif

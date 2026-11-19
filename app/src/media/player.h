@@ -89,6 +89,17 @@ bool player_using_file(const char *name);
 
 int player_open(int clip);
 void player_close(void);
+
+/* The attract lap's clip (media/film/attract.py): this file in /SD:/clips,
+ * kept out of the list like every name that starts with an underscore. Its
+ * header while the card holds it, else NULL; open it like a listed clip. */
+#define PLAYER_ATTRACT_FILE "_attract.n6v"
+const struct n6v_header *player_attract_clip(void);
+int player_open_attract(void);
+/* Where the open clip is, in ms of clip time: the sample at the DAC now (the
+ * music's own position, for things that keep time with it), the frame where
+ * there is no sound. 0 with no clip open. */
+uint32_t player_position_ms(void);
 void player_play(void);
 void player_pause(void);
 void player_seek(uint32_t frame);

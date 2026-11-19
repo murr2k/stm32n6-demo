@@ -868,6 +868,8 @@ static void tick(uint32_t now_ms)
 	}
 	if (ghost_by_attract && !shell_in_attract()) {
 		theremin_ghost(false); /* someone touched: their fingers play now */
+		theremin_ghost_short(false);
+		theremin_set_overlay(false); /* the lap's music stops with attract mode: the theremin takes the output */
 		ghost_by_attract = false;
 	}
 	theremin_get(&thm);
@@ -1004,6 +1006,8 @@ static void show(void)
 	int s = sig_source();
 
 	visible = true;
+	/* in the attract lap the music plays on: the theremin goes under it, not instead of it */
+	theremin_set_overlay(shell_program_running());
 	set_mode(s == SIG_SRC_THEREMIN ? M_INSTRUMENT : s == SIG_SRC_MIC ? M_MONITOR : M_ANALYSER);
 }
 
@@ -1011,6 +1015,8 @@ static void hide(void)
 {
 	visible = false;
 	set_mode(M_ANALYSER);
+	theremin_set_overlay(false); /* for the next enable; the one fading out lets go where it was */
+	theremin_ghost_short(false);
 	if (ghost_by_attract) {
 		theremin_ghost(false);
 		ghost_by_attract = false;
@@ -1025,11 +1031,17 @@ static void hide(void)
 }
 
 /* Attract mode: a ghost plays the theremin, a flying saucer from a 1950s
- * film; the source the screen had comes back when it leaves. */
+ * film; the source the screen had comes back when it leaves. In the attract
+ * lap (main.c) it flies once in the screen's three bars, quietly under the
+ * music's break. */
 static void attract_start(void)
 {
+	bool lap = shell_program_running();
+
 	pre_attract_source = sig_source();
 	sig_set_source(SIG_SRC_THEREMIN);
+	theremin_set_overlay(lap);
+	theremin_ghost_short(lap);
 	theremin_ghost(true);
 	ghost_by_attract = true;
 	set_mode(M_INSTRUMENT);

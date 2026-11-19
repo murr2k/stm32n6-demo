@@ -113,8 +113,17 @@ def impact() -> np.ndarray:
     return np.sin(2 * np.pi * (38 + 30 * np.exp(-t / 0.08)) * t) * np.exp(-t / 0.5) + 0.5 * band_noise(2.0, 200, 3000) * np.exp(-t / 0.12)
 
 
-def render(total: float, cuts: list[float], title_hit: float) -> np.ndarray:
-    """Build the stereo mix. `cuts` are the times of the scene transitions."""
+def render(total: float, cuts: list[float], title_hit: float, breaks: tuple[int, ...] = ()) -> np.ndarray:
+    """Build the stereo mix. `cuts` are the times of the scene transitions (a
+    whoosh each); `breaks` are bars of pad and bass only (the attract lap's
+    theremin plays over them, media/film/attract.py).
+
+    The noise is seeded here, so every render starts from the same noise: the
+    attract lap's first 18 bars are then the film's, sample for sample. A
+    lap-length render is the same music for longer: the bars carry on, the
+    last two are the coda."""
+    global rng
+    rng = np.random.default_rng(6570)
     mix = np.zeros((int(total * SR) + SR, 2))
     bars = int(round(total / BAR))
     k, h, s = kick(), hat(), snare()
@@ -125,6 +134,7 @@ def render(total: float, cuts: list[float], title_hit: float) -> np.ndarray:
         last = b >= bars - 2
         intro = t0 < title_hit - 0.01
         brk = b == 14
+        quiet = b in breaks
 
         for i, n in enumerate(tones):
             add(mix, pad_note(hz(n), BAR), t0, 0.050 if not intro else 0.035, pan=-0.6 + 0.3 * i)
@@ -135,7 +145,7 @@ def render(total: float, cuts: list[float], title_hit: float) -> np.ndarray:
                 add(mix, bass_note(hz(root), BEAT * 0.9), t0 + 1.5 * BEAT, 0.20)
                 add(mix, bass_note(hz(root + 12), BEAT * 0.5), t0 + 3.5 * BEAT, 0.12)
 
-        if t0 >= title_hit + BAR - 0.01 or last:
+        if (t0 >= title_hit + BAR - 0.01 or last) and not quiet:
             seq = [0, 2, 4, 1, 3, 4, 2, 1, 0, 3, 4, 2, 1, 4, 3, 2]
             for i, idx in enumerate(seq):
                 if last and i % 2:
@@ -144,11 +154,11 @@ def render(total: float, cuts: list[float], title_hit: float) -> np.ndarray:
                     pan=0.7 if i % 2 else -0.7)
                 add(mix, pluck(hz(tones[idx] + 12)), t0 + i * BEAT / 4 + 0.45, 0.032, pan=-0.7 if i % 2 else 0.7)
 
-        drums = t0 >= title_hit + BAR - 0.01 and not last and not brk
+        drums = t0 >= title_hit + BAR - 0.01 and not last and not brk and not quiet
         if drums:
             for beat in range(4):
                 add(mix, k, t0 + beat * BEAT, 0.50)
-        if t0 >= 12.0 - 0.01 and not last:
+        if t0 >= 12.0 - 0.01 and not last and not quiet:
             for e in range(8):
                 if e % 2:
                     add(mix, h, t0 + e * BEAT / 2, 0.05, pan=0.3)

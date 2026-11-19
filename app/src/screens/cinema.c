@@ -65,6 +65,12 @@ static int pending_play = -1;
 /* player view */
 static lv_obj_t *pv, *top_bar, *bottom_bar, *l_title, *l_time, *l_stats, *btn_play, *scrub;
 static volatile int open_clip = -1;
+/* The attract lap's clip (main.c, player_open_attract): open_clip is LAP_CLIP
+ * while it plays, which, like any open clip, keeps the codec and the card's
+ * reader from the gallery's work. It plays on, sound only, while the other
+ * screens show: the lap's music. */
+#define LAP_CLIP PLAYER_MAX_CLIPS
+static bool lap_on;
 static uint32_t overlay_until;
 static bool overlay_on;
 static uint32_t shown_frame = UINT32_MAX;
@@ -305,8 +311,50 @@ static void close_player(void)
 	}
 	player_close();
 	open_clip = -1;
+	lap_on = false;
 	lv_obj_add_flag(pv, LV_OBJ_FLAG_HIDDEN);
 	shell_set_cover(false);
+}
+
+/* The lap's clip from its start, looping, the picture up and no controls. */
+static void open_lap(void)
+{
+	const struct n6v_header *h = player_attract_clip();
+
+	if (lap_on || h == NULL) {
+		return;
+	}
+	close_player();
+	if (player_open_attract() != 0) {
+		return;
+	}
+	lap_on = true;
+	open_clip = LAP_CLIP;
+	shown_frame = scratch_frame = UINT32_MAX;
+	lv_label_set_text(l_title, h->title);
+	lv_obj_remove_flag(pv, LV_OBJ_FLAG_HIDDEN);
+	lv_obj_move_foreground(pv);
+	shell_set_cover(true);
+	player_set_loop(true);
+	player_play();
+	show_overlay(false);
+}
+
+void cinema_lap_start(void)
+{
+	open_lap();
+}
+
+int32_t cinema_lap_ms(void)
+{
+	return lap_on ? (int32_t)player_position_ms() : -1;
+}
+
+uint32_t cinema_lap_length_ms(void)
+{
+	const struct n6v_header *h = player_attract_clip();
+
+	return h ? (uint32_t)((uint64_t)h->n_frames * 1000 * h->fps_den / h->fps_num) : 0;
 }
 
 static void open_player(int clip)
@@ -602,6 +650,9 @@ static void service(uint32_t now_ms)
 	static uint32_t t0;
 	struct sd_status sd;
 
+	if (lap_on && !shell_in_attract()) {
+		close_player(); /* someone touched: the lap and its music stop, wherever they are */
+	}
 	if (thumbs_dirty) {
 		thumbs_dirty = false;
 		lv_obj_invalidate(row);
@@ -659,6 +710,12 @@ static void tick(uint32_t now_ms)
 		return;
 	}
 	player_get_status(&st);
+	if (lap_on) {
+		if (st.frame != shown_frame) {
+			lv_obj_invalidate(pv); /* the picture only: the lap shows no controls */
+		}
+		return;
+	}
 
 	if (overlay_on && st.playing && !scrubbing && (int32_t)(now_ms - overlay_until) > 0) {
 		show_overlay(false);
@@ -701,8 +758,25 @@ static void tick(uint32_t now_ms)
 	}
 }
 
+static void show(void)
+{
+	if (lap_on) {
+		/* back for the recorded gestures or the coda: the clip has played on all along */
+		lv_obj_remove_flag(pv, LV_OBJ_FLAG_HIDDEN);
+		lv_obj_move_foreground(pv);
+		shell_set_cover(true);
+		lv_obj_invalidate(pv);
+	}
+}
+
 static void hide(void)
 {
+	if (lap_on && shell_in_attract()) {
+		/* the lap goes on to the demos: its music plays on, its picture waits */
+		lv_obj_add_flag(pv, LV_OBJ_FLAG_HIDDEN);
+		shell_set_cover(false);
+		return;
+	}
 	close_player();
 }
 
@@ -716,9 +790,14 @@ static void mini(const struct raster *r)
 	}
 }
 
-/* Attract mode: play the first clip once, then let the shell move on. */
+/* Attract mode: the lap's clip when attract mode runs the lap (main.c);
+ * otherwise play the first clip once, then let the shell move on. */
 static void attract_start(void)
 {
+	if (shell_program_running()) {
+		open_lap();
+		return;
+	}
 	if (n_clips > 0 && open_clip < 0) {
 		open_player(0);
 		overlay_until = k_uptime_get_32() + 1500;
@@ -742,6 +821,7 @@ const struct screen screen_cinema = {
 	.create = create,
 	.tick = tick,
 	.service = service,
+	.show = show,
 	.hide = hide,
 	.mini = mini,
 	.attract_secs = 3,

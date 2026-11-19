@@ -328,12 +328,44 @@ clean of the whole cache takes 25 µs, and a frame finished during the
 blanking still makes the next refresh: about 1 ms more for every frame on
 every screen.
 
-After 90 seconds without a touch the demo runs itself: it steps through the
-screens, lets Explorer finish its zoom tour, lets a ghost play a flying
-saucer on Signal Lab's theremin, plays the film once in Cinema,
-and skips screens that would show nothing (Host Link without a companion,
-Touch Lab without fingers). The title bar says so while it does, and any
-touch hands control back. `ctl.py attract` starts it immediately.
+After 90 seconds without a touch the demo runs itself, in a lap of 2 min 15 s
+set to music. It opens with the film, *N6: the film*, and cuts at 0:43 to the
+demos, each arriving on a bar line of the film's music, which plays on under
+all of them: Home, Flight Deck, Signal Lab (a ghost flies a 1950s saucer on
+the theremin, quietly, over a break in the music), four bars of the Camera
+screen tracking two hands and naming their gestures (a recording the board
+made of itself, marked as one: the lap never turns the camera on), Explorer
+zooming, Host Link, Core Map and Under the Hood. Then the film's last scene comes back
+with its musical coda, and the lap starts again. The title bar says so
+while it does, and any touch hands control back (and stops the music).
+`ctl.py attract` starts it immediately; `ctl.py where` reports where in
+the lap it is (`lap_ms`).
+
+The music and the film's two parts are one clip on the microSD card,
+`/SD:/clips/_attract.n6v` (a leading underscore keeps a file out of
+Cinema's list). `media/film/attract.py` makes it from the film's master:
+the film's score at lap length (the film's own music, sample for sample, to
+0:43.2; then its groove carried on with a whoosh at every screen change,
+pad and bass only under the theremin; then the coda on the film's last
+two bars), the film's pictures to 0:43.2, black while the demos show
+except for the four bars of recorded hand tracking (`tools/record.py
+--camera`, 288 pictures; camera footage, so it is not in the repository),
+and the film's last 4.8 s. Cinema plays it, and when the lap moves on it keeps
+playing it, sound only; the shell changes screens by the clip's own clock,
+the sample at the DAC, starting each fade 110 ms early so the new screen
+arrives on the beat. Measured in the board's own recording of a lap: the
+sound sent to the DAC is the clip's, sample for sample, through every
+screen change, and each screen's first picture lands 2 to 39 ms after its
+bar line (the recorded hand tracking within a frame of its sound). The theremin plays over the music instead of replacing it (an
+overlay mix in the audio output), 8 dB down (`ctl.py "thmunder -80"`, dB x
+10). The demos' bars are listed twice, in `attract.py` and in `main.c`; the
+firmware checks the clip's length and, without the clip (no card) or with
+one of another length, steps through the screens as before.
+
+```powershell
+.\.venv\Scripts\python.exe media\film\attract.py            # the lap's clip (needs the film's master, n6_film.py)
+.\.venv\Scripts\python.exe tools\n6v.py upload media\out\_attract.n6v
+```
 
 ## The theremin
 
@@ -559,15 +591,27 @@ video of the demo made by the demo, with no screen recorder or camera rig
   overflows and corrupts the memory pool; here the board faulted after 3 or
   4 restarts. The recorder routes the library's allocations past that
   table, also at link time.
-- **Not recorded yet: the Camera screen.** While it shows, the display is
-  single-buffered and the NPU's PSRAM traffic starves the encoder. It
-  reported its own bus timeouts and made the display wait, so frames
-  dropped. For now the recorder skips that screen, and a recording holds
-  the picture from just before it.
+- **The Camera screen only when asked for** (`--camera`): it is camera
+  footage, so keep faces out of the picture. While that screen shows, the
+  display is single-buffered (the NPU has the other buffer), and the encoder
+  reading the buffer being drawn made the display wait. So the display
+  copies each finished frame into PSRAM with DMA2D, in the time it would
+  otherwise wait for the next refresh, and the encoder reads the copy.
+  Measured with two hands tracked: 900 pictures in 30 s, none missed, the
+  copy 3.0 ms, 0 dropped frames. With no hand in view the palm detector
+  runs on every frame and its PSRAM traffic makes the encoder time out
+  about twice a second (each one costs a few pictures). Without `--camera`
+  the recorder skips that screen, and a recording holds the picture from
+  just before it.
+- **Recordings are hard cuts where the panel fades.** The fade and the
+  settle between screens are done by the display controller on the way to
+  the panel; the frame buffer, which the encoder reads, never fades. A
+  video made from a recording adds them back at the screen changes.
 
 ```powershell
 .\.venv\Scripts\python.exe tools\record.py --secs 20              # 20 s: captures\rec\<name>.mkv (PCM) and .mp4 (AAC)
-.\.venv\Scripts\python.exe tools\record.py --attract --fps 60      # one lap of attract mode at 60 fps
+.\.venv\Scripts\python.exe tools\record.py --attract --fps 60      # exactly one attract lap (its length from the board) at 60 fps
+.\.venv\Scripts\python.exe tools\record.py --camera --secs 60      # the Camera screen too: camera footage, no faces
 .\.venv\Scripts\python.exe tools\avsync.py                         # flash against beep, in DAC frames
 ```
 
@@ -680,7 +724,7 @@ presence 0.50 against 0.01.
 | Under the Hood | Working: no dropped frame on any of the five height axes in the automated run. On a linear axis the UI thread hid everything else (seen on the panel), hence the logarithmic default. The screen measures itself: with it showing, the UI thread takes about a third more of the CPU |
 | Cinema slider | A crash while scrubbing (picture frozen, a repeating noise) was reported once. Probable cause, found in a console log of real touches: Zephyr's input queue (16 events, drained by a thread at the lowest priority) dropped events, a lost release left the slider pressed, and the player then seeks to the same frame 60 times a second. Touch callbacks now run in the driver's context with no queue. Checked on the panel afterwards: five fingers on Touch Lab register and release cleanly with no event dropped, and the slider no longer hangs the film. Injected touches bypass the driver, which is why 2400 fuzzed actions never showed it. The slider's sound was rough as well (every UI frame restarted it at the finger); it is now short pieces of the clip cross-faded into each other while the finger moves and silence while it rests, measured free of steps and confirmed by ear on the panel. Other defects found on the way are fixed: a drag starting near a screen edge closed the film, seeks were counted as dropped frames and as stalls, Back could cost the UI a frame, the touch target was 44 px |
 | Screen transitions | Working: hardware fade and settle, no frame dropped in the automated run |
-| Attract mode | Working: starts after 90 s idle, one lap is about two minutes; a hand tracked on the Camera screen counts as someone using it; a ghost plays the theremin on Signal Lab |
+| Attract mode | Working: starts after 90 s idle; a lap of 2 min 5 s set to the film's music (the film to 0:43, seven demos on its bar lines, the film's coda), the theremin's ghost quietly over a break; the board's own recording of it matches the clip's sound sample for sample, 0 dropped frames in two laps and in the tour. Without the clip on the card the screens take turns as before; a hand tracked on the Camera screen counts as someone using it |
 | Theremin | Working: pitch and level as asked (a touch at the 734 Hz, -10 dB point plays 734 Hz at -10 dB), 0 discontinuities through glides, chords and lifts, touch to sound 3.8 to 4.8 ms (11 to 21 ms with the earlier 512-frame blocks), 0 dropped frames while playing (worst 8.5 ms). A finger slid off the top keeps its level, one that comes down off the spectrum does not play, SOUND off sends the DAC nothing (peak 0), all checked by the tour. Played by hand by the user on 2026-11-17; the loudness taper, the level hold and the SOUND switch came from that |
 | Soak test | Passed, 9 hours on 2026-11-17 (`tools/soak.py`: each hour 40 minutes of attract mode and 20 on the Camera screen with both networks every frame, the board polled every second): no reset, no fault, no console warning; LVGL pool, kernel heap and PSRAM the same in the last hour as in the second (86.4 KB, 0 B, 13.8 MB); no thread's stack high-water mark moved by more than 120 B; frame time per screen within 0.07 ms of the first hour. 2 dropped frames in 1251 screen switches, both in Flight Deck's fade-in at the same point of the lap, traced and fixed (screen transitions above) |
 

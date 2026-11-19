@@ -20,6 +20,7 @@
 #include <stm32n6xx_hal.h>
 
 #include "gfx.h"
+#include "media/jpegdec.h" /* dma2d_copy32 */
 #include "psram.h"
 
 LOG_MODULE_REGISTER(gfx, LOG_LEVEL_INF);
@@ -72,6 +73,12 @@ static K_SEM_DEFINE(reader_done, 0, 1);
 static atomic_t snap_request;
 static K_SEM_DEFINE(snap_done, 0, 1);
 static K_MUTEX_DEFINE(snap_lock);
+
+/* gfx_copy_front(): the destination asked for, and the copy's time */
+static atomic_ptr_t copy_dst;
+static K_SEM_DEFINE(copy_done, 0, 1);
+static uint32_t copy_t0, copy_us; /* written before copy_done is given */
+static bool copy_ok;
 
 uint32_t gfx_now_us(void)
 {
@@ -254,6 +261,24 @@ static void present(const uint8_t *buf)
 	front = buf;
 }
 
+/* gfx_copy_front(), on the UI thread where the front buffer is whole and
+ * nothing draws into it */
+static void service_copy(void)
+{
+	if (atomic_ptr_get(&copy_dst) == NULL) {
+		return;
+	}
+	/* taken, so a requester that gives up now sees it is being made */
+	uint8_t *dst = atomic_ptr_set(&copy_dst, NULL);
+
+	if (dst == NULL) {
+		return;
+	}
+	copy_t0 = gfx_now_us();
+	copy_ok = dma2d_copy32(front, dst, GFX_W, GFX_H, &copy_us) == 0;
+	k_sem_give(&copy_done);
+}
+
 static void flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *px_map)
 {
 	ARG_UNUSED(area);
@@ -274,8 +299,15 @@ static void flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *px_map)
 			atomic_set(&lent, 1);
 		} else if (lend_state == SINGLE || lend_state == RETURNING) {
 			/* the buffer did not change, so nothing waited for the refresh:
-			 * start the next frame at the top of the next one */
-			wait_refresh_start();
+			 * start the next frame at the top of the next one. A copy asked
+			 * for is made first, in that wait; one that ran past the top
+			 * starts the next frame at once instead of a refresh later. */
+			uint32_t y0 = panel_line();
+
+			service_copy();
+			if (panel_line() >= y0) {
+				wait_refresh_start();
+			}
 		}
 		presented = true;
 		now = gfx_now_us();
@@ -484,6 +516,11 @@ void gfx_run_frame(void)
 	presented = false;
 	lv_timer_handler();
 	service_snapshot();
+	if (!presented || lend_state == DOUBLE) {
+		/* single-buffered with a frame presented, flush_cb() did it before
+		 * waiting for the refresh; here it would delay the next frame */
+		service_copy();
+	}
 
 	if (presented) {
 		uint32_t tail = gfx_now_us() - t_last_present;
@@ -610,6 +647,23 @@ void gfx_reader_end(void)
 {
 	atomic_ptr_set(&reader, NULL);
 	k_sem_give(&reader_done);
+}
+
+uint32_t gfx_copy_front(uint8_t *dst, uint32_t timeout_ms, uint32_t *us)
+{
+	k_sem_reset(&copy_done);
+	atomic_ptr_set(&copy_dst, dst);
+	if (k_sem_take(&copy_done, K_MSEC(timeout_ms)) != 0) {
+		/* taken back unless the UI thread took it already: then it is being made */
+		if (atomic_ptr_cas(&copy_dst, dst, NULL)) {
+			return 0;
+		}
+		k_sem_take(&copy_done, K_MSEC(100));
+	}
+	if (us) {
+		*us = copy_us;
+	}
+	return copy_ok ? MAX(copy_t0, 1u) : 0;
 }
 
 lv_display_t *gfx_display(void)

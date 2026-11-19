@@ -49,6 +49,8 @@ LOG_MODULE_REGISTER(audio, LOG_LEVEL_INF);
 static bool ok;
 static audio_source_t source;
 static void *source_ctx;
+static audio_source_t overlay;
+static void *overlay_ctx;
 static struct k_spinlock lock;
 static volatile uint32_t mark_us;        /* when the DMA last finished a half */
 static volatile uint32_t n_halves, n_errors;
@@ -244,11 +246,12 @@ static void audio_thread(void *p1, void *p2, void *p3)
 		uint32_t got = 0;
 		int l = 0, r = 0;
 		k_spinlock_key_t key = k_spin_lock(&lock);
-		audio_source_t fn = source;
-		void *ctx = source_ctx;
+		audio_source_t fn = source, ofn = overlay;
+		void *ctx = source_ctx, *octx = overlay_ctx;
+		bool tone = tone_left > 0;
 
 		k_spin_unlock(&lock, key);
-		if (tone_left > 0) {
+		if (tone) {
 			/* 32-bit phase accumulator through a parabolic sine: clean enough to hear faults by ear */
 			for (got = 0; got < HALF_FRAMES && tone_left > 0; got++, tone_left--) {
 				int32_t x = (int32_t)(tone_phase >> 16) - 32768;          /* -32768..32767 saw */
@@ -262,6 +265,17 @@ static void audio_thread(void *p1, void *p2, void *p3)
 			got = MIN(fn(dst, HALF_FRAMES, ctx), (uint32_t)HALF_FRAMES);
 		}
 		memset(dst + got * 2, 0, (HALF_FRAMES - got) * 4);
+		if (ofn && !tone) {
+			static int16_t ov[HALF_FRAMES * 2];
+			uint32_t n = MIN(ofn(ov, HALF_FRAMES, octx), (uint32_t)HALF_FRAMES);
+
+			for (uint32_t i = 0; i < n * 2; i++) {
+				int32_t s = dst[i] + ov[i];
+
+				dst[i] = (int16_t)CLAMP(s, -32768, 32767);
+			}
+			got = MAX(got, n);
+		}
 		if (cap_left > 0) {
 			uint32_t n = MIN(cap_left, (uint32_t)HALF_FRAMES);
 
@@ -566,6 +580,39 @@ void audio_release_source(audio_source_t fn)
 	if (source == fn) {
 		source = NULL;
 		source_ctx = NULL;
+	}
+	k_spin_unlock(&lock, key);
+}
+
+void audio_set_overlay(audio_source_t fn, void *ctx)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+
+	overlay = fn;
+	overlay_ctx = ctx;
+	k_spin_unlock(&lock, key);
+}
+
+void audio_release_overlay(audio_source_t fn)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+
+	if (overlay == fn) {
+		overlay = NULL;
+		overlay_ctx = NULL;
+	}
+	k_spin_unlock(&lock, key);
+}
+
+void audio_promote_overlay(audio_source_t fn)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+
+	if (overlay == fn) {
+		source = fn;
+		source_ctx = overlay_ctx;
+		overlay = NULL;
+		overlay_ctx = NULL;
 	}
 	k_spin_unlock(&lock, key);
 }

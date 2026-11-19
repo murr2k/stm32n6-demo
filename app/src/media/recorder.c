@@ -51,6 +51,11 @@ static K_SEM_DEFINE(start_sem, 0, 1);
 static K_SEM_DEFINE(stopped_sem, 0, 1);
 static volatile bool want;
 static volatile uint32_t every = 2; /* refreshes per picture: 2 is 30 fps, 1 is 60 */
+/* The Camera screen too (the client asked: "camera" on its first line). It
+ * runs single-buffered; the encoder reads a copy the display makes at the end
+ * of a frame (gfx_copy_front), in PSRAM, taken on first use and kept. */
+static volatile bool camera;
+static uint8_t *copy;
 static H264EncInst enc;
 static struct k_spinlock lock;
 static struct rec_status st; /* under lock */
@@ -283,11 +288,13 @@ static void enc_thread(void *a, void *b, void *c)
 
 		st.recording = true;
 		st.pictures = st.missed = st.bytes = 0;
+		st.held = st.copies = st.copy_us = st.copy_worst_us = 0;
 		st.encode_worst_us = 0;
 		k_spin_unlock(&lock, key);
 
 		uint32_t period = gfx_stats()->period_us;
 		uint32_t t_prev = gfx_sleep_to_active(), refresh = 0, last = 0, n = 0, gop = 0, missed = 0, held = 0;
+		uint32_t copies = 0, copy_sum_us = 0, copy_worst_us = 0;
 		bool first = true;
 
 		while (want) {
@@ -304,13 +311,16 @@ static void enc_thread(void *a, void *b, void *c)
 			if (!first && refresh - last > every) {
 				missed += (refresh - last) / every - 1; /* overslept a slot */
 			}
-			if (gfx_single_buffered()) {
+			bool single = gfx_single_buffered();
+
+			if (single && (!camera || copy == NULL)) {
 				/* The Camera screen: the display draws into the buffer it
-				 * shows while the NPU has the other, so the encoder (12 to
-				 * 17 ms there, its bus starved by the NPU's PSRAM traffic:
-				 * 209 hardware timeouts in 2 minutes) made the display wait
-				 * for it, up to 18 ms, and frames dropped. Not recorded for
-				 * now: the receiver holds the picture before. */
+				 * shows while the NPU has the other. Read in place, the
+				 * encoder (12 to 17 ms there, its bus starved by the NPU's
+				 * PSRAM traffic: 209 hardware timeouts in 2 minutes) made
+				 * the display wait for it, up to 18 ms, and frames dropped.
+				 * Not recorded unless asked for: the receiver holds the
+				 * picture before. */
 				held++;
 				last = refresh;
 				continue;
@@ -322,6 +332,25 @@ static void enc_thread(void *a, void *b, void *c)
 			}
 			struct slot *s = &slots[i];
 			const uint8_t *buf = gfx_front();
+			uint32_t at = refresh;
+
+			if (single) {
+				/* a copy of the frame the display finishes next, in this refresh
+				 * as a rule; a later one is placed at its own refresh */
+				uint32_t cus, tc = gfx_copy_front(copy, 40, &cus);
+
+				if (tc == 0) {
+					k_msgq_put(&free_q, &i, K_NO_WAIT);
+					missed++;
+					last = refresh;
+					continue;
+				}
+				buf = copy;
+				at += (tc - t) / period;
+				copies++;
+				copy_sum_us += cus;
+				copy_worst_us = MAX(copy_worst_us, cus);
+			}
 			H264EncIn in = {0};
 			H264EncOut out = {0};
 			bool idr = gop % REC_GOP == 0;
@@ -362,8 +391,8 @@ static void enc_thread(void *a, void *b, void *c)
 				.kind = REC_PICTURE,
 				.coding = idr ? 0 : 1,
 				.screen = (uint8_t)shell_current(),
-				.flags = gfx_single_buffered() ? REC_FLAG_SINGLE : 0,
-				.refresh = refresh,
+				.flags = single ? REC_FLAG_SINGLE | REC_FLAG_COPY : 0,
+				.refresh = at,
 				.t_us = t,
 				.encode_us = us,
 				.audio_pos = apos > 0 ? (uint32_t)apos : 0,
@@ -380,6 +409,9 @@ static void enc_thread(void *a, void *b, void *c)
 			st.pictures = n;
 			st.missed = missed;
 			st.held = held;
+			st.copies = copies;
+			st.copy_us = copies ? copy_sum_us / copies : 0;
+			st.copy_worst_us = copy_worst_us;
 			st.encode_us = us;
 			st.encode_worst_us = MAX(st.encode_worst_us, us);
 			if (idr) {
@@ -479,14 +511,26 @@ static void net_thread(void *a, void *b, void *c)
 
 		zsock_setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &stall, sizeof(stall));
 
-		/* an optional first line from the client: "fps 60" or "fps 30" (the default) */
+		/* an optional first line from the client: "fps 60" or "fps 30" (the
+		 * default), and "camera" to record the Camera screen too */
 		struct zsock_timeval wait = {.tv_usec = 300000};
-		char line[24] = "";
+		char line[32] = "";
 		ssize_t got;
 
 		zsock_setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &wait, sizeof(wait));
 		got = zsock_recv(s, line, sizeof(line) - 1, 0);
-		every = got > 0 && strncmp(line, "fps 60", 6) == 0 ? 1 : 2;
+		line[MAX(got, 0)] = '\0';
+		every = strstr(line, "fps 60") != NULL ? 1 : 2;
+		camera = strstr(line, "camera") != NULL;
+		if (camera && copy == NULL) {
+			copy = psram_alloc(GFX_FB_BYTES, 64);
+			if (copy == NULL) {
+				LOG_ERR("no PSRAM for the Camera screen's copy");
+			} else {
+				/* written by DMA2D behind the cache: no line of it may be dirty */
+				sys_cache_data_flush_and_invd_range(copy, GFX_FB_BYTES);
+			}
+		}
 
 		k_msgq_purge(&free_q);
 		k_msgq_purge(&full_q);

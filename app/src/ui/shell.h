@@ -59,6 +59,35 @@ void shell_note_input(void);
 void shell_start_attract(void);
 bool shell_in_attract(void);
 
+/* An attract program: instead of the screens taking turns (attract_secs),
+ * attract mode follows a clock, the position of a soundtrack in ms, and shows
+ * each step's screen from its start time on; the lap repeats every lap_ms.
+ * Each change starts early by the fade-out, so the new screen arrives on its
+ * time (a bar line of the music). Whether attract mode runs the program is
+ * decided as it starts (available()); start() is called when attract mode
+ * begins on the first step's screen, which otherwise starts the soundtrack
+ * itself on arrival (attract_start). While clock_ms() is negative (nothing
+ * playing) the screens hold; after 5 s of that the screens take turns instead. */
+struct shell_step {
+	const struct screen *screen;
+	uint32_t at_ms;
+};
+struct shell_program {
+	const struct shell_step *steps;   /* by start time, the first at 0 */
+	int n_steps;
+	uint32_t lap_ms;
+	bool (*available)(void);
+	void (*start)(void);
+	int32_t (*clock_ms)(void);
+};
+void shell_set_program(const struct shell_program *program);
+/* True while attract mode runs the program. */
+bool shell_program_running(void);
+/* Its position in the lap, ms, or -1 while it does not run; the lap's length,
+ * or 0 while it does not run. */
+int32_t shell_program_ms(void);
+uint32_t shell_program_length_ms(void);
+
 /* Hide (or show again) the status bar and the current screen while a
  * full-screen view covers them.
  */

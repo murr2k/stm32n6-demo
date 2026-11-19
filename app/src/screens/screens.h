@@ -39,5 +39,11 @@ void hood_timing(uint32_t out[4], bool clear);
 
 /* Cinema: open clip number `clip` once that screen is showing (remote control). */
 void cinema_play(int clip);
+/* The attract lap's clip (main.c): open and play it, looping, from Cinema; its
+ * position in ms of clip time (-1 while it is not open); its length (0 while
+ * the card does not hold it). */
+void cinema_lap_start(void);
+int32_t cinema_lap_ms(void);
+uint32_t cinema_lap_length_ms(void);
 
 #endif

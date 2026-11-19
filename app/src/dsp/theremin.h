@@ -28,6 +28,10 @@
 
 #define THM_VOICES 5        /* one per touch slot */
 #define THM_TOP_DB (-6.0f)  /* the loudest a voice gets: the top of the field */
+/* Under the attract lap's music the ghost plays this much quieter: about 5 dB
+ * under the break it plays over (the music -19.7 dBFS there, the ghost alone
+ * about -17). Set with theremin_set_under_db (ctl "thmunder"). */
+#define THM_UNDER_DB (-8.0f)
 
 /* The level axis, a loudness taper: equal steps of height are equal steps of
  * loudness (it doubles every 10 dB), THM_TOP_DB at the top of the field and
@@ -52,6 +56,8 @@ struct thm_status {
 	int wave;              /* enum thm_wave */
 	bool snap;
 	bool sound;            /* false: it plays to the analysis only, the DAC gets silence */
+	bool under;            /* mixed under another source (the attract lap's music) */
+	float under_db;        /* its level there, relative to its own */
 	float rate_hz;         /* the DAC's sample rate, measured */
 	uint32_t blocks;       /* blocks synthesized */
 	uint32_t synth_us;     /* the last block's synthesis time, on the audio thread */
@@ -77,6 +83,16 @@ void theremin_set_snap(bool on);
  * remote alike); the analysis still gets what it plays. On at power-up. */
 void theremin_set_sound(bool on);
 void theremin_ghost(bool on);
+/* The ghost's three-bar flight for the attract lap (7.2 s) instead of its 13 s loop. */
+void theremin_ghost_short(bool on);
+/* Under other sound (true): the next theremin_enable(true) mixes the theremin
+ * over the audio output's source at theremin_under_db() instead of taking the
+ * output (audio_set_overlay). The analysis still gets its own level. false
+ * while it plays under: it takes the output 60 ms later, at its own level
+ * (attract mode ended and the music with it). */
+void theremin_set_overlay(bool on);
+void theremin_set_under_db(float db);
+float theremin_under_db(void);
 /* Remote control (ctl "thm"): voice v to hz at db, hz 0 lifts it; v < 0 hands
  * the voices back to the touch panel. */
 void theremin_remote(int v, float hz, float db);

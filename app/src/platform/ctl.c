@@ -163,10 +163,11 @@ static int handle(char *line, char *out, size_t out_len)
 		sig_set_source(a[0] == 2 ? SIG_SRC_THEREMIN : a[0] ? SIG_SRC_MIC : SIG_SRC_GENERATOR);
 		return snprintf(out, out_len, "source=%d\n", sig_source());
 	} else if (!strcmp(cmd, "thm") || !strcmp(cmd, "thmwave") || !strcmp(cmd, "thmsnap") ||
-		   !strcmp(cmd, "thmghost") || !strcmp(cmd, "thmsound")) {
+		   !strcmp(cmd, "thmghost") || !strcmp(cmd, "thmsound") || !strcmp(cmd, "thmunder")) {
 		/* thm [voice hz db]: a voice by remote (hz 0 lifts it), "thm -1" back to touch;
 		 * thmwave <0..3>, thmsnap <0|1>, thmghost <0|1>, thmsound <0|1> (the SOUND
-		 * switch); each replies with the state */
+		 * switch), thmunder <dB x10> (its level under the attract lap's music, from
+		 * its next flight); each replies with the state */
 		struct thm_status st;
 
 		if (!strcmp(cmd, "thm") && n >= 2) {
@@ -179,12 +180,15 @@ static int handle(char *line, char *out, size_t out_len)
 			theremin_ghost(a[0] != 0);
 		} else if (!strcmp(cmd, "thmsound") && n >= 2) {
 			theremin_set_sound(a[0] != 0);
+		} else if (!strcmp(cmd, "thmunder") && n >= 2) {
+			theremin_set_under_db((float)a[0] / 10.0f);
 		}
 		theremin_get(&st);
 		int len = snprintf(out, out_len,
-				   "ok enabled=%d mode=%d wave=%d snap=%d sound=%d rate_mhz=%u blocks=%u synth_us=%u "
-				   "synth_worst_us=%u lat_last_us=%u lat_worst_us=%u lat_n=%u",
-				   st.enabled, st.mode, st.wave, st.snap, st.sound, (unsigned int)(st.rate_hz * 1000.0f), st.blocks,
+				   "ok enabled=%d mode=%d wave=%d snap=%d sound=%d under=%d under_db10=%d rate_mhz=%u "
+				   "blocks=%u synth_us=%u synth_worst_us=%u lat_last_us=%u lat_worst_us=%u lat_n=%u",
+				   st.enabled, st.mode, st.wave, st.snap, st.sound, st.under,
+				   (int)lroundf(st.under_db * 10.0f), (unsigned int)(st.rate_hz * 1000.0f), st.blocks,
 				   st.synth_us, st.synth_worst_us, st.lat_last_us, st.lat_worst_us, st.lat_n);
 
 		for (int v = 0; v < THM_VOICES; v++) {
@@ -396,8 +400,10 @@ static int handle(char *line, char *out, size_t out_len)
 		home_get_status(&tiles, &scroll, &max);
 		return snprintf(out, out_len, "tiles=%d scroll=%d max=%d\n", tiles, scroll, max);
 	} else if (!strcmp(cmd, "where")) {
-		/* which screen is up, and whether the demo is running itself */
-		return snprintf(out, out_len, "screen=%d attract=%d\n", shell_current(), shell_in_attract());
+		/* which screen is up, whether the demo is running itself, and where its
+		 * lap is (ms into the attract lap's music, -1 when the screens take turns) */
+		return snprintf(out, out_len, "screen=%d attract=%d lap_ms=%d lap_len=%u\n", shell_current(),
+				shell_in_attract(), (int)shell_program_ms(), (unsigned int)shell_program_length_ms());
 	} else if (!strcmp(cmd, "mem")) {
 		/* for a soak test's leak check: kernel heap and LVGL pool (in use, peak,
 		 * size), PSRAM handed out, and the thread with the least stack never used.
@@ -438,10 +444,12 @@ static int handle(char *line, char *out, size_t out_len)
 
 		recorder_get(&r);
 		return snprintf(out, out_len,
-				"recording=%d pictures=%u missed=%u held=%u errors=%u last_error=%d long_waits=%u "
+				"recording=%d pictures=%u missed=%u held=%u copies=%u copy_us=%u copy_worst_us=%u "
+				"errors=%u last_error=%d long_waits=%u "
 				"encode_us=%u encode_worst_us=%u bytes=%u idr_bytes=%u p_bytes=%u\n",
-				r.recording, r.pictures, r.missed, r.held, r.errors, r.last_error, r.long_waits,
-				r.encode_us, r.encode_worst_us, r.bytes, r.idr_bytes, r.p_bytes);
+				r.recording, r.pictures, r.missed, r.held, r.copies, r.copy_us, r.copy_worst_us,
+				r.errors, r.last_error, r.long_waits, r.encode_us, r.encode_worst_us, r.bytes,
+				r.idr_bytes, r.p_bytes);
 	} else if (!strcmp(cmd, "svct")) {
 		int k = shell_costs(out, out_len - 1);
 

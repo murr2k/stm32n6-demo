@@ -28,6 +28,13 @@ bool audio_ok(void);
 void audio_set_source(audio_source_t fn, void *ctx);
 /* Clear the source if it is still fn (someone else may have taken it since). */
 void audio_release_source(audio_source_t fn);
+/* A second source, mixed over the first (saturating): the theremin under the
+ * attract lap's music. Called on the audio thread after the source. */
+void audio_set_overlay(audio_source_t fn, void *ctx);
+void audio_release_overlay(audio_source_t fn);
+/* The overlay fn becomes the source, between two blocks: it is neither
+ * skipped nor called twice for one block. */
+void audio_promote_overlay(audio_source_t fn);
 
 /* Frames handed to the driver that have not reached the DAC yet, estimated
  * between block boundaries from the kernel clock.

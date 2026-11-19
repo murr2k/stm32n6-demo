@@ -276,6 +276,11 @@ static bool fading;
 static int fade_target = -1, queued = -1;
 static bool attract;
 static uint32_t last_input_ms, attract_next_ms, attract_enter_ms, seen_reports;
+static const struct shell_program *program;
+static bool prog_run;
+static uint32_t prog_silent_ms;   /* since when the program's clock has not run */
+
+#define PROG_WAIT_MS 5000         /* no soundtrack after this long: the screens take turns */
 
 static void switch_to(int index);
 
@@ -377,6 +382,16 @@ void shell_note_input(void)
 	}
 }
 
+static int index_of(const struct screen *s)
+{
+	for (int i = 0; i < n_screens; i++) {
+		if (screens[i] == s) {
+			return i;
+		}
+	}
+	return -1;
+}
+
 void shell_start_attract(void)
 {
 	attract = true;
@@ -384,11 +399,82 @@ void shell_start_attract(void)
 	attract_enter_ms = attract_next_ms; /* the current screen may be busy: time it from now */
 	lv_obj_remove_flag(bar_demo, LV_OBJ_FLAG_HIDDEN);
 	lv_obj_align_to(bar_demo, bar_title, LV_ALIGN_OUT_RIGHT_MID, 12, 0);
+
+	prog_run = program && program->available && program->available() &&
+		   index_of(program->steps[0].screen) >= 0;
+	if (prog_run) {
+		int first = index_of(program->steps[0].screen);
+
+		prog_silent_ms = attract_next_ms;
+		if (first == current) {
+			program->start(); /* already there: no arrival to start it */
+		} else {
+			shell_goto(first); /* its attract_start starts the soundtrack on arrival */
+		}
+	}
 }
 
 bool shell_in_attract(void)
 {
 	return attract;
+}
+
+void shell_set_program(const struct shell_program *p)
+{
+	program = p;
+}
+
+bool shell_program_running(void)
+{
+	return attract && prog_run;
+}
+
+int32_t shell_program_ms(void)
+{
+	if (!shell_program_running()) {
+		return -1;
+	}
+	int32_t t = program->clock_ms();
+
+	return t < 0 ? -1 : (int32_t)((uint32_t)t % program->lap_ms);
+}
+
+uint32_t shell_program_length_ms(void)
+{
+	return shell_program_running() ? program->lap_ms : 0;
+}
+
+/* The program's screen for now: the step whose time has come, counting the
+ * fade-out early, so the switch lands on the step's start. */
+static void update_program(uint32_t now)
+{
+	int32_t t = program->clock_ms();
+
+	if (t < 0) {
+		if ((int32_t)(now - prog_silent_ms) > PROG_WAIT_MS) {
+			prog_run = false; /* no soundtrack: the screens take turns as before */
+			attract_next_ms = now;
+		}
+		return;
+	}
+	prog_silent_ms = now;
+	if (fading) {
+		return;
+	}
+	uint32_t at = ((uint32_t)t + FADE_OUT_MS) % program->lap_ms;
+	int k = 0;
+
+	for (int i = 0; i < program->n_steps; i++) {
+		if (program->steps[i].at_ms <= at) {
+			k = i;
+		}
+	}
+	int idx = index_of(program->steps[k].screen);
+
+	if (idx >= 0 && idx != current) {
+		attract_enter_ms = now;
+		shell_goto(idx);
+	}
 }
 
 static void update_attract(uint32_t now)
@@ -411,6 +497,12 @@ ow, which was sampled at the top of the frame.
 			shell_start_attract();
 		}
 		return;
+	}
+	if (prog_run) {
+		update_program(now);
+		if (prog_run) {
+			return;
+		}
 	}
 	if (fading || (int32_t)(now - attract_next_ms) < 0) {
 		return;

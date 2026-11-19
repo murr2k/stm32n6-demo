@@ -45,6 +45,12 @@ int jpegdec_decode(const uint8_t *jpg, size_t len, uint8_t *mcu, size_t mcu_cap,
 int jpegdec_convert(const uint8_t *mcu, const struct jpeg_info *info, uint32_t *dst, int stride_px,
 		    uint32_t *us);
 
+/* Copy a whole 32-bit picture of w x h pixels as it is with DMA2D, the
+ * caller asleep while it runs. dst must not be in the CPU's cache: it is
+ * written behind it and meant for another bus master. UI thread only.
+ */
+int dma2d_copy32(const void *src, void *dst, int w, int h, uint32_t *us);
+
 /* Copy an RGB565 picture (e.g. a camera frame) to ARGB8888 at dst with
  * DMA2D. Strides in pixels. UI thread only, like jpegdec_convert(): the two
  * share the DMA2D.

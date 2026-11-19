@@ -178,6 +178,47 @@ int jpegdec_convert(const uint8_t *mcu, const struct jpeg_info *info, uint32_t *
 	return ret;
 }
 
+int dma2d_copy32(const void *src, void *dst, int w, int h, uint32_t *us)
+{
+	uint32_t t0 = gfx_now_us();
+	int ret = 0;
+
+	hdma2d.Init.Mode = DMA2D_M2M;
+	hdma2d.Init.ColorMode = DMA2D_OUTPUT_ARGB8888;
+	hdma2d.Init.OutputOffset = 0;
+	hdma2d.Init.AlphaInverted = DMA2D_REGULAR_ALPHA;
+	hdma2d.Init.RedBlueSwap = DMA2D_RB_REGULAR;
+	hdma2d.Init.BytesSwap = DMA2D_BYTES_REGULAR;
+	hdma2d.Init.LineOffsetMode = DMA2D_LOM_PIXELS;
+
+	hdma2d.LayerCfg[1].AlphaMode = DMA2D_NO_MODIF_ALPHA;
+	hdma2d.LayerCfg[1].InputAlpha = 0xFF;
+	hdma2d.LayerCfg[1].InputColorMode = DMA2D_INPUT_ARGB8888;
+	hdma2d.LayerCfg[1].ChromaSubSampling = DMA2D_NO_CSS;
+	hdma2d.LayerCfg[1].InputOffset = 0;
+	hdma2d.LayerCfg[1].RedBlueSwap = DMA2D_RB_REGULAR;
+	hdma2d.LayerCfg[1].AlphaInverted = DMA2D_REGULAR_ALPHA;
+
+	if (HAL_DMA2D_Init(&hdma2d) != HAL_OK || HAL_DMA2D_ConfigLayer(&hdma2d, 1) != HAL_OK ||
+	    HAL_DMA2D_Start(&hdma2d, (uint32_t)src, (uint32_t)dst, w, h) != HAL_OK) {
+		ret = -EIO;
+	} else {
+		/* milliseconds of transfer: sleep, so the threads below the UI run meanwhile */
+		while (!(DMA2D->ISR & (DMA2D_ISR_TCIF | DMA2D_ISR_TEIF | DMA2D_ISR_CEIF)) &&
+		       gfx_now_us() - t0 < 50000) {
+			k_usleep(200);
+		}
+		/* sees the flag at once: clears it and makes the handle ready again */
+		if (HAL_DMA2D_PollForTransfer(&hdma2d, 10) != HAL_OK) {
+			ret = -EIO;
+		}
+	}
+	if (us) {
+		*us = gfx_now_us() - t0;
+	}
+	return ret;
+}
+
 int dma2d_rgb565(const uint16_t *src, int src_stride_px, int w, int h, uint32_t *dst, int dst_stride_px,
 		 uint32_t *us)
 {

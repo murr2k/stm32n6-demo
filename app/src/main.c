@@ -34,6 +34,52 @@ static const struct screen *const screens[] = {
 	&screen_camera,
 };
 
+/* The attract lap: "N6: the film" up to its last scene, the demos, each
+ * arriving on a bar line of the film's music (2.4 s a bar, 100 BPM), then the
+ * film's last scene and the music's coda. One clip on the card carries the
+ * music for the whole lap (media/film/attract.py makes it; its DEMOS lists
+ * the same screens and bars): Cinema plays it, and it plays on, sound only,
+ * under the demos. The ghost plays the theremin quietly over a break. After
+ * Signal Lab, Cinema shows four bars of the clip's picture: the Camera screen
+ * tracking two hands, recorded on this board (the lap does not open the
+ * camera itself). Without the clip (no card), or with one of another length,
+ * the screens take turns as before. */
+#define BAR_MS 2400
+#define LAP_MS (56 * BAR_MS)
+
+static const struct shell_step lap_steps[] = {
+	{&screen_cinema, 0},              /* the film to 0:43.2 */
+	{&screen_home, 18 * BAR_MS},
+	{&screen_deck, 20 * BAR_MS},
+	{&screen_siglab, 24 * BAR_MS},    /* three bars: the break, the ghost's flight */
+	{&screen_cinema, 27 * BAR_MS},    /* the recorded gestures */
+	{&screen_explorer, 31 * BAR_MS},
+	{&screen_hostlink, 39 * BAR_MS},
+	{&screen_coremap, 43 * BAR_MS},
+	{&screen_hood, 49 * BAR_MS},
+	{&screen_cinema, 54 * BAR_MS},    /* the film's last scene, the coda */
+};
+
+static bool lap_available(void)
+{
+	uint32_t ms = cinema_lap_length_ms();
+
+	if (ms != 0 && ms != LAP_MS) {
+		LOG_WRN("the attract lap's clip is %u ms, the lap %u ms: the screens take turns instead",
+			ms, LAP_MS);
+	}
+	return ms == LAP_MS;
+}
+
+static const struct shell_program lap = {
+	.steps = lap_steps,
+	.n_steps = ARRAY_SIZE(lap_steps),
+	.lap_ms = LAP_MS,
+	.available = lap_available,
+	.start = cinema_lap_start,
+	.clock_ms = cinema_lap_ms,
+};
+
 int main(void)
 {
 	int ret = gfx_init();
@@ -52,6 +98,7 @@ int main(void)
 	sig_init();
 	net_start();
 	shell_init(screens, ARRAY_SIZE(screens));
+	shell_set_program(&lap);
 	LOG_INF("ui up");
 
 	for (;;) {

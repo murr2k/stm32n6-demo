@@ -10,8 +10,11 @@
  * panel (29.99 fps): the buffer on screen, read by the encoder straight from
  * the SRAM in its 32-bit RGB form, no copy and no conversion by the CPU. The
  * display does not draw into a buffer the encoder is reading
- * (gfx_reader_begin). tools/record.py writes the stream and the pictures'
- * data to captures/rec/ and wraps it in an MP4.
+ * (gfx_reader_begin). The Camera screen, single-buffered, only if the
+ * client's first line says "camera": the encoder then reads a copy the
+ * display makes at the end of a frame (gfx_copy_front). tools/record.py
+ * writes the stream and the pictures' data to captures/rec/ and wraps it in
+ * an MP4.
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -30,7 +33,8 @@
  * receiver can put the pictures on the sound's clock. */
 enum rec_kind { REC_HEADERS = 1, REC_PICTURE = 2, REC_AUDIO = 3 };
 
-#define REC_FLAG_SINGLE 0x01 /* the display was single-buffered: the picture may tear */
+#define REC_FLAG_SINGLE 0x01 /* the display was single-buffered (the Camera screen) */
+#define REC_FLAG_COPY   0x02 /* read from a copy the display made at the end of a frame */
 
 struct rec_hdr {
 	uint32_t magic;     /* "N6RV" */
@@ -51,6 +55,8 @@ struct rec_status {
 	uint32_t pictures;
 	uint32_t missed;      /* due but not taken: no free buffer, or the slot overslept */
 	uint32_t held;        /* not taken because the display was single-buffered (the Camera screen) */
+	uint32_t copies;      /* taken there from the display's copy (the client asked for "camera") */
+	uint32_t copy_us, copy_worst_us; /* the copy's time, mean and worst */
 	uint32_t errors;      /* the encoder returned an error */
 	uint32_t long_waits;  /* 100 ms waits for the hardware past the first (the PSRAM busy with the NPU) */
 	uint32_t encode_us, encode_worst_us;

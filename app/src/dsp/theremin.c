@@ -48,6 +48,13 @@ static struct target remote_t[THM_VOICES]; /* under lock */
 static struct thm_status pub;            /* under lock */
 static volatile bool enabled, closing, idle, ghost_on, remote_on, snap_on, fresh;
 static volatile bool sound_on = true;
+static volatile bool ghost_short;        /* the attract lap's three-bar flight instead of the loop */
+/* Under other sound (the attract lap's music): mixed over the output's source
+ * at under_gain instead of taking the output. as_overlay is what the next
+ * enable does, on_overlay what the one in progress did. */
+static volatile bool as_overlay, on_overlay;
+static volatile float under_db = THM_UNDER_DB, under_gain = 0.398f;
+static uint32_t promote_ms;              /* nonzero: take the output from under, at this time */
 static volatile int wave = THM_THEREMIN;
 static volatile float rate = AUDIO_RATE;
 static uint32_t ghost_n;                 /* samples since the ghost began */
@@ -76,6 +83,21 @@ static const struct kf ghost0[] = {
 static const struct kf ghost1[] = {
 	{0.0f, 1300, -90, 0.02f},  {2.2f, 1300, -90, 0.02f}, {3.0f, 1030, -23, 0.03f}, {4.6f, 1760, -23, 0.02f},
 	{6.8f, 560, -27, 0.03f},   {7.4f, 520, -90, 0.02f},  {13.0f, 520, -90, 0.02f},
+};
+
+/* The attract lap's flight: the same saucer in three bars of its music
+ * (7.2 s), the swoop, the hover, the whistle and the second voice, then the
+ * dive, landed before the screen changes. */
+#define GHOST_SHORT 7.2f
+
+static const struct kf ghost0s[] = {
+	{0.0f, 240, -90, 0.02f},  {0.4f, 300, -17, 0.02f},   {1.6f, 1250, -14, 0.025f}, {2.3f, 980, -16, 0.03f},
+	{3.0f, 1700, -15, 0.02f}, {3.5f, 1500, -15, 0.035f}, {4.6f, 2200, -16, 0.015f}, {6.0f, 180, -24, 0.03f},
+	{6.7f, 160, -90, 0.02f},  {7.2f, 240, -90, 0.02f},
+};
+static const struct kf ghost1s[] = {
+	{0.0f, 1300, -90, 0.02f}, {1.4f, 1300, -90, 0.02f}, {2.0f, 1030, -23, 0.03f}, {3.0f, 1760, -23, 0.02f},
+	{4.2f, 560, -27, 0.03f},  {4.6f, 520, -90, 0.02f},  {7.2f, 520, -90, 0.02f},
 };
 
 static void ghost_at(const struct kf *k, int n, float t, struct target *g)
@@ -175,6 +197,11 @@ static void get_targets(struct target *t)
 
 		memcpy(t, remote_t, sizeof(remote_t));
 		k_spin_unlock(&lock, key);
+	} else if (ghost_on && ghost_short) {
+		float s = fmodf((float)ghost_n / rate, GHOST_SHORT);
+
+		ghost_at(ghost0s, ARRAY_SIZE(ghost0s), s, &t[0]);
+		ghost_at(ghost1s, ARRAY_SIZE(ghost1s), s, &t[1]);
 	} else if (ghost_on) {
 		float s = fmodf((float)ghost_n / rate, GHOST_LOOP);
 
@@ -316,7 +343,7 @@ static uint32_t theremin_audio(int16_t *dst, uint32_t frames, void *ctx)
 	 * they do not clip. Then the SOUND switch, a 10 ms fade: the analysis gets
 	 * what was played either way. */
 	static float out_gain = 1.0f;
-	float gain_t = sound_on ? 1.0f : 0.0f, k_gain = 1.0f - expf(-1.0f / (0.010f * fs));
+	float gain_t = sound_on ? (on_overlay ? under_gain : 1.0f) : 0.0f, k_gain = 1.0f - expf(-1.0f / (0.010f * fs));
 
 	for (int i = 0; i < n; i++) {
 		float x = acc[i], ax = fabsf(x);
@@ -382,7 +409,12 @@ void theremin_enable(bool on)
 		if (!enabled) {
 			idle = false;
 			enabled = true;
-			audio_set_source(theremin_audio, NULL);
+			on_overlay = as_overlay;
+			if (on_overlay) {
+				audio_set_overlay(theremin_audio, NULL); /* under the music, not instead of it */
+			} else {
+				audio_set_source(theremin_audio, NULL);
+			}
 		}
 	} else if (enabled) {
 		closing = true; /* the voices fade; theremin_service() lets go after */
@@ -394,8 +426,21 @@ void theremin_service(void)
 	static uint32_t m_t, m_blocks;
 	uint32_t blocks, errors, now = gfx_now_us();
 
+	if (promote_ms && (int32_t)(k_uptime_get_32() - promote_ms) >= 0) {
+		/* from under the music to the output's source: by now the music has
+		 * faded and let go (its player closes in the same frame) */
+		promote_ms = 0;
+		if (enabled && on_overlay && !as_overlay && !closing) {
+			audio_promote_overlay(theremin_audio);
+			on_overlay = false; /* the level rises to its own in 10 ms */
+		}
+	}
 	if (enabled && closing && idle) {
-		audio_release_source(theremin_audio);
+		if (on_overlay) {
+			audio_release_overlay(theremin_audio);
+		} else {
+			audio_release_source(theremin_audio);
+		}
 		enabled = false;
 		closing = false;
 	}
@@ -455,6 +500,30 @@ void theremin_ghost(bool on)
 	ghost_on = on;
 }
 
+void theremin_ghost_short(bool on)
+{
+	ghost_short = on;
+}
+
+void theremin_set_overlay(bool on)
+{
+	as_overlay = on;
+	if (!on && enabled && on_overlay && !closing) {
+		promote_ms = k_uptime_get_32() + 60; /* after the music's own fade (21 ms) */
+	}
+}
+
+void theremin_set_under_db(float db)
+{
+	under_db = CLAMP(db, -40.0f, 0.0f);
+	under_gain = powf(10.0f, under_db / 20.0f);
+}
+
+float theremin_under_db(void)
+{
+	return under_db;
+}
+
 void theremin_remote(int v, float hz, float db)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -485,6 +554,8 @@ void theremin_get(struct thm_status *st)
 	st->snap = snap_on;
 	st->sound = sound_on;
 	st->rate_hz = rate;
+	st->under = enabled && on_overlay;
+	st->under_db = under_db;
 }
 
 float theremin_rate(void)

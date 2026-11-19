@@ -41,7 +41,9 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 .\.venv\Scripts\python.exe tools\ctl.py "thmwave 3" "thmsnap 1" "thmghost 1" "thmsound 0"   # timbre 0..3, semitone snap, the attract ghost, the SOUND switch
 .\.venv\Scripts\python.exe tools\ctl.py "screen 2" "sigsrc 1" "monlisten 1" mon   # microphone to the headphones through the EQ, and its state
 .\.venv\Scripts\python.exe tools\ctl.py "monlisten 0" "monband 2 1000 120 100" "montone 1000 -200" mon   # closed loop (headphones by the board): EQ gain measured vs curve
-.\.venv\Scripts\python.exe tools\record.py --secs 20 [--fps 60] [--attract]   # the board records its screen and sound: captures/rec/*.mkv, .mp4 (--attract: one lap)
+.\.venv\Scripts\python.exe tools\record.py --secs 20 [--fps 60] [--attract] [--camera]   # the board records its screen and sound: captures/rec/*.mkv, .mp4 (--attract: exactly one lap; --camera: the Camera screen too, camera footage)
+.\.venv\Scripts\python.exe media\film\attract.py; .\.venv\Scripts\python.exe tools\n6v.py upload media\out\_attract.n6v   # the attract lap's clip (music + film), to the card
+.\.venv\Scripts\python.exe tools\ctl.py attract where "thmunder -80" thm   # start the lap; where it is (lap_ms, lap_len); the theremin's level under its music (dB x10)
 .\.venv\Scripts\python.exe tools\avsync.py         # the sync clip recorded by the board: each flash against its beep, in DAC frames
 .\.venv\Scripts\python.exe tools\nn.py watch 20    # tracker counters over 20 s: searches, palms found, confirmed, lost, time tracked
 .\.venv\Scripts\python.exe tools\soak.py --hours 9 --sound 0   # unattended soak: attract and camera phases, polled every second, captures/soak/<start>/summary.txt
@@ -89,10 +91,55 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 - UI loop (main.c): `tele_poll`, `shell_tick` (edge swipes, bar, every
   screen's `service`, the visible screen's `tick`), then `gfx_run_frame`
   (LVGL timers, render, present). The shell also owns transitions and attract
-  mode: 90 s without a touch report starts a lap through the screens, steered
-  by each screen's `attract_secs`, `attract_skip`, `available`,
-  `attract_start` and `attract_busy` (ui/shell.h). LVGL has no theme; everything is styled from
+  mode: 90 s without a touch report starts the attract lap (below); without
+  its clip the screens take turns, steered by each screen's `attract_secs`,
+  `attract_skip`, `available`, `attract_start` and `attract_busy`
+  (ui/shell.h). LVGL has no theme; everything is styled from
   `ui/theme.h` tokens.
+- Attract lap (main.c `lap_steps`, `shell_set_program`; the user's design,
+  2026-11-18): "N6: the film" to 0:43.2 (bar 18), then Home, Flight Deck,
+  Signal Lab, the recorded gestures, Explorer, Host Link, Core Map, Under
+  the Hood (2, 4, 3, 4, 8, 4, 6, 5 bars of 2.4 s), then the film's last
+  scene with the score's coda (2 bars): 56 bars, 134.4 s of clip time
+  (2 min 15.3 s at the DAC's 47.7 kHz), then again. The lap never opens the
+  Camera screen: its four gesture bars are Cinema showing the clip's
+  picture, a recording of the Camera screen tracking the user's two hands
+  (made 2026-11-18 with `record.py --camera`; the window chosen from the
+  tracker's numbers, `nn hands` polled together with `rec`'s picture count,
+  and cut frame-exact to 288 pictures, `media/out/gestures.mkv`, lossless;
+  camera footage checked for faces by the user, never committed) with a
+  "RECORDED ON THIS BOARD" plate in its quietest corner (the origin label).
+  One clip carries it,
+  `/SD:/clips/_attract.n6v` (84 MB, `media/film/attract.py`; names starting
+  with `_` stay out of Cinema's list, `player_attract_clip`): the film's
+  pictures to 43.2 s, black frames while the demos show but the gestures
+  from bar 27 (frames 1944 to 2231), the film's last
+  4.8 s, over the film's score rendered at lap length (`score.render` with
+  `breaks`: the film's music sample for sample to 43.2 s, then its groove
+  with a whoosh at every change, pad and bass only under Signal Lab, then
+  the coda). Cinema plays it looping (`open_lap`, `open_clip == LAP_CLIP`)
+  and keeps playing it, sound only, while the other screens show (its
+  `hide()` hides the picture and the cover, `show()` brings them back for
+  the gestures and the coda); the shell picks the screen from
+  the clip's clock (`player_position_ms`: the sample at the DAC) and starts
+  each fade FADE_OUT_MS early, so the switch lands on the bar line. On
+  Signal Lab the ghost flies a 7.2 s flight (`theremin_ghost_short`) mixed
+  under the music (`theremin_set_overlay`, `THM_UNDER_DB` -8 dB, `thmunder`).
+  Any touch ends it: Cinema's `service()` closes the clip, Signal Lab hands
+  the theremin to the output's source (`audio_promote_overlay`). The clip's
+  length must equal LAP_MS or the screens take turns (logged). Measured
+  2026-11-18 in the board's own recording of the 52-bar lap: the DAC feed
+  is the clip's PCM sample for sample except the theremin's 3 bars (0 LSB),
+  every screen's first picture 6 to 39 ms after its bar line; worst frames
+  per screen in two laps 6 to 15.6 ms (Home's first frame after the film
+  the highest, as in the old lap), 0 dropped. The user, watching that
+  recording the same day: levels and timing of the soundtrack, the theremin
+  (-8 dB, so the default stays) and the coda good. The 56-bar lap, the
+  same day: the same sample-for-sample match (2 LSB in the first 30 ms of
+  play), every screen's first picture 2 to 37 ms after its bar line, the
+  gesture pictures within -0.73 to +0.19 frames of the one due at the DAC
+  (median -0.25; matched to the source by numbers), the first of them black
+  under the fade-in.
 - Dense visuals do not use LVGL draw calls: a widget's `LV_EVENT_DRAW_MAIN`
   handler gets a `struct raster` and writes pixels into the layer buffer
   (`ui/raster.c`). Safe because the software renderer runs synchronously
@@ -105,7 +152,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   NPU's spill memory, which the converter addresses directly and
   `psram_alloc` never hands out. Budget, measured 2026-11-15: internal RAM
   815 of 840 KB (819 since the theremin, 2026-11-17: 21 KB left; 829 since
-  the recorder, the same day: 11 KB left) (LVGL pool 256 KB, heap 64 KB, the card's two 32 KB I/O
+  the recorder, the same day: 11 KB left; 830 since the attract lap's
+  overlay mix, 2026-11-18: 10 KB left) (LVGL pool 256 KB, heap 64 KB, the card's two 32 KB I/O
   buffers, stacks; the NPU's thread 8 KB), all screens' LVGL objects are
   built at boot and kept; PSRAM 13.4 of 28 MB and never freed: the player
   7.0 MB (4 MB read-ahead window, three 576 KB decode buffers, 1 MB index),
@@ -204,7 +252,9 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   block's first sample at the DAC; `thm` reports it).
   Everything it plays goes into a PSRAM ring that sig.c analyses; pitch and
   analysis use the DAC's rate measured from its block count (47.7 kHz).
-  In attract mode a ghost plays keyframes (a flying saucer); any touch ends
+  In attract mode a ghost plays keyframes (a flying saucer; in the attract
+  lap a 7.2 s flight mixed under the music, an overlay of the audio output,
+  not its source); any touch ends
   it. Signal Lab's spectrum and waterfall are one pane (`plot_pane`) whose
   draw handler splits it: 146/164 px as analyser, 252/58 px as instrument.
 - Microphone monitor (dsp/monitor.c, Signal Lab with MICROPHONE): the
@@ -258,15 +308,32 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   the refresh numbers), measures the DAC's real rate from the board's own
   clock, and writes .h264, .csv, .wav, .mkv (PCM) and .mp4 (AAC) to
   captures/rec/ (ignored). Needs PyAV (`pip install av` in the venv).
-  `ctl.py rec` reports it. Not recorded: the Camera screen. While the
-  display is single-buffered (the NPU has buffer B) the recorder takes no
-  picture (`held`), so a recording holds the picture before it. Recorded
-  there, the encoder took 12 to 17 ms with its bus starved by the NPU's
-  PSRAM traffic, reported its own hardware timeout about 1.7 times a
-  second (H264ENC_HW_TIMEOUT within 67 ms, so the hardware's bus watchdog,
-  not the driver's wait), and the display waited for it (17 dropped
-  frames in 2 minutes). Open: pause hand tracking while recording, or copy
-  the picture out first, or record the camera's own frames.
+  `ctl.py rec` reports it. The Camera screen only when the client asks
+  (`record.py --camera`, "camera" on its first line; camera footage: no
+  faces, files stay in captures/ and are deleted when done). While the
+  display is single-buffered (the NPU has buffer B) it copies each
+  finished frame into a 1.5 MB PSRAM buffer with DMA2D when the recorder
+  asks (`gfx_copy_front`, `dma2d_copy32`; in `flush_cb` before the wait
+  for the next refresh, or after a frame with nothing to draw), and the
+  encoder reads the copy (`copies`, `copy_us` in `ctl.py rec`); without
+  "camera" it takes no picture there (`held`) and a recording holds the
+  picture before it. Read in place, the encoder had made the display wait
+  (17 dropped frames in 2 minutes) and caught frames half drawn. Measured
+  2026-11-18 with the copy: two hands tracked (`nn hands 3`), 900
+  pictures in 30 s, none missed, copy 3.0 ms (3.8 worst), encoder 15 to
+  17 ms, 0 errors, 0 dropped frames, worst frame 8.5 ms; no hand in view
+  (the palm detector on every frame, its PSRAM spills), copy 7.2 ms (13.7
+  worst) and 73 encoder hardware timeouts in 30 s (H264ENC_HW_TIMEOUT
+  within 67 ms: the hardware's bus watchdog; each a restart from an IDR
+  picture, 1 to 3 pictures lost), still 0 dropped frames. With real hands
+  (two gesture takes, 100 s polled): 12 such errors, every one with one
+  hand tracked (the search for a second hand runs the palm detector every
+  500 ms), none with two. The attract lap does not open the Camera screen
+  (its gesture bars replay a recording of it); `record.py --attract` records
+  exactly one lap (its length from `where`, the recorder connected before
+  attract mode starts, so the lap's first sample is in it). A recording
+  cuts where the panel fades: the fade and settle are the LTDC's, on the
+  way to the panel, not in the frame buffer the encoder reads.
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
   Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
   explorer, touchlab, hostlink, coremap, cinema, specimen, hood, settings, camera. Home shows two
@@ -490,8 +557,13 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   17 ms after the active area began, and the next present a refresh later,
   it has not had to wait (`reader_waits=0`). Single-buffered (the Camera
   screen) the display draws into the buffer it shows: there the wait was
-  real (up to 18 ms, frames dropped), so the recorder takes no pictures
-  while single-buffered.
+  real (up to 18 ms, frames dropped), so a reader there asks the display
+  for a copy instead (`gfx_copy_front`): made by the UI thread between
+  frames, it never waits for the reader and never copies half a frame.
+  The copy's destination must hold no dirty cache line (DMA2D writes
+  behind the cache, and the encoder wrap's flush of the whole cache would
+  write such a line over it): `sys_cache_data_flush_and_invd_range` once
+  after allocating, and the CPU never touches it after.
 - **The video player decodes the frame due `SHOW_LEAD_MS` (30 ms) ahead of
   the sample at the DAC; the end of a clip is still where its sound ends.**
   **Why:** chosen for "now", a frame was decoded and converted (about
@@ -505,6 +577,36 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   (`ctl.close`).** **Why:** `ctl.send` keeps its connection open and the
   port serves one client: a recording made the tour unable to connect at
   all, which looked like a board that had stopped answering.
+- **`record.py`'s `mux()` sets every picture's duration (until the next
+  one), and the join of picture and sound runs with `-copyts`.** **Why:**
+  the raw H.264 reader's packet duration is in its 1/1,200,000 s time base;
+  kept as milliseconds it was 40 s per picture: the files ran 40 s long,
+  and a re-encode at a constant frame rate (the phone copy) held the first
+  picture 40 s and put the rest 40 s behind the sound (found by the user,
+  2026-11-18). And ffmpeg starts every input at zero by default, which
+  moved the picture ahead of its sound by its first time (0.03 to 0.14 s).
+  Check a recording against its frame log by numbers: frame timestamps,
+  scene cuts against the CSV's screen changes, the sound against its source.
+- **The attract lap's bars are written twice: `DEMOS` in
+  `media/film/attract.py` and `lap_steps` in main.c. Change both, keep the
+  demos a multiple of 4 bars, make the clip again and upload it.** **Why:**
+  the clip's music and the screens' times must agree; the chord cycle is 4
+  bars, so the coda only lands on the film's own chords that way
+  (attract.py refuses otherwise). The firmware checks the clip's length
+  against LAP_MS and steps through the screens instead if it differs.
+  `RECORDED` in DEMOS is not a screen: its bars are a Cinema step in
+  `lap_steps`, and attract.py puts the recording's pictures there.
+- **`score.render` seeds its own noise.** **Why:** the noise generator was
+  module state, so a second render in one process (the lap after the
+  film's check) got different hats, snares and whooshes. Seeded per render,
+  the lap's first 18 bars equal the film's soundtrack sample for sample
+  (attract.py checks: 0 LSB), and the film itself renders as before.
+- **The audio output has one source and one overlay (`audio_set_overlay`).
+  The theremin under the attract lap's music is the overlay; when the music
+  stops it becomes the source through `audio_promote_overlay()`, never by a
+  release and a set.** **Why:** the source and the overlay are called once
+  per 2.7 ms block; moved in two steps, one block skips the theremin or
+  calls it twice (its oscillators advance twice), a click either way.
 - **One owner of the audio output at a time; the next takes it only after
   the last has faded and let go (`audio_owner()` in siglab.c).** **Why:**
   `audio_set_source()` simply replaces the source. Taken at once, the
@@ -572,7 +674,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 - **PSRAM in use: 13.4 of 28 MB** (`ctl.py media`, `psram_kb`), 13.9 once
   `acap` has been used (its 576 KB buffer is taken on first use); 0.5 MB more
   once `nn hands 2` or `3` has run (the test picture as a camera frame), 0.8 MB more
-  once `nn grab` has. The
+  once `nn grab` has, 1.5 MB more once `record.py --camera` has (the
+  display's copy for the encoder). The
   read-ahead window was cut from 8 to 4 MB when PSRAM was nearly full; that
   reason is gone, the 4 MB have been enough (0 stalls).
 - **The player's sound never steps: every change of position (pause, play,
