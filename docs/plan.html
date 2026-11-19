@@ -268,7 +268,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
     <tr><td>V2 <span class="pill ok">done</span></td><td>The recorder: sound and per-picture data in the stream, <code>tools/record.py</code> (<code>--attract</code> records one lap: it starts attract mode and stops when the lap is back at its first screen)</td><td>The A/V sync clip's flash and beep land on the same frame of the recording. Met on 2026-11-18, after the player fix (<code>tools/avsync.py</code>).</td></tr>
     <tr><td>V3 <span class="pill ok">done</span></td><td>The lap (<code>record.py --attract --fps 60</code> records exactly one): the privacy pass for Host Link and Core Map, the theremin's SOUND on, the companion running. Take 1, 2026-11-18: every picture, 0 dropped; Host Link and Core Map show only the two private LAN addresses, the PC's core layout and load</td><td>A clean lap recorded with 0 dropped frames; looked at and approved by the user.</td></tr>
     <tr><td>V4 <span class="pill ok">done</span></td><td>Rendered by the project's own script (<code>media/film/video.py</code>) from the recording and its frame data: title and caption text, cards, lower thirds, the frame-time strip, the closing card; the panel's fade and 10 px settle at every screen change, re-created at the switch times in the frame log (the encoder reads the frame buffer, and the display controller fades on the way to the panel, so a recording cuts where the panel fades); a 4K60 render</td><td>The user has approved the caption text and then the render. Met on 2026-11-19: 4 min 36 s at 3840 x 2160, 60 fps; the sound 0.00 ms from the board's recording and the panel the picture due, checked at four points each.</td></tr>
-    <tr><td>V5 <span class="pill ok">done</span></td><td>Publishing: title "STM32N6 demo, recorded by the board itself (4K60)", chosen 2026-11-19; the thumbnail is the user's photo of the board on the Camera screen (a hand only, the serial stickers blurred)</td><td>The user uploads it to their channel (title, description with chapters and the GitHub link); the README links the video. Met on 2026-11-19: <a href="https://youtu.be/fsazWDnm2qg">on YouTube</a>, unlisted, processed up to 2160p60.</td></tr>
+    <tr><td>V5 <span class="pill ok">done</span></td><td>Publishing: title "STM32N6 demo, recorded by the board itself (4K60)", chosen 2026-11-19; the thumbnail is the user's photo of the board on the Camera screen (a hand only, the serial stickers blurred)</td><td>The user uploads it to their channel (title, description with chapters and the GitHub link); the README links the video. Met on 2026-11-19: <a href="https://youtu.be/fsazWDnm2qg">on YouTube</a>, public, processed up to 2160p60.</td></tr>
   </table></div>
 </section>
 
@@ -789,10 +789,9 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
   <h2>Decisions open now</h2>
   <div class="scroll"><table>
     <tr><th>#</th><th>Question</th><th>Default</th></tr>
-    <tr><td class="num">1</td><td><b>The video's visibility.</b> Uploaded unlisted.</td><td>Public when you are ready.</td></tr>
-    <tr><td class="num">2</td><td><b>The video's extras.</b> A 60 s vertical Short.</td><td>No Short. The video itself: no footage, 4 min 36 s.</td></tr>
-    <tr><td class="num">3</td><td><b>Faces (N3)</b> after the video?</td><td>Yes, next after V5.</td></tr>
-    <tr><td class="num">4</td><td><b>Web remote and firmware update over the network.</b> Still wanted?</td><td>Kept in the plan, not scheduled.</td></tr>
+    <tr><td class="num">1</td><td><b>The video's extras.</b> A 60 s vertical Short.</td><td>No Short. The video itself: no footage, 4 min 36 s.</td></tr>
+    <tr><td class="num">2</td><td><b>Faces (N3)</b> after the video?</td><td>Yes, next after V5.</td></tr>
+    <tr><td class="num">3</td><td><b>Web remote and firmware update over the network.</b> Still wanted?</td><td>Kept in the plan, not scheduled.</td></tr>
   </table></div>
   <div class="scroll"><table>
     <tr><th>Asked 2026-11-14</th><th>Answer</th></tr>
