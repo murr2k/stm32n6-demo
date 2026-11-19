@@ -40,7 +40,7 @@ from n6v import ffmpeg_exe  # noqa: E402
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "captures" / "rec"
 PORT = 5559
-HDR = struct.Struct("<4sBBBBIIIIII")  # struct rec_hdr
+HDR = struct.Struct("<4sBBBBIIIIIIIII")  # struct rec_hdr (app/src/media/recorder.h)
 REC_HEADERS, REC_PICTURE, REC_AUDIO = 1, 2, 3
 FLAG_SINGLE, FLAG_COPY = 0x01, 0x02
 
@@ -174,11 +174,12 @@ def main() -> None:
     left_start = False
     with open(h264, "wb") as fh, open(table, "w", newline="") as ft:
         w = csv.writer(ft)
-        w.writerow(["refresh", "t_us", "encode_us", "bytes", "coding", "screen", "single", "missed", "audio_pos"])
+        w.writerow(["refresh", "t_us", "encode_us", "bytes", "coding", "screen", "single", "missed", "audio_pos",
+                    "frames", "frame_us", "dropped"])
         try:
             while time.time() - t0 < a.secs:
-                magic, kind, coding, screen, flags, refresh, t_us, e_us, apos, size, miss = HDR.unpack(
-                    read_exact(s, HDR.size))
+                (magic, kind, coding, screen, flags, refresh, t_us, e_us, apos, size, miss,
+                 g_frames, g_us, g_dropped) = HDR.unpack(read_exact(s, HDR.size))
                 if magic != b"N6RV":
                     sys.exit(f"bad header {magic!r}")
                 data = read_exact(s, size)
@@ -199,7 +200,7 @@ def main() -> None:
                 singles += bool(flags & FLAG_SINGLE)
                 copies += bool(flags & FLAG_COPY)
                 w.writerow([refresh, t_us, e_us, size, "IDR" if coding == 0 else "P", screen,
-                            int(bool(flags & FLAG_SINGLE)), miss, apos])
+                            int(bool(flags & FLAG_SINGLE)), miss, apos, g_frames, g_us, g_dropped])
                 if start_screen is not None:
                     if screen != start_screen:
                         left_start = True

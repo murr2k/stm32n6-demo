@@ -88,6 +88,7 @@ static uint32_t decoded_frame = UINT32_MAX;
 static volatile uint32_t jump_gen; /* counts position changes (seek, play, loop, open) */
 static volatile bool close_req;    /* player_close() was called: the worker lets go of the clip */
 static volatile bool scrub_on;     /* a finger is on the slider: see player_scrub() */
+static volatile bool picture_on = true; /* see player_show_picture() */
 #define GRAIN 4096u                /* sample frames of sound per scrub grain: 85 ms */
 static int16_t *grain_pcm[2];      /* in PSRAM; the one not playing takes the next grain */
 static volatile bool seek_pending; /* a seek (or the open) is waiting for its picture */
@@ -920,6 +921,7 @@ static int open_clip(const struct clip *c)
 	k_mutex_lock(&codec, K_FOREVER);
 	close_req = false;
 	scrub_on = false;
+	picture_on = true;
 	cur = c;
 	playing = false;
 	decoded_frame = UINT32_MAX;
@@ -1058,6 +1060,20 @@ void player_note_convert(uint32_t us)
 	status.convert_us = us;
 }
 
+void player_show_picture(bool on)
+{
+	k_spinlock_key_t key = k_spin_lock(&lock);
+
+	picture_on = on;
+	if (!on) {
+		/* nothing stale when it comes back: the view draws black until the
+		 * frame due then is decoded, under the screen's fade-in */
+		published = -1;
+	}
+	k_spin_unlock(&lock, key);
+	k_sem_give(&wake);
+}
+
 const uint8_t *player_acquire(struct jpeg_info *info, uint32_t *frame, bool *fresh)
 {
 	k_spinlock_key_t key = k_spin_lock(&lock);
@@ -1184,6 +1200,22 @@ static void player_thread(void *p1, void *p2, void *p3)
 			gen = jump_gen;
 		}
 		need_frame = target;
+		if (!picture_on) {
+			/* The picture is hidden (the attract lap's clip under the demos):
+			 * the clock and the sound go on, no frame is decoded. Each one is
+			 * 8 to 9 ms of CPU feeding the codec, 30 a second, above every
+			 * thread but the UI's: it starved the recorder's sender, which
+			 * then lost pictures in a 60 fps recording of Explorer. */
+			decoded_frame = target;
+			done_gen = gen;
+			k_spinlock_key_t key = k_spin_lock(&lock);
+
+			status.frame = target;
+			k_spin_unlock(&lock, key);
+			k_mutex_unlock(&codec);
+			k_sem_take(&wake, K_MSEC(5));
+			continue;
+		}
 		if (target == decoded_frame) {
 			k_mutex_unlock(&codec);
 			k_sem_take(&wake, K_MSEC(2));

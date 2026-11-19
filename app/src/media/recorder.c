@@ -31,8 +31,13 @@
 
 LOG_MODULE_REGISTER(rec, LOG_LEVEL_INF);
 
-#define OUT_N     4
-#define OUT_BYTES (512 * 1024) /* an IDR picture of the busiest screen is well under this */
+/* Pictures queued for the network: the stream to the PC pauses now and then
+ * (with the host companion's datagrams arriving, pauses of 50 to 120 ms cost
+ * 18 pictures of a 60 fps lap with 4 buffers). Twelve hold 200 ms at 60 fps.
+ * The largest picture measured is a 179 KB IDR of the Camera screen's sensor
+ * noise; a picture that does not fit is an encoder error and a restart. */
+#define OUT_N     12
+#define OUT_BYTES (256 * 1024)
 /* Quality: a fixed QP, no rate control. User interface pictures are sharp
  * edges and small type; 20 keeps one-pixel lines clean. P pictures of what
  * does not move cost next to nothing. */
@@ -355,6 +360,10 @@ static void enc_thread(void *a, void *b, void *c)
 				copy_sum_us += cus;
 				copy_worst_us = MAX(copy_worst_us, cus);
 			}
+			/* the frame in this picture: the display's own numbers for it (the
+			 * frame-time strip of the video is drawn from these) */
+			const struct gfx_stats *g = gfx_stats();
+			uint32_t g_frames = g->frames, g_us = g->last_render_us, g_dropped = g->dropped;
 			H264EncIn in = {0};
 			H264EncOut out = {0};
 			bool idr = gop % REC_GOP == 0;
@@ -402,6 +411,9 @@ static void enc_thread(void *a, void *b, void *c)
 				.audio_pos = apos > 0 ? (uint32_t)apos : 0,
 				.size = out.streamSize,
 				.missed = missed,
+				.frames = g_frames,
+				.frame_us = g_us,
+				.dropped = g_dropped,
 			};
 			k_msgq_put(&full_q, &i, K_NO_WAIT);
 			first = false;

@@ -111,6 +111,10 @@ void player_seek(uint32_t frame);
  */
 void player_scrub(bool on);
 void player_set_loop(bool loop);
+/* Off: the open clip's pictures are not decoded, its clock and sound go on
+ * (the attract lap's clip under the demos); on again, the frame due is
+ * decoded and nothing older is shown. Opening a clip turns it on. */
+void player_show_picture(bool on);
 void player_get_status(struct player_status *st);
 void player_note_convert(uint32_t us);
 

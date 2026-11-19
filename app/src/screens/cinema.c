@@ -762,6 +762,7 @@ static void show(void)
 {
 	if (lap_on) {
 		/* back for the recorded gestures or the coda: the clip has played on all along */
+		player_show_picture(true);
 		lv_obj_remove_flag(pv, LV_OBJ_FLAG_HIDDEN);
 		lv_obj_move_foreground(pv);
 		shell_set_cover(true);
@@ -772,7 +773,9 @@ static void show(void)
 static void hide(void)
 {
 	if (lap_on && shell_in_attract()) {
-		/* the lap goes on to the demos: its music plays on, its picture waits */
+		/* the lap goes on to the demos: its music plays on, its picture waits
+		 * (and is not decoded meanwhile) */
+		player_show_picture(false);
 		lv_obj_add_flag(pv, LV_OBJ_FLAG_HIDDEN);
 		shell_set_cover(false);
 		return;

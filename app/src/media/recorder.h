@@ -48,6 +48,10 @@ struct rec_hdr {
 	uint32_t audio_pos; /* picture: the DAC frame playing as it appeared; sound: its first frame */
 	uint32_t size;      /* bytes that follow */
 	uint32_t missed;    /* pictures due but not taken so far in this recording */
+	/* picture: the display's numbers for the frame in it (gfx_stats) */
+	uint32_t frames;    /* frames presented since boot: a new frame when it changes */
+	uint32_t frame_us;  /* the UI thread's time for that frame (render_us) */
+	uint32_t dropped;   /* refreshes the display had missed since boot */
 };
 
 struct rec_status {

@@ -131,7 +131,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   the coda). Cinema plays it looping (`open_lap`, `open_clip == LAP_CLIP`)
   and keeps playing it, sound only, while the other screens show (its
   `hide()` hides the picture and the cover, `show()` brings them back for
-  the gestures and the coda); the shell picks the screen from
+  the gestures and the coda; while hidden the player decodes no picture,
+  `player_show_picture`); the shell picks the screen from
   the clip's clock (`player_position_ms`: the sample at the DAC) and starts
   each fade FADE_OUT_MS early, so the switch lands on the bar line. On
   Signal Lab the ghost flies a 7.2 s flight (`theremin_ghost_short`) mixed
@@ -315,8 +316,13 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   with a first line "fps 60") in about 7 ms (9 to 17 ms under video
   playback), between `gfx_reader_begin`/`end`: the UI does not start a
   frame that draws into that buffer meanwhile (`reader_waits` in stats;
-  0 so far). Four 512 KB output buffers in PSRAM; QP 20 fixed, an IDR
-  picture every 60 with SPS/PPS. The sound is a tap on the audio thread
+  0 so far). Twelve 256 KB output buffers in PSRAM (with four, pauses of
+  the stream cost pictures; the largest picture measured is a 179 KB IDR
+  of the Camera screen's sensor noise); QP 20 fixed, an IDR
+  picture every 60 with SPS/PPS. Each picture's header also carries the
+  display's numbers for the frame in it (`frames`, `frame_us`, `dropped`
+  from `gfx_stats`; columns of the CSV): the video's frame-time strip is
+  drawn from them. The sound is a tap on the audio thread
   (`audio_tap`, every block handed to the DAC into a PSRAM ring, streamed
   as REC_AUDIO), and each picture carries the DAC frame playing as it
   appeared (`audio_tap_total() - audio_queued_frames()`): record.py places
@@ -667,6 +673,16 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   froze the display for 167 ms (three thumbnails). Thumbnails are filtered
   straight from the codec's YCbCr blocks, so they need neither DMA2D nor the
   full-size RGB buffer the player view uses.
+- **A playing clip whose picture is hidden decodes no frames
+  (`player_show_picture(false)`, the attract lap under the demos).** **Why:**
+  the JPEG decode is a CPU loop feeding the codec word by word, 8 to 9 ms a
+  frame, 30 a second, at priority 3: a quarter of the CPU through every demo
+  of the lap, spent on black frames, above everything but the UI. It
+  starved the recorder's sender (priority 10): a 60 fps recording of the
+  lap lost 11 to 18 pictures in the same half second of Explorer's zoom
+  every time; with the decode off, 0. When the picture returns the view
+  draws black until the frame due is decoded (one or two refreshes, under
+  the screen's fade-in), never a stale frame.
 - **`player_io` runs above `player`.** **Why:** the reader waits on the card,
   the worker polls the codec; with the reader below, a seek on the 14 Mbit/s
   clip left playback on an empty window (16 stalls in one fuzz run, 0 after).
@@ -697,7 +713,9 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   missing or damaged and 14 MB of PSRAM are gone again (the firmware falls
   back by itself, and the log says so). After a change to the generator or
   to DS_N: `dataset.py erase`, start, `pull`, `flash`.
-- **PSRAM in use: 13.4 of 28 MB** (`ctl.py media`, `psram_kb`), 13.9 once
+- **PSRAM in use: 17.0 of 28 MB right after boot, 20.4 at the end of a
+  tour** (2026-11-18, with the recorder's buffers; was 13.4 on 2026-11-15)
+  (`ctl.py media`, `psram_kb`); 0.5 MB more once
   `acap` has been used (its 576 KB buffer is taken on first use); 0.5 MB more
   once `nn hands 2` or `3` has run (the test picture as a camera frame), 0.8 MB more
   once `nn grab` has, 1.5 MB more once `record.py --camera` has (the

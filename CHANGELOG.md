@@ -29,6 +29,12 @@ them.
   player read it as TV range: the panel's dark navy came out black. The
   stream now says full range, and a recording matches a screenshot of the
   same screen.
+- **A 60 fps recording of the attract lap lost pictures in Explorer's
+  zoom** (11 to 18, always in the same half second). The lap's film, hidden
+  under the demos, was still decoding its black frames, a quarter of the
+  CPU, and the recorder's network sender starved. Hidden, it now decodes
+  nothing: a full lap at 60 fps has every picture, and the demos get that
+  CPU back too.
 
 ### Changed
 
@@ -64,6 +70,10 @@ them.
     MP4 files.
   - `tools/avsync.py` records the A/V sync clip and measures each flash
     against its beep; `ctl.py rec` reports the recorder.
+  - Every picture carries the display's own numbers for its frame (the UI's
+    time for it, frames presented, frames dropped: `frames`, `frame_us`,
+    `dropped` in the CSV), and twelve buffers ride out short pauses of the
+    network.
   - The Camera screen only when asked for (`record.py --camera`: camera
     footage, so keep faces out of the picture). There the display copies
     each finished frame for the encoder (3 ms with hands tracked, 0 dropped
