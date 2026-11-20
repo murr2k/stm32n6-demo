@@ -20,6 +20,22 @@ them.
   `--plan` prints the timeline and the chapters, `--still` one frame,
   `--preview` a 1080p30 cut, `--render` the whole video (about 25 minutes
   on the PC).
+- **Home Power: a household's electricity, over the internet.** A
+  thirteenth screen, laid out and coloured like the energy monitor's own web
+  dashboard in its Notch skin: the power now on a notched gauge whose arc is
+  the last 24 hours' range, the 24-hour minimum, mean, peak and cost, a
+  chart of 1 hour to 30 days (each bucket's mean and its minimum-to-maximum
+  band) with the range's figures in the dashboard's threshold colours, and
+  the bill so far with its spend rate, projection and days left. It shows
+  how old the reading is and greys out after 2 minutes, as the dashboard
+  does. Its Home tile is the same gauge at half size, live (the figures
+  every 15 s while Home shows). The tile, its page dot and its place in the
+  edge swipes exist only while the monitor answers. The monitor's address is set on the board with
+  `ctl.py "power url http://HOST"` and kept on the card; `ctl.py power`
+  shows the feed, `power range` sets the chart, `powert` gives its draw
+  times. The board now resolves names (with a fixed address it asks the
+  gateway), and `ctl.py home` also says how many tiles open a screen
+  (`real=`).
 
 ## 2026-11-18
 

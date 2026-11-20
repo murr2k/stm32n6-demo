@@ -14,6 +14,7 @@
 #include <zephyr/net/socket.h>
 
 #include <zephyr/net/dhcpv4.h>
+#include <zephyr/net/dns_resolve.h>
 
 #include "gfx.h"
 #include "net.h"
@@ -169,6 +170,14 @@ int net_use_config(const struct netcfg *cfg)
 	net_if_ipv4_set_netmask_by_addr(iface, &ip, &mask);
 	if (cfg->gw[0] && net_addr_pton(AF_INET, cfg->gw, &gw) == 0) {
 		net_if_ipv4_set_gw(iface, &gw);
+		/* No DHCP, so no DNS server from it: ask the gateway, as home
+		 * routers answer names (Home Power's monitor is found by name). */
+		const char *servers[] = {cfg->gw, NULL};
+		struct dns_resolve_context *dns = dns_resolve_get_default();
+
+		if (dns && dns_resolve_reconfigure(dns, servers, NULL, DNS_SOURCE_MANUAL) != 0) {
+			LOG_WRN("DNS server %s not taken", cfg->gw);
+		}
 	}
 	key = k_spin_lock(&lock);
 	strncpy(status.mask, cfg->mask, sizeof(status.mask) - 1);

@@ -14,7 +14,7 @@
 #include "shell.h"
 #include "theme.h"
 
-#define MAX_SCREENS 12
+#define MAX_SCREENS 16
 #define HUD_W       212
 #define HUD_H       86
 #define HUD_BARS    96
@@ -25,7 +25,8 @@ static int current = -1;
 
 static lv_obj_t *roots[MAX_SCREENS];
 static lv_obj_t *bar_obj, *bar_title, *bar_clock, *bar_ip, *bar_fps, *bar_dot;
-static lv_obj_t *dots[MAX_SCREENS];
+static lv_obj_t *dot_row, *dots[MAX_SCREENS];
+static uint32_t dots_listed; /* the screens that had a dot at the last layout */
 static lv_obj_t *hud, *hud_text, *hud_graph;
 static bool hud_on;
 
@@ -65,15 +66,47 @@ static void build_bar(lv_obj_t *scr)
 	lv_obj_set_style_bg_color(bar_dot, ui_c(C_TEXT3), 0);
 	lv_obj_align_to(bar_dot, bar_ip, LV_ALIGN_OUT_LEFT_MID, -8, 0);
 
-	/* page dots, centred */
-	int total = n_screens * 14 - 6;
-
+	/* page dots, centred; laid out by layout_dots() */
+	dot_row = ui_box(bar, 0, UI_BAR_H / 2 - 3, n_screens * 14, 6);
 	for (int i = 0; i < n_screens; i++) {
-		dots[i] = ui_box(bar, GFX_W / 2 - total / 2 + i * 14, UI_BAR_H / 2 - 3, 6, 6);
+		dots[i] = ui_box(dot_row, i * 14, 0, 6, 6);
 		lv_obj_set_style_radius(dots[i], LV_RADIUS_CIRCLE, 0);
 		lv_obj_set_style_bg_opa(dots[i], LV_OPA_COVER, 0);
 		lv_obj_set_style_bg_color(dots[i], ui_c(C_LINE2), 0);
 	}
+	dots_listed = UINT32_MAX;
+}
+
+bool shell_listed(int index)
+{
+	const struct screen *s = shell_screen(index);
+
+	return s && (s->listed == NULL || s->listed() || index == current);
+}
+
+/* A dot for every listed screen, the row centred. Moves objects only when
+ * the set changes (a screen whose data comes and goes). */
+static void layout_dots(void)
+{
+	uint32_t set = 0;
+	int k = 0;
+
+	for (int i = 0; i < n_screens; i++) {
+		set |= shell_listed(i) ? BIT(i) : 0;
+	}
+	if (set == dots_listed) {
+		return;
+	}
+	dots_listed = set;
+	for (int i = 0; i < n_screens; i++) {
+		if (set & BIT(i)) {
+			lv_obj_remove_flag(dots[i], LV_OBJ_FLAG_HIDDEN);
+			lv_obj_set_x(dots[i], k++ * 14);
+		} else {
+			lv_obj_add_flag(dots[i], LV_OBJ_FLAG_HIDDEN);
+		}
+	}
+	lv_obj_set_x(dot_row, GFX_W / 2 - (k * 14 - 6) / 2);
 }
 
 static void update_bar(uint32_t now_ms)
@@ -88,6 +121,7 @@ static void update_bar(uint32_t now_ms)
 		return;
 	}
 	last = now_ms;
+	layout_dots();
 
 	uint32_t s = now_ms / 1000;
 
@@ -242,12 +276,21 @@ static void update_edge_swipe(void)
 	if (n_down == 1 && edge_tracking && !edge_fired) {
 		int dx = p->x - edge_x0;
 
+		int step = 0;
+
 		if (edge_x0 >= GFX_W - EDGE_ZONE && dx < -EDGE_TRAVEL) {
-			edge_fired = true;
-			shell_goto((current + 1) % n_screens);
+			step = 1;
 		} else if (edge_x0 < EDGE_ZONE && dx > EDGE_TRAVEL) {
+			step = n_screens - 1;
+		}
+		if (step) {
+			int to = current;
+
 			edge_fired = true;
-			shell_goto((current + n_screens - 1) % n_screens);
+			do { /* past screens that are not listed now */
+				to = (to + step) % n_screens;
+			} while (to != current && !shell_listed(to));
+			shell_goto(to);
 		}
 	}
 	if (n_down == 0) {
@@ -606,6 +649,7 @@ void shell_init(const struct screen *const *list, int count)
 	}
 
 	build_bar(scr);
+	layout_dots();
 	build_hud();
 	bar_demo = ui_label(bar_obj, &font_mono_12, C_AZURE, "DEMO  TOUCH TO TAKE OVER");
 	lv_obj_set_style_text_letter_space(bar_demo, 1, 0);

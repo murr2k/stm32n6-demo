@@ -23,19 +23,25 @@ extern const struct screen screen_specimen;
 extern const struct screen screen_hood;
 extern const struct screen screen_settings;
 extern const struct screen screen_camera;
+extern const struct screen screen_power;
 
 /* Home: add n placeholder tiles after the real ones, to try the panning with
  * more tiles than there are screens (remote control, tools/tour.py); 0 takes
  * them away again. UI thread.
  */
 void home_test_tiles(int n);
-/* Home: tiles shown, how far the field is panned and how far it can be, px. */
-void home_get_status(int *tiles, int *scroll_x, int *scroll_max);
+/* Home: tiles shown, those of them that open a screen, how far the field is
+ * panned and how far it can be, px. */
+void home_get_status(int *tiles, int *real, int *scroll_x, int *scroll_max);
 
 /* Under the Hood: longest sampling, stack scan, network query and side panel
  * draw since the last call, us (bring-up aid, ctl "hoodt").
  */
 void hood_timing(uint32_t out[4], bool clear);
+/* Home Power: longest gauge draw, chart draw, tick and Home tile draw since
+ * the last call, us (ctl "powert"; the text in them is drawn by LVGL
+ * afterwards, not counted). */
+void power_timing(uint32_t out[4], bool clear);
 
 /* Cinema: open clip number `clip` once that screen is showing (remote control). */
 void cinema_play(int clip);

@@ -25,6 +25,7 @@
 #include "media/recorder.h"
 #include "media/sdcard.h"
 #include "gfx.h"
+#include "homepower.h"
 #include "mic.h"
 #include "net.h"
 #include "nn/npu.h"
@@ -390,15 +391,47 @@ static int handle(char *line, char *out, size_t out_len)
 
 		hood_timing(t, true);
 		return snprintf(out, out_len, "sample_us=%u stack_us=%u net_us=%u side_us=%u\n", t[0], t[1], t[2], t[3]);
+	} else if (!strcmp(cmd, "powert")) {
+		uint32_t t[4];
+
+		power_timing(t, true);
+		return snprintf(out, out_len, "gauge_us=%u chart_us=%u tick_us=%u tile_us=%u\n", t[0], t[1], t[2],
+				t[3]);
 	} else if (!strcmp(cmd, "ds")) {
 		return ds_info(out, out_len);
 	} else if (!strcmp(cmd, "hometiles") && n >= 2) {
 		post(CTL_HOME_TILES, a[0]);
 	} else if (!strcmp(cmd, "home")) {
-		int tiles, scroll, max;
+		int tiles, real, scroll, max;
 
-		home_get_status(&tiles, &scroll, &max);
-		return snprintf(out, out_len, "tiles=%d scroll=%d max=%d\n", tiles, scroll, max);
+		home_get_status(&tiles, &real, &scroll, &max);
+		return snprintf(out, out_len, "tiles=%d real=%d scroll=%d max=%d\n", tiles, real, scroll, max);
+	} else if (!strcmp(cmd, "power")) {
+		/* "power", "power url [URL | none]", "power range 1h|6h|24h|7d|30d" */
+		char sub[8] = "", arg[128] = "";
+		int k = sscanf(line, "%*s %7s %127s", sub, arg);
+
+		if (k >= 1 && !strcmp(sub, "url")) {
+			if (k == 1) {
+				return homepower_get_url(out, out_len);
+			}
+			if (homepower_set_url(arg) != 0) {
+				return snprintf(out, out_len, "err power url http://HOST[:PORT][/PATH] | none\n");
+			}
+		} else if (k >= 2 && !strcmp(sub, "range")) {
+			int r = -1;
+
+			for (int i = 0; i < HP_RANGES; i++) {
+				r = strcmp(arg, homepower_range_name(i)) ? r : i;
+			}
+			if (r < 0) {
+				return snprintf(out, out_len, "err power range 1h|6h|24h|7d|30d\n");
+			}
+			homepower_set_range(r);
+		} else if (k >= 1) {
+			return snprintf(out, out_len, "err power [url ... | range ...]\n");
+		}
+		return homepower_status(out, out_len);
 	} else if (!strcmp(cmd, "where")) {
 		/* which screen is up, whether the demo is running itself, and where its
 		 * lap is (ms into the attract lap's music, -1 when the screens take turns) */
@@ -492,7 +525,7 @@ static int handle(char *line, char *out, size_t out_len)
 static void ctl_thread(void *p1, void *p2, void *p3)
 {
 	struct sockaddr_in addr = {.sin_family = AF_INET, .sin_port = htons(CTL_PORT)};
-	static char line[96], out[1024];
+	static char line[160], out[1024]; /* a line holds "power url" and an address */
 	int srv;
 
 	net_wait_ip();

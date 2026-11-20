@@ -273,26 +273,26 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
 </section>
 
 <section>
-  <span class="eyebrow">Later &middot; noted 2026-11-19</span>
+  <span class="eyebrow">Built 2026-11-19 &middot; to look at on the panel</span>
   <h2>Home power, when the internet is there</h2>
-  <p>The user's idea: when the board can reach the internet, a tile appears on Home that opens a panel of the household's electricity, like the power part of the user's energy-monitor dashboard (not its gas or heating, not its tech stack). The monitor's address is set on the board, like the network settings, and not written into this repository.</p>
+  <p>The user's idea: when the board can reach the internet, a tile appears on Home that opens a panel of the household's electricity, like the power part of the user's energy-monitor dashboard (not its gas or heating, not its tech stack). Built the same day as <b>Home Power</b>, the thirteenth screen, in the dashboard's own Notch skin (the user's choice over its Scope skin and over the demo's theme). The monitor's address is set on the board (<code>ctl.py "power url http://HOST"</code>, kept on the card) and not written into this repository.</p>
   <div class="two">
     <div>
-      <h3>What the source gives (looked at 2026-11-19)</h3>
+      <h3>What the board does</h3>
       <ul>
-        <li><code>/api/stats</code>, 4.7 KB of JSON: the power now (W); the last 24 hours' minimum, mean and peak (W) and their cost; the price per kWh; and the billing period: energy so far (kWh), the bill so far with its tiers, GST and levies, and a projected bill with its range.</li>
-        <li><code>/api/dashboard?range=</code> <code>1h</code>, <code>6h</code>, <code>24h</code>, <code>7d</code> or <code>30d</code>: the chart's series (time and power per bucket) with the range's minimum, mean, peak, energy and cost; 25 KB for 24 hours.</li>
-        <li><code>/api/stream</code>: server-sent events, for the live reading. The meter is read about every 30 s.</li>
-        <li>Plain HTTP answers, so the board needs no TLS for it (TLS needs tens of KB of RAM; internal RAM has 10 KB left, so its heap would go in PSRAM).</li>
+        <li>A feed thread of its own (its 6 KB stack in PSRAM) looks the name up with Zephyr's DNS resolver, now in <code>prj.conf</code> (the server from DHCP, or the gateway with a fixed address), and sends plain HTTP/1.0 requests; a small JSON walker picks the figures out of the answers in a 64 KB PSRAM buffer. Nothing on the UI thread waits for the network.</li>
+        <li><code>/api/stats</code> every minute, every 15 s while the screen or Home shows (the Home tile is the panel's gauge at half size, live: the user's request after seeing the first version, which had the last hour's trace); the panel's range (1h to 30d) every 15 s, or every minute for 7d and 30d, while it shows. <code>/api/stream</code> is not used.</li>
+        <li>Online once a request is answered, offline after two failures in a row. The screen's new <code>listed</code> hook gives it a Home tile, a page dot and a place in the edge swipes only while online; the shell now holds 16 screens.</li>
       </ul>
     </div>
     <div>
-      <h3>What the board would need</h3>
+      <h3>Measured (2026-11-19)</h3>
       <ul>
-        <li>A DNS resolver and an HTTP client (neither is in <code>prj.conf</code> yet: one config change, the 6 to 8 minute rebuild) and a small JSON reader, the responses in a PSRAM buffer.</li>
-        <li>"Internet available" decided on a network thread: the name resolves and <code>/api/stats</code> answers; tried again now and then, so the tile comes and goes without a restart. Nothing on the UI thread waits for the network.</li>
-        <li>A thirteenth screen: the shell holds 12 and all are used, so <code>MAX_SCREENS</code> goes up; Home already takes more than eight tiles.</li>
-        <li>The panel in the demo's own style: the power now as a large number and a gauge, the 24-hour figures, a chart with the five ranges, the bill so far and the projected bill; on screen, where the data comes from (the home's meter, over the internet) and how old the reading is.</li>
+        <li>A request 180 to 480 ms (the first includes the name lookup and the connection); every range's figures match the monitor's own.</li>
+        <li>The screen at rest 1.1 ms a frame (it redraws when figures arrive); its first frame about 10 ms, 13 ms on the first visit after boot, the chart a frame later (3.9 ms); the 30-day chart 3.1 ms to draw.</li>
+        <li>With an address that does not resolve, the tile, dot and swipe place go away and the screen greys out like the dashboard's stale state; with a good one they come back.</li>
+        <li>The full tour with it: 0 dropped frames everywhere, Home's pan test with 17 tiles. The tile's gauge costs Home 0.29 ms a frame while it is in view.</li>
+        <li>The cost: internal RAM 3.4 KB left (was 10 KB), almost all of it the DNS resolver; the app image 1.997 of 2.09 MB.</li>
       </ul>
     </div>
   </div>

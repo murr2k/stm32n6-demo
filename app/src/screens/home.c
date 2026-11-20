@@ -26,10 +26,14 @@
 #define IND_H      4
 
 static lv_obj_t *pan, *guard[2], *ind, *thumb;
-static lv_obj_t *minis[MAX_TILES];
+static lv_obj_t *tiles[MAX_TILES], *minis[MAX_TILES];
 static int tile_col[MAX_TILES];
+static int tile_slot[MAX_TILES]; /* its place among the tiles shown, -1 while not listed */
+static uint32_t tiles_listed;
 static int n_real;      /* tiles that open a screen */
 static int n_tiles;     /* those plus the test tiles */
+static int n_shown;     /* the tiles listed now */
+static int n_real_shown;
 static int n_cols;
 static int test_tiles;
 static int thumb_w, shown_scroll;
@@ -46,6 +50,9 @@ static void mini_draw(lv_event_t *e)
 	}
 	if (s && s->mini) {
 		s->mini(&r);
+		if (s->mini_text) {
+			s->mini_text(lv_event_get_layer(e), &r);
+		}
 	} else if (s == NULL) {
 		/* a test tile has nothing to show: say so with an empty ruled box */
 		for (int y = r.box.y1 + 8; y < r.box.y2; y += 12) {
@@ -59,22 +66,74 @@ static void tile_click(lv_event_t *e)
 	shell_goto((int)(intptr_t)lv_event_get_user_data(e));
 }
 
+static bool tile_listed(int i)
+{
+	return i >= n_real || shell_listed(i + 1);
+}
+
+/* Every listed tile in its place: the first eight on the screen, the rest in
+ * further columns. Objects move only when the set of listed tiles changes (a
+ * screen whose data comes and goes, such as Home Power). */
+static void place(void)
+{
+	int k = 0, real = 0;
+
+	tiles_listed = 0;
+	for (int i = 0; i < n_tiles; i++) {
+		if (!tile_listed(i)) {
+			if (tile_slot[i] != -1) {
+				lv_obj_add_flag(tiles[i], LV_OBJ_FLAG_HIDDEN);
+				tile_slot[i] = -1;
+			}
+			continue;
+		}
+		tiles_listed |= BIT(i);
+		real += i < n_real;
+		if (tile_slot[i] != k) {
+			int over = k - COLS * ROWS;
+			int col = over < 0 ? k % COLS : COLS + over / ROWS;
+			int row = over < 0 ? k / COLS : over % ROWS;
+
+			lv_obj_set_pos(tiles[i], col * PITCH, row * (TILE_H + UI_GAP));
+			lv_obj_remove_flag(tiles[i], LV_OBJ_FLAG_HIDDEN);
+			tile_slot[i] = k;
+			tile_col[i] = col;
+		}
+		k++;
+	}
+	n_shown = k;
+	n_real_shown = real;
+	n_cols = MAX(COLS, COLS + (n_shown - COLS * ROWS + ROWS - 1) / ROWS);
+
+	/* With nothing to pan to, Home is as it was: no scrolling, no guards. */
+	bool more = n_cols > COLS;
+	int max = (n_cols - COLS) * PITCH;
+
+	lv_obj_set_flag(pan, LV_OBJ_FLAG_SCROLLABLE, more);
+	lv_obj_set_flag(guard[0], LV_OBJ_FLAG_HIDDEN, !more);
+	lv_obj_set_flag(guard[1], LV_OBJ_FLAG_HIDDEN, !more);
+	lv_obj_set_flag(ind, LV_OBJ_FLAG_HIDDEN, !more);
+	thumb_w = IND_W * COLS / n_cols;
+	lv_obj_set_width(thumb, thumb_w);
+	if (lv_obj_get_scroll_x(pan) > max) {
+		lv_obj_scroll_to_x(pan, max, LV_ANIM_OFF);
+	}
+	shown_scroll = -1;
+}
+
 static void build(void)
 {
 	n_real = MIN(shell_count() - 1, MAX_TILES); /* every screen but this one */
 	n_tiles = MIN(n_real + test_tiles, MAX_TILES);
-	n_cols = MAX(COLS, COLS + (n_tiles - COLS * ROWS + ROWS - 1) / ROWS);
 
 	lv_obj_clean(pan);
 	lv_obj_scroll_to_x(pan, 0, LV_ANIM_OFF);
 	for (int i = 0; i < n_tiles; i++) {
 		const struct screen *s = i < n_real ? shell_screen(i + 1) : NULL;
-		int over = i - COLS * ROWS;
-		int col = over < 0 ? i % COLS : COLS + over / ROWS;
-		int row = over < 0 ? i / COLS : over % ROWS;
-		lv_obj_t *t = ui_card(pan, col * PITCH, row * (TILE_H + UI_GAP), TILE_W, TILE_H);
+		lv_obj_t *t = ui_card(pan, 0, 0, TILE_W, TILE_H);
 
-		tile_col[i] = col;
+		tiles[i] = t;
+		tile_slot[i] = -2; /* placed by place() */
 		lv_obj_add_flag(t, LV_OBJ_FLAG_CLICKABLE);
 		lv_obj_set_style_bg_color(t, ui_c(C_BG2), LV_STATE_PRESSED);
 		lv_obj_set_style_border_color(t, ui_c(C_AZURE), LV_STATE_PRESSED);
@@ -98,17 +157,7 @@ static void build(void)
 		lv_label_set_text_fmt(idx, "%02d", i + 1);
 		lv_obj_align(idx, LV_ALIGN_BOTTOM_RIGHT, -16, -14);
 	}
-
-	/* With nothing to pan to, Home is as it was: no scrolling, no guards. */
-	bool more = n_cols > COLS;
-
-	lv_obj_set_flag(pan, LV_OBJ_FLAG_SCROLLABLE, more);
-	lv_obj_set_flag(guard[0], LV_OBJ_FLAG_HIDDEN, !more);
-	lv_obj_set_flag(guard[1], LV_OBJ_FLAG_HIDDEN, !more);
-	lv_obj_set_flag(ind, LV_OBJ_FLAG_HIDDEN, !more);
-	thumb_w = IND_W * COLS / n_cols;
-	lv_obj_set_width(thumb, thumb_w);
-	shown_scroll = -1;
+	place();
 }
 
 /* Come to rest on a column. LVGL's own snapping is not used: it lets the last
@@ -170,7 +219,7 @@ static void tick(uint32_t now_ms)
 	for (int i = 0; i < n_tiles; i++) {
 		int x = UI_PAD + tile_col[i] * PITCH - sx;
 
-		if (x + TILE_W > 0 && x < GFX_W) {
+		if (tile_slot[i] >= 0 && x + TILE_W > 0 && x < GFX_W) {
 			lv_obj_invalidate(minis[i]);
 		}
 	}
@@ -180,15 +229,30 @@ static void tick(uint32_t now_ms)
 	 */
 }
 
+/* A tile comes or goes when its screen's data does, visible or not. */
+static void service(uint32_t now_ms)
+{
+	uint32_t set = 0;
+
+	ARG_UNUSED(now_ms);
+	for (int i = 0; i < n_tiles; i++) {
+		set |= tile_listed(i) ? BIT(i) : 0;
+	}
+	if (set != tiles_listed) {
+		place();
+	}
+}
+
 void home_test_tiles(int n)
 {
 	test_tiles = CLAMP(n, 0, MAX_TILES);
 	build();
 }
 
-void home_get_status(int *tiles, int *scroll_x, int *scroll_max)
+void home_get_status(int *n, int *real, int *scroll_x, int *scroll_max)
 {
-	*tiles = n_tiles;
+	*n = n_shown;
+	*real = n_real_shown;
 	*scroll_x = st_scroll;
 	*scroll_max = st_max;
 }
@@ -197,5 +261,6 @@ const struct screen screen_home = {
 	.title = "Home",
 	.create = create,
 	.tick = tick,
+	.service = service,
 	.attract_secs = 7,
 };

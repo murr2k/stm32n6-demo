@@ -6,8 +6,9 @@ with hand tracking on the NPU, built on Zephyr 4.4.0 and LVGL 9.5. The
 audience is engineers and UX designers, so the rules are: lock to the panel
 refresh, no fake data, and show the measurements.
 
-> **Status: twelve screens, video with sound, and camera hand tracking work on
-> hardware.** Every screen holds the panel's 59.98 Hz with no dropped frames
+> **Status: thirteen screens, video with sound, and camera hand tracking work on
+> hardware** (the thirteenth, Home Power, only while the board can reach the
+> internet). Every screen holds the panel's 59.98 Hz with no dropped frames
 > in the automated run. A 48 s original film plays at 30 fps with stereo sound
 > from flash or from a microSD card, and clips upload to the card over
 > Ethernet at 2 to 4 MB/s while the demo runs. The camera runs at 30 fps, and
@@ -166,6 +167,29 @@ kept a host that had been sending into the void from finding the board again
 for up to a minute. Measured with the companion sending through a power
 cycle: the board answered 0.1 s after it had its address.
 
+## Home Power, over the internet
+
+When the board can reach a household energy monitor's web API, a Home Power
+tile appears on Home, itself a live gauge of the power now, and opens the
+panel: the power now on a notched gauge whose thin arc is the
+last 24 hours' range, the 24-hour minimum, mean, peak and cost, a chart of
+the last hour to the last 30 days (each bucket's mean, and a band from its
+minimum to its maximum) with the range's own figures, and the bill so far
+with its forecast. It is laid out and coloured like the monitor's own web
+dashboard in its Notch skin. The screen says where the numbers come from and
+how old the reading is, and greys out 2 minutes after the last one, as the
+dashboard does. Without the monitor the tile, its page dot and its place in
+the edge swipes go away by themselves, and come back when it answers.
+
+The monitor's address is set on the board, not in this repository:
+`ctl.py "power url http://HOST"` applies it at once and keeps it on the
+microSD card (`power.cfg`); `ctl.py power` shows what the feed is doing. The
+board looks the name up itself (from DHCP's DNS server, or the gateway with
+a fixed address) and polls plain HTTP (there is no TLS on the board) on a
+thread of its own: every minute, every 15 s while the screen or Home shows. The
+chart's time axis counts back from "now", because the board keeps no clock
+of the house's time zone.
+
 ## Remote control and automated review
 
 The firmware listens on these ports (trusted LAN only, no authentication):
@@ -267,6 +291,7 @@ captures/               screenshots and logs pulled off the board (not committed
 | Settings | The board's address (DHCP or fixed, entered on a keypad, applied at once, kept on the card), a QR code for the board's own description at http://<board>/, and which PC is feeding Host Link and Core Map | 1.8 / 2.0 ms |
 | Camera | The IMX335 (B-CAMS-IMX module, 5 Mpx) live at 30 fps: demosaiced and scaled to 592 x 444 by the DCMIPP, auto exposure and white balance by ST's ISP middleware, copied to the display by DMA2D (3 ms). Over it, hand tracking on the NPU, up to two hands (see [Hand tracking on the NPU](#hand-tracking-on-the-npu)): each hand's 21 points and their bones are drawn on the picture in its own colour, its gesture is read from the joint angles (fist, open hand, pointing, victory, three, four, thumbs up and down, thumb out, OK, rock on, call me, I love you in American Sign Language, the bird, or a finger count), and the side panel names each hand (left or right, and how sure the network is). Beside it the NPU's time per network, how many hands and at what rate, and what the ISP chose. The camera and the NPU run only while the screen is up | 5.0 / 8.7 ms |
 | Under the Hood | This firmware, measured live from Zephyr's own statistics: a 3D plot with one ribbon per thread (the eight busiest) showing its share of the CPU over the last 12 s on a logarithmic height axis from 0.01 % to 100 %, so a service thread at a twentieth of a per cent is as readable as the UI thread at fifty (drag to orbit, pinch to zoom, tap a ribbon, tap SCALE for linear axes), every thread with its CPU share and stack high-water mark, and the static RAM, LVGL pool, kernel heap and PSRAM in use. Interrupt time counts to the thread it interrupted | 7.8 / 12.6 ms |
+| Home Power | A household's electricity from its energy monitor over the internet (see [Home Power, over the internet](#home-power-over-the-internet)): the power now on a gauge with the last 24 hours' range, the 24-hour figures, a chart of 1 hour to 30 days with each bucket's mean and its minimum-to-maximum band, the bill so far and its forecast. Listed on Home and in the swipes only while the monitor answers | 1.1 / 1.2 ms (it redraws when figures arrive); its first frame about 10 ms |
 
 Frame time is all UI-thread work for a frame (screen logic, layout, render),
 measured on the board over five seconds per screen by `tools/tour.py`. The
@@ -728,6 +753,7 @@ presence 0.50 against 0.01.
 | Camera | Working: 30.0 fps, 0 dropped UI frames; opening and closing the screen costs no frame (the stream starts and stops on the capture thread). The image tuning is ST's ISP middleware, a west module under ST's licence SLA0044, fetched at build time and never committed here. Hand tracking on the NPU: both networks give the original models' answers (landmarks within 0.9 px of the PC), the whole pipeline names the thumbs up in MediaPipe's test picture on the board, and real hands in front of the camera track at 26 to 30 fps alone and 15 fps in pairs, either hand, palm or back (checked on the panel, also the left/right labels). The NPU borrows the display's second frame buffer while the screen is up (the display runs single-buffered meanwhile, 0 dropped frames in the tour). ST's NPU runtime and the converted networks are under ST's licence SLA0044 and stay out of this repository: `tools/nn.py` fetches and converts, and the build leaves the NPU out without them |
 | Microphone as Signal Lab source | Working on the replacement DK (2026-11-17): MDF1 turns the PDM stream into 48 kHz, 24 bit PCM on the DAC's own clock, a circular DMA delivers it with no errors, and a tap on Signal Lab's SOURCE label puts it on the scope, spectrum and waterfall. In a recorded test with spoken prompts, a quiet room measured -96 dBFS, and claps and fingernail taps at the board rose 35 to 63 dB above it, with the firmware unchanged from the first board. On the first board the onboard microphone (U13) delivered only noise: 50 dB above its datasheet floor, unaffected by every capture setting, with no response to a tone or to tapping. Read at the pin, its bit stream is a healthy sigma-delta stream with nothing but that noise in the audio band, so the electronics of the part run and its transducer does not. Claps and taps at the board leave no trace, through the filters on either clock edge or in the raw bits. The capture chain itself is verified from the pin on: with the microphone asleep, a square wave made with the data pin's own pull resistors (`micinject`) comes out at the right frequency and shape, and a held line gives digital silence; with the microphone clocked, its output overrides the injected wave. A synthetic microphone (`micpdm`: a sine through a sigma-delta modulator, put on the data pin by DMA) shows on Signal Lab as the sine it was, distorted only by how slowly that line follows the pin's pull resistors. ST's own unmodified recorder example passed taps on that board in May and nothing in November, so the part had degraded. Findings, board circuit and sources are in [docs/microphone.md](docs/microphone.md). The generator stays the default source |
 | Host Link | Working: 340 of 340 datagrams answered in the test run, 1.4 to 2.9 ms round trip as timed by the host |
+| Home Power | Working (2026-11-19): the name looked up on the board, a request answered in 180 to 480 ms, all five chart ranges and their figures matching the monitor's own; with an address that does not resolve the tile, its dot and its place in the swipes go away and the screen greys out, and they come back with a good one. 0 dropped frames in the tour. Zephyr's DNS resolver took most of the 6.5 KB of internal RAM this cost (3.4 KB left) |
 | Web remote, firmware update over the network | Not started |
 | microSD media library | Working: FAT32/exFAT, upload over Ethernet at 2 to 4 MB/s with CRC, streamed playback with 0 stalls in the automated run. Checked by measurement and screenshots, not yet by eye and ear on the panel. Not built: noticing a card put in after boot without `n6v.py mount`, and recovering a card pulled and put back while mounted (only a restart does), fast seeks in files of a gigabyte or more |
 | Core Map | Working: 22 logical processors of the test PC, no dropped frame while orbiting and zooming under full load |

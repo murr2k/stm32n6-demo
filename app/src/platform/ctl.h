@@ -24,7 +24,11 @@
  *   hoodt                      Under the Hood: worst sampling, stack scan, network and side panel times, us
  *   ds                         Explorer's data set: in flash or generated, address, checksum
  *   hometiles <n>              Home: n placeholder tiles after the real ones
- *   home                       Home: tiles, pan position and range
+ *   home                       Home: tiles (and those that open a screen), pan position and range
+ *   power                      Home Power's feed: online, state, requests, the last figures
+ *   power url [http://HOST[:PORT] | none]  the energy monitor's address: show, or set (kept on the card)
+ *   power range <1h|6h|24h|7d|30d>  the panel's chart range
+ *   powert                     Home Power: worst gauge draw, chart draw, tick and Home tile draw, us
  *   audio                      DAC half-buffer count, frames per half (block_frames) and underruns
  *   tone <hz> <ms>             test tone at -12 dBFS
  *   volume <0..100>            headphone volume

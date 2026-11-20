@@ -28,6 +28,8 @@ not to be modified from here.
 .\.venv\Scripts\python.exe tools\acap.py --mic --secs 3 -o captures\mic.wav   # record the microphone (24 bit), print its level
 Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself (also / and /status.json)
 .\.venv\Scripts\python.exe tools\ctl.py netcfg     # the board's address; "netcfg static IP MASK GW" or "netcfg dhcp" changes it now
+.\.venv\Scripts\python.exe tools\ctl.py power      # Home Power's feed: online, state, requests, figures; "power url http://HOST" sets the energy monitor (kept on the card, never in the repo)
+.\.venv\Scripts\python.exe tools\ctl.py "power range 7d" powert   # the panel's chart range (1h 6h 24h 7d 30d); its worst gauge, chart and tick times, us
 .\.venv\Scripts\python.exe tools\dataset.py info   # Explorer's data set: must say "source flash"; pull + flash put it there
 .\.venv\Scripts\python.exe tools\nn.py fetch; generate; testimg; flash   # NPU networks into build-nn/ (ignored), weights into the flash
 .\.venv\Scripts\python.exe tools\nn.py check       # both networks on the board against the original models on the PC
@@ -171,13 +173,16 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   `psram_alloc` never hands out. Budget, measured 2026-11-15: internal RAM
   815 of 840 KB (819 since the theremin, 2026-11-17: 21 KB left; 829 since
   the recorder, the same day: 11 KB left; 830 since the attract lap's
-  overlay mix, 2026-11-18: 10 KB left) (LVGL pool 256 KB, heap 64 KB, the card's two 32 KB I/O
+  overlay mix, 2026-11-18: 10 KB left; 836.6 since Home Power, 2026-11-19, nearly all
+  of it Zephyr's DNS resolver: 3.4 KB left, so new threads put their stacks in
+  PSRAM as homepower.c does) (LVGL pool 256 KB, heap 64 KB, the card's two 32 KB I/O
   buffers, stacks; the NPU's thread 8 KB), all screens' LVGL objects are
   built at boot and kept; PSRAM 13.4 of 28 MB and never freed: the player
   7.0 MB (4 MB read-ahead window, three 576 KB decode buffers, 1 MB index),
   Cinema 2.4 MB, camera 2.1 MB, screenshot 1.5 MB (14 MB more when Explorer's
   data set has to be generated because the flash holds no copy); code
-  1.77 MB in a 2 MB slot of a 128 MB flash. A new demo with buffers needs a place in this before it is written.
+  1.77 MB in a 2 MB slot of a 128 MB flash (1.997 of 2.09 MB, 95 %, since
+  Home Power, 2026-11-19: the slot is nearly full too). A new demo with buffers needs a place in this before it is written.
 - Flash map (128 MB at 0x7000_0000): MCUboot and the two image slots up to
   0x7041_0000, media partition 0x7042_0000 to 0x7580_0000 (84 MB, 83.7 MB
   used: full, more clips go on the card), the NPU's weights 0x7580_0000 to
@@ -377,11 +382,44 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   take's picture due at four points.
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
   Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
-  explorer, touchlab, hostlink, coremap, cinema, specimen, hood, settings, camera. Home shows two
+  explorer, touchlab, hostlink, coremap, cinema, specimen, hood, settings, camera, power. Home shows two
   rows of four tiles; a ninth and later ones go into further columns on the
   right (same tile size) and the field pans sideways. `ctl.py "hometiles 5"`
   adds placeholder tiles to try that with (`hometiles 0` removes them). The
-  shell holds 12 screens (`MAX_SCREENS` in shell.c), Home 24 tiles.
+  shell holds 16 screens (`MAX_SCREENS` in shell.c), Home 24 tiles. A screen
+  with a `listed` hook (Home Power) has a tile, a page dot and a place in the
+  edge swipes only while it returns true (and while it is the current
+  screen); Home and the dots move their objects only when that set changes
+  (`place()`, `layout_dots()`), and `ctl.py home` reports `real=`, the tiles
+  that open a screen now.
+- Home Power (platform/homepower.c, screens/power.c; built 2026-11-19, the
+  look the user's choice: the monitor's own web page in its Notch skin,
+  colours local to power.c): the household's electricity from the user's
+  energy monitor over the internet. Its address is set with `ctl.py "power
+  url http://HOST"` and kept on the card in `/SD:/power.cfg`; the user's
+  rule: it never goes into the repository (docs and code say HOST). A feed
+  thread (priority 13, 6 KB stack in PSRAM: `k_thread_create` with a
+  `psram_alloc` stack, started by `homepower_start()` from main) looks the
+  name up (Zephyr's resolver: the server from DHCP, or the gateway with a
+  fixed address, net.c), sends HTTP/1.0 GETs (no chunked answers; no TLS,
+  so `http://` only) into a 64 KB PSRAM buffer and picks the members out
+  with a small JSON walker: `/api/stats` every 60 s (15 s while the screen
+  or Home shows: the Home tile is the panel's gauge at half size, live, the
+  user's request), and the panel's range (`/api/dashboard?range=`) every
+  15 s up to 24h, 60 s for 7d and 30d, while it shows. The tile gauge is
+  drawn every frame Home shows it, so it is strokes (radial lines for the
+  notches, a chain of lines for the range), 0.29 ms; its number comes from
+  the `mini_text` hook (struct screen), drawn by LVGL after the pixels. Series are double-buffered in PSRAM and swapped
+  when complete. Online after a request is answered, offline after two
+  failures in a row (`homepower_online`, the screen's `listed` and
+  `available`). The panel: the needle and value grey out and the 24-hour
+  figures blank 120 s after the reading (the page's rule; age from the
+  server's Date header against `last_update`); the chart's time axis counts
+  back from "now" because the board has no clock of the house's time zone;
+  the chart box appears a frame after `show()` (with it, the first frame
+  had 1.9 ms to spare; without it about 10 ms warm, 13 ms on the first
+  visit after boot). Measured: a request 180 to 480 ms (DNS and connect in
+  the first), the 30-day chart 3.1 ms to draw.
 
 ## Invariants & "do not regress"
 
@@ -732,8 +770,9 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   missing or damaged and 14 MB of PSRAM are gone again (the firmware falls
   back by itself, and the log says so). After a change to the generator or
   to DS_N: `dataset.py erase`, start, `pull`, `flash`.
-- **PSRAM in use: 17.0 of 28 MB right after boot, 20.4 at the end of a
-  tour** (2026-11-18, with the recorder's buffers; was 13.4 on 2026-11-15)
+- **PSRAM in use: 17.1 of 28 MB right after boot, 20.2 at the end of a
+  tour** (2026-11-19, with Home Power's 0.15 MB; 17.0 and 20.4 on
+  2026-11-18 with the recorder's buffers; was 13.4 on 2026-11-15)
   (`ctl.py media`, `psram_kb`); 0.5 MB more once
   `acap` has been used (its 576 KB buffer is taken on first use); 0.5 MB more
   once `nn hands 2` or `3` has run (the test picture as a camera frame), 0.8 MB more
@@ -1123,5 +1162,5 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   each on the Camera screen with both networks every frame (`nn hands 3`),
   no reset, fault or leak, frame times unchanged; its 2 dropped frames were
   Flight Deck's fade-in (see the settle in the fade invariant).
-- The shell holds 12 screens and all 12 are used: a thirteenth needs
-  `MAX_SCREENS` raised in shell.c.
+- The shell holds 16 screens and 13 are used (Home Power listed only while
+  its monitor answers).

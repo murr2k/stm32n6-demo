@@ -10,6 +10,7 @@
 #include "platform/audio.h"
 #include "platform/ctl.h"
 #include "platform/gfx.h"
+#include "platform/homepower.h"
 #include "platform/mic.h"
 #include "platform/net.h"
 #include "platform/tele.h"
@@ -32,6 +33,7 @@ static const struct screen *const screens[] = {
 	&screen_hood,
 	&screen_settings,
 	&screen_camera,
+	&screen_power, /* listed only while the energy monitor answers */
 };
 
 /* The attract lap: "N6: the film" up to its last scene, the demos, each
@@ -99,6 +101,7 @@ int main(void)
 	}
 	sig_init();
 	net_start();
+	homepower_start();
 	shell_init(screens, ARRAY_SIZE(screens));
 	shell_set_program(&lap);
 	LOG_INF("ui up");

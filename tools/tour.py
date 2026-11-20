@@ -30,7 +30,8 @@ from shot import grab  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "captures" / "tour"
-SCREENS = ["home", "deck", "siglab", "explorer", "touchlab", "hostlink", "coremap", "cinema", "specimen", "hood", "settings", "camera"]
+SCREENS = ["home", "deck", "siglab", "explorer", "touchlab", "hostlink", "coremap", "cinema", "specimen", "hood", "settings", "camera",
+           "power"]  # Home Power: on Home and in the swipes only while the energy monitor answers
 
 
 def stats(host: str) -> dict[str, float]:
@@ -440,7 +441,7 @@ def home_pan_test(host: str) -> None:
         grab(host).save(OUT / "h1-home-panned.png")
         first = h2["scroll"] // col                # the column now at the left edge
         top = first if first < 4 else 8 + (first - 4) * 2  # the index of its top tile
-        real = len(SCREENS) - 1                     # tiles that open a screen; the rest are placeholders
+        real = h0.get("real", len(SCREENS) - 1)     # tiles that open a screen now; the rest are placeholders
         expect = SCREENS[top + 1] if top < real else "home"  # a placeholder opens nothing
         send(host, ["tap 100 112"])
         time.sleep(1.0)
