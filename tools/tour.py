@@ -7,8 +7,9 @@ Explorer, Core Map), plays Signal Lab's theremin and records its sound,
 drags the microphone monitor's equalizer bands,
 checks that touch releases never change screen, runs a
 set of screen transitions, audio and video playback from flash, an upload to
-the microSD card with playback and seeks from it, and one lap of attract
-mode. host/companion.py is started for the run so Host Link and Core Map
+the microSD card with playback and seeks from it, the card taken out and put
+back (acted out: idle, playing, during the attract lap and an upload), and
+one lap of attract mode. host/companion.py is started for the run so Host Link and Core Map
 show live data. Output goes to captures/tour/. Takes about seven minutes.
 
 Usage: tour.py [--host IP] [--screens home,deck,...] [--no-touch] [--no-media] [--no-attract]
@@ -316,6 +317,112 @@ def card_tests(host: str) -> None:
             card.close()
             time.sleep(1.5)
             print(f"card cleanup: test clip removed ({r}), {media(host)['clips']} clips listed")
+    card_swap_test(host, clip)
+
+
+def card_swap_test(host: str, clip: Path) -> None:
+    """The card taken out and put back, acted out with ctl "sdcard out|in" (the
+    firmware's card watcher behaves as if the detect switch had moved; no hands
+    at the board): idle, with a clip from the card playing, during the attract
+    lap, and in the middle of an upload. Each time the card must be let go of
+    and come back (at High Speed, its clips listed again), the open clip must
+    close, an interrupted upload must leave nothing on the card, and no frame
+    or audio block may be lost. A card that came back only after a restart was
+    the bug this guards against."""
+    def sd() -> dict[str, str]:
+        return dict(re.findall(r"(\w+)=(\S+)", send(host, ["sdcard"])[0]))
+
+    def wait(cond, secs: float) -> float | None:
+        t0 = time.time()
+        while time.time() - t0 < secs:
+            if cond():
+                return time.time() - t0
+            time.sleep(0.05)
+        return None
+
+    def t(x: float | None) -> str:
+        return "NEVER" if x is None else f"{x:.2f} s"
+
+    def card_files() -> list[str]:
+        out = subprocess.run([sys.executable, str(ROOT / "tools" / "n6v.py"), "ls", "--host", host],
+                             capture_output=True, text=True).stdout
+        return [ln.split()[-1] for ln in out.splitlines() if " MB " in ln]
+
+    n_card = -1
+    for _ in range(20):  # a change just made to the card (the test clip deleted) must have reached the list
+        n, n_card = n_card, media(host)["card_clips"]
+        if n == n_card:
+            break
+        time.sleep(0.5)
+    results = []
+
+    def out_in(what: str, closed=None) -> None:
+        send(host, ["sdcard out"])
+        t_closed = wait(closed, 5.0) if closed else None
+        t_out = wait(lambda: sd()["mounted"] == "0", 5.0)
+        t_list = wait(lambda: media(host)["card_clips"] == 0, 5.0)
+        send(host, ["sdcard in"])
+        t_in = wait(lambda: sd()["mounted"] == "1", 10.0)
+        t_back = wait(lambda: media(host)["card_clips"] == n_card, 10.0)
+        s = sd()
+        results.append(f"{what}: " + (f"closed in {t(t_closed)}, " if closed else "") +
+                       f"let go of in {t(t_out)} (clips off the list {t(t_list)}), back in {t(t_in)}"
+                       f"{'' if s.get('high_speed') == '1' else ' NOT at High Speed'}, "
+                       f"its {n_card} clips listed {'again' if t_back is not None else 'NOT again'}")
+
+    send(host, ["screen 0"])
+    time.sleep(1.0)
+    g0, a0 = stats(host), kv(host, "audio")
+    try:
+        out_in("idle")
+
+        m = media(host)
+        send(host, [f"play {m['first_card']}"])
+        time.sleep(2.0)
+        out_in("a clip from the card playing", lambda: kv(host, "video").get("open") == 0)
+        send(host, ["screen 0"])
+        time.sleep(1.0)
+
+        send(host, ["attract"])
+        time.sleep(4.0)
+        out_in("the attract lap", lambda: send(host, ["where"])[0].find("lap_ms=-1") >= 0)
+        send(host, ["screen 0"])
+        time.sleep(1.0)
+
+        if clip.exists():
+            up = subprocess.Popen([sys.executable, str(ROOT / "tools" / "n6v.py"), "upload", "--host", host,
+                                   str(clip)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            # taken out only once the board is receiving: earlier, the upload is refused, not cut off
+            under_way = wait(lambda: media(host)["receiving"] == 1, 10.0)
+            send(host, ["sdcard out"])
+            try:
+                text = up.communicate(timeout=30)[0]
+            except subprocess.TimeoutExpired:
+                up.kill()
+                text = "did not end"
+            stopped = under_way is not None and "checksum verified" not in text and "did not end" not in text
+            wait(lambda: sd()["mounted"] == "0", 5.0)  # let go of first: else the old mount is the one listed
+            send(host, ["sdcard in"])
+            wait(lambda: sd()["mounted"] == "1", 10.0)
+            wait(lambda: media(host)["card_clips"] == n_card, 10.0)
+            left = [f for f in card_files() if f in ("upload.tmp", n6v_card_name(clip)) or f.endswith(".old")]
+            last = ([ln.strip() for ln in re.split(r"[\r\n]", text) if ln.strip()] or ["no output"])[-1]
+            results.append(f"an upload: " + (f"stopped ({last.split(': ', 1)[-1]})" if stopped else
+                                             f"NOT stopped (under way: {under_way is not None}; {last})") +
+                           f", {'nothing left on the card' if not left else 'LEFT ' + ', '.join(left)}")
+    finally:
+        send(host, ["sdcard auto", "screen 0"])
+    time.sleep(1.0)
+    g1, a1 = stats(host), kv(host, "audio")
+    print("card taken out and put back (acted out): " + "; ".join(results) +
+          f"; UI dropped {int(g1['dropped'] - g0['dropped'])}, "
+          f"audio underruns {int(a1.get('errors', 0) - a0.get('errors', 0))}")
+
+
+def n6v_card_name(clip: Path) -> str:
+    import n6v
+
+    return n6v.card_name(clip)
 
 
 def card_playback(host: str, m: dict[str, int], index: int) -> None:

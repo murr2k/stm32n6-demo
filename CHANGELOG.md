@@ -7,6 +7,20 @@ behind the rules that came out of them.
 
 ## 2026-11-19, after v1.0.0
 
+### Added
+
+- **The microSD card can be taken out and put back while the demo runs.**
+  A clip playing from it closes within a quarter of a second (the attract
+  lap carries on with the screens taking turns), the card's clips leave
+  Cinema's list (the flash copies take their places), an upload stops with
+  an error; a card put in is mounted half a second later, at High Speed,
+  and its clips come back. A card put in after boot is mounted by itself
+  too. Files stay whole whenever the card goes: an unfinished upload is
+  removed at the next mount, a clip being replaced and the settings files
+  (the fixed address, the energy monitor's address) are written so that
+  the old or the new version survives. `ctl.py sdcard` shows the watcher;
+  `"sdcard out"` and `"sdcard in"` act it out without hands at the board.
+
 ### Changed
 
 - **121 KB of internal RAM free instead of 3.4 KB**, for the next features:
@@ -16,6 +30,13 @@ behind the rules that came out of them.
 
 ### Fixed
 
+- **A host tool that left a connection open held a board service until a
+  restart.** The control, screenshot and upload services serve one client
+  at a time and were meant to drop a silent one after 5 or 10 s, but the
+  socket timeouts were never in effect (two network options were missing).
+  `n6v.py` left its upload connection open after closing it, which is how
+  this was found; both are fixed. `n6v.py` also prints the board's reason
+  for stopping an upload in full ("err ...", it lost the first letter).
 - **The microSD card's bus ran out of its specification**: at 48 MHz in
   Default Speed mode, which goes to 25 MHz, because nothing switched the
   card to High Speed mode. The card now comes up at 24 MHz, is switched to

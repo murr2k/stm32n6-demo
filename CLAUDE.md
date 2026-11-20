@@ -25,6 +25,7 @@ not to be modified from here.
 .\.venv\Scripts\python.exe tools\fuzz_player.py --secs 120   # random abuse of the video player
 .\.venv\Scripts\python.exe tools\acap.py --secs 2 -o captures\x.wav --clicks "tap 40 444"   # record the DAC feed while commands run, count discontinuities
 .\.venv\Scripts\python.exe tools\n6v.py upload media\out\n6_film.n6v   # clip to the microSD card over Ethernet (4 MB/s); also ls, rm, df
+.\.venv\Scripts\python.exe tools\ctl.py sdcard media   # the card watcher (slot, mounted, gone, High Speed) and the clip list; "sdcard out|in|auto" acts out a card taken out or put in
 .\.venv\Scripts\python.exe tools\acap.py --mic --secs 3 -o captures\mic.wav   # record the microphone (24 bit), print its level
 Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself (also / and /status.json)
 .\.venv\Scripts\python.exe tools\ctl.py netcfg     # the board's address; "netcfg static IP MASK GW" or "netcfg dhcp" changes it now
@@ -178,7 +179,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   the recorder, the same day: 11 KB left; 830 since the attract lap's
   overlay mix, 2026-11-18: 10 KB left; 836.6 since Home Power, 2026-11-19, nearly all
   of it Zephyr's DNS resolver: 3.4 KB left; then, the same day, the pools
-  sized to their measured peaks: 718.6 KB, **121 KB left**) (LVGL pool 192 KB,
+  sized to their measured peaks: 718.6 KB, 121 KB left; 721.9 with the card
+  watcher's 3 KB stack, **118 KB left**) (LVGL pool 192 KB,
   peak 108 KB after a tour; kernel heap 16 KB, peak 140 B, getaddrinfo its
   only user; main stack 10 KB, 5.8 KB used; network buffers 128 KB, not yet
   measured; the card's two 32 KB I/O buffers; other stacks; the NPU's thread
@@ -565,7 +567,13 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   **Why:** Zephyr has 16 TCP slots here and a closed connection lingers; a
   script that connected per command (80 a second in an injected drag) made
   the board unreachable for tens of seconds, which looked like a crash. Both
-  servers time out a silent client after 5 s. A board that does not answer
+  servers time out a silent client after 5 s (the upload service, also one
+  client at a time, after 10 s), but only since 2026-11-19: `SO_RCVTIMEO`
+  and `SO_SNDTIMEO` take effect only with `CONFIG_NET_CONTEXT_RCVTIMEO` and
+  `_SNDTIMEO`, and without them `setsockopt` failed unchecked, so a client
+  that left its connection open (`n6v.Card.close()` closed the socket but
+  not its `makefile()` reader) held the port until a restart. Never touch
+  the control port while `tour.py` runs. A board that does not answer
   but shows the WFI debugger signature (Rev Z, `DEV_AP_ACCESS_ERROR`) is in
   this state, not halted. Do not probe a running board with a hot-plug
   `-halt`: it stops the core.
@@ -743,6 +751,53 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   `ctl.py "peek 0x58026804"` (CLKCR) 0x00024000, CLKDIV (bits 9:0) 0. The
   divider on this SDMMC is kernel clock / (2 x clk-div), not the binding's
   formula (that is the older block's).
+- **The card-detect switch belongs to the app, not the driver: the overlay
+  deletes `cd-gpios` from `&sdmmc2` and gives the pin as `zephyr,user`
+  `sd-cd-gpios`; `sd_watch` (sdcard.c, priority 7) polls it every 100 ms.**
+  A card out for two polls: `gone` is set (reads and upload writes fail at
+  once, Cinema closes a clip from the card, the attract lap then has the
+  screens take turns), 300 ms for the holders to close their files (closed
+  after the unmount, each logs a close error), then `unmount()` with
+  `mount_lock`, the library lock and `io_lock` held, and the generation
+  moves on by more than `SD_CHANGES` (every card clip's picture is made
+  again; another card may hold other files under the same names). A card in
+  for five polls is mounted; three failed mounts and it waits to be taken
+  out. **Why:** the driver's own handler deinitialised the controller from
+  the system work queue under a transfer in flight, which then waited for
+  ever (`k_sem_take(&sync, K_FOREVER)`), switched the detect interrupt off
+  (a card put back went unnoticed), and left the disk's reference count at
+  one (no later mount initialised the card): with the card pulled on
+  2026-11-17 only a restart brought it back. Also needed: `disk_reset()`
+  after every unmount and failed mount (a forced `DISK_IOCTL_CTRL_DEINIT`):
+  after an I/O error the driver reports the disk uninitialised, FatFs
+  "initialises" it again, which only raises the reference count, the
+  unmount then left it at one, and every mount failed on its first read
+  (found with a card pulled mid-upload); `-Wl,--wrap=SDMMC_ConfigData` caps
+  the HAL's data timeout at 1 s (0xFFFFFFFF bus clocks, 89 s at 48 MHz, held
+  the reader on a card gone mid-transfer); `-Wl,--wrap=HAL_SD_GetCardState`
+  answers "transfer" with the slot empty (the driver spins on it after
+  every transfer, with no limit). Measured with the card pulled by hand: a
+  clip from the card closed 0.15 to 0.22 s after, unmounted at 0.26 to
+  0.57 s, mounted again 0.52 to 1.17 s after it went back, High Speed, 0
+  dropped frames, the control port answering in 1 ms (audio underruns were
+  not measured then: the script read a field the audio status does not have;
+  the tour's acted-out removals measure them, 0). A pull
+  mid-transfer logs that transfer's I/O error (the data contacts break
+  before the detect switch): those lines are real, not a fault. Test
+  without hands: `ctl.py "sdcard out"`, `"sdcard in"`, `"sdcard auto"` (the
+  watcher acts as if; the wraps still read the real pin).
+- **A card taken out at any moment leaves every file whole, old or new.**
+  Uploads go to `upload.tmp` and replace a clip as name -> name.old,
+  upload.tmp -> name, delete name.old (`replace_clip`); settings files
+  (`n6demo.cfg`, `power.cfg`) are written as name.new, then name deleted,
+  then name.new -> name (`sdcard_save`; `sdcard_load` finishes such a save).
+  At every mount `recover()` deletes an unfinished `upload.tmp` (its clusters
+  are freed) and finishes or undoes an interrupted replace. **Why:** FAT has
+  no rename that replaces, and the old code truncated a settings file and
+  wrote it again (empty if pulled then: the fixed address and the
+  monitor's address lost) and deleted a clip before renaming its successor.
+  Lost clusters of a file never closed and a FAT sector damaged mid-write
+  are beyond this (chkdsk on a PC).
 - **Card reads go through `sdcard_read_at()`: whole sectors into one
   cache-line-aligned buffer, then a copy.** **Why:** the driver invalidates
   the data cache over the DMA target, so a buffer that shares a cache line
@@ -1145,15 +1200,15 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   `tools/n6v.py encode` makes the `.n6v`, `upload` puts it on the card,
   `pack` and `flash` in the media partition at 0x7042_0000. Outputs go to
   `media/out/` (not committed).
-- Not built: mounting a card put in after boot without a host command (the
-  card-detect pin is not watched; `n6v.py mount` asks for it), and recovering
-  a card pulled and put back while mounted: tried by accident on 2026-11-17,
-  `n6v.py ls` then fails (`cannot read /SD:/clips`), `n6v.py mount` answers
-  ok because the card counts as mounted and changes nothing, and only a
-  restart brings it back (the driver would have to re-initialise the card
-  and FatFs remount). Fast seeks in
-  very large files (FatFs walks the cluster chain: a backward seek in a
-  1 GB clip on FAT32 may take a few hundred ms; untested), FAT timestamps.
+- A card taken out and put back while the demo runs: built 2026-11-19 (see
+  the invariant on the card watcher); checked with the card really pulled
+  and put back by the user while a card clip played, during the attract lap
+  and during an upload. Not built: a formatter (designed 2026-11-19: FAT32 up
+  to 32 GB, exFAT above, aligned to the card's allocation unit, settings
+  carried over, optionally the flash clips copied on; needs
+  `CONFIG_FS_FATFS_MKFS`), fast seeks in very large files (FatFs walks the
+  cluster chain: a backward seek in a 1 GB clip on FAT32 may take a few
+  hundred ms; untested), FAT timestamps.
 - Microphone: works on the replacement DK (2026-11-17, claps and taps with
   spoken prompts, see the invariant); Signal Lab shows real sound. The first
   board's U13 gave noise only; open there: VDD_MIC at CN5 pin 2 and SB19

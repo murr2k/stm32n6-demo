@@ -187,6 +187,9 @@ class Card:
         return self.reply()
 
     def close(self) -> None:
+        # the reader too: while a makefile() object is open the connection stays
+        # open, and the board's service, one client at a time, waits on it
+        self.f.close()
         self.s.close()
 
 
@@ -213,8 +216,10 @@ def upload(host: str, files: list[str], quiet: bool = False) -> list[tuple[str, 
             view, shown = memoryview(data), -1
             for pos in range(0, len(data), PIECE):
                 card.s.sendall(view[pos:pos + PIECE])
-                if pos + PIECE <= len(data) and card.f.read(1) != b".":
-                    sys.exit(f"\n{name}: the board stopped the upload: {card.f.readline().decode('ascii', 'replace').strip()}")
+                credit = card.f.read(1) if pos + PIECE <= len(data) else b"."
+                if credit != b".":  # not a credit: the first byte of the board's "err ..." line
+                    reason = (credit + card.f.readline()).decode("ascii", "replace").strip()
+                    sys.exit(f"\n{name}: the board stopped the upload: {reason}")
                 pct = 100 * min(pos + PIECE, len(data)) // len(data)
                 if not quiet and pct != shown:
                     shown = pct

@@ -171,8 +171,8 @@ static void scan_card(struct clip *clips, int *count)
 	struct fs_dir_t dir;
 	int n_clips = *count, first = n_clips, found = 0;
 
-	if (!sdcard_mounted() || sd.ring == NULL || !use_card) {
-		return;
+	if (!sdcard_mounted() || sdcard_gone() || !sdcard_present() || sd.ring == NULL || !use_card) {
+		return; /* gone or on its way: every header would read as broken */
 	}
 	fs_dir_t_init(&dir);
 	sdcard_library_lock();
@@ -506,7 +506,9 @@ static void file_close(void)
 	sd.epoch++;
 	k_mutex_unlock(&win_lock);
 	if (sd.file_open) {
+		sdcard_library_lock(); /* not while a card taken out is being let go of */
 		fs_close(&sd.file);
+		sdcard_library_unlock();
 		sd.file_open = false;
 	}
 }
@@ -520,7 +522,8 @@ static void file_open(const struct clip *c)
 	snprintf(path, sizeof(path), "%s/%s", SD_CLIPS_DIR, c->name);
 	fs_file_t_init(&sd.file);
 	sdcard_library_lock();
-	ret = fs_open(&sd.file, path, FS_O_READ);
+	/* the card may have been taken out since the list was read */
+	ret = sdcard_mounted() && !sdcard_gone() ? fs_open(&sd.file, path, FS_O_READ) : -ENODEV;
 	sdcard_library_unlock();
 	if (ret == 0) {
 		sd.file_open = true;
@@ -589,7 +592,11 @@ static bool file_fill(void)
 	}
 	k_mutex_lock(&win_lock, K_FOREVER);
 	if (got < (int)must) {
-		LOG_ERR("%s: read failed at %u (%d)", c->name, at, got);
+		if (sdcard_gone() || !sdcard_present()) {
+			LOG_INF("%s: the card was taken out", c->name);
+		} else {
+			LOG_ERR("%s: read failed at %u (%d)", c->name, at, got);
+		}
 		sd.failed = true;
 	} else {
 		sd.hi = at + n;
@@ -1103,7 +1110,7 @@ static int still_from_card(const struct clip *c, uint32_t frame, uint8_t *mcu, s
 	snprintf(path, sizeof(path), "%s/%s", SD_CLIPS_DIR, c->name);
 	fs_file_t_init(&f);
 	sdcard_library_lock();
-	ret = fs_open(&f, path, FS_O_READ);
+	ret = sdcard_mounted() && !sdcard_gone() ? fs_open(&f, path, FS_O_READ) : -ENODEV;
 	if (ret == 0) {
 		ret = -EIO;
 		if (sdcard_read_at(&f, c->hdr.index_off + 4 * frame, ent, want) == want) {

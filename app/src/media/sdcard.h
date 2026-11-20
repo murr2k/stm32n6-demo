@@ -57,9 +57,22 @@ struct sd_status {
 	uint32_t rx_kbps;            /* of the upload in progress, or of the last one */
 };
 
-/* Mount the card. Safe to call again; returns 0 once it is mounted. */
+/* Mount the card. Safe to call again; returns 0 once it is mounted, -ENODEV
+ * at once when the slot is empty. A thread of sdcard.c watches the card-detect
+ * switch: a card taken out is unmounted (after which `generation` moves on and
+ * the clips are read again), one put in is mounted. */
 int sdcard_mount(void);
 bool sdcard_mounted(void);
+/* A card is in the slot (the detect switch). */
+bool sdcard_present(void);
+/* The card was seen to go and has not been mounted since: a clip playing
+ * from it is to be closed, reads of it fail at once. */
+bool sdcard_gone(void);
+/* Testing (ctl "sdcard out|in|auto"): the watcher acts as if the card were
+ * taken out or put in, or follows the detect switch again. */
+enum { SD_SIM_AUTO, SD_SIM_OUT, SD_SIM_IN };
+void sdcard_simulate(int mode);
+int sdcard_watch_status(char *out, size_t len);
 void sdcard_get_status(struct sd_status *st);
 
 /* Read up to `len` bytes at `off` of an open file into `dst`. Returns the
@@ -79,5 +92,13 @@ void sdcard_note_change(const char *name);
 /* Held while a clip file is opened, replaced or deleted. */
 void sdcard_library_lock(void);
 void sdcard_library_unlock(void);
+
+/* A small settings file, written so that a card taken out at any moment
+ * leaves the old contents or the new whole (via path.new). Returns 0 or a
+ * negative errno (-ENODEV: no card). */
+int sdcard_save(const char *path, const void *data, size_t len);
+/* Read it back (up to cap bytes; finishes a save the card was taken out in
+ * the middle of). Returns the bytes read or a negative errno. */
+int sdcard_load(const char *path, void *buf, size_t cap);
 
 #endif

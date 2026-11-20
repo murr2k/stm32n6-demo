@@ -8,9 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/net/socket.h>
+#include <zephyr/storage/disk_access.h>
 #include <zephyr/sys/crc.h>
 
 #include <ff.h>
@@ -37,6 +39,82 @@ static K_MUTEX_DEFINE(io_lock);
 static K_MUTEX_DEFINE(lib_lock);
 static uint8_t io_buf[SD_IO_BLOCK] __aligned(32);
 static uint8_t rx_buf[SD_IO_BLOCK] __aligned(32);
+
+/* The card-detect switch (the overlay takes it from the driver: see there). */
+static const struct gpio_dt_spec cd = GPIO_DT_SPEC_GET(DT_PATH(zephyr_user), sd_cd_gpios);
+static atomic_t cd_ready;
+/* The card was seen to go: set at once, cleared by the next mount. Readers
+ * fail fast meanwhile instead of waiting on a card that is not there. */
+static volatile bool gone;
+/* ctl "sdcard out|in|auto": act as if the card were taken out or put in
+ * (testing without hands at the board); the detect switch otherwise. */
+static volatile int sim;
+
+/* What the switch says, whatever is simulated. */
+static bool in_slot(void)
+{
+	if (atomic_cas(&cd_ready, 0, 1)) {
+		gpio_pin_configure_dt(&cd, GPIO_INPUT);
+	}
+	return gpio_pin_get_dt(&cd) > 0;
+}
+
+bool sdcard_present(void)
+{
+	return sim == SD_SIM_OUT ? false : sim == SD_SIM_IN ? true : in_slot();
+}
+
+void sdcard_simulate(int mode)
+{
+	sim = mode;
+}
+
+int sdcard_watch_status(char *out, size_t len)
+{
+	static const char *const names[] = {"auto", "out", "in"};
+
+	return snprintf(out, len, "slot=%d sim=%s mounted=%d gone=%d high_speed=%d gen=%u\n", in_slot(),
+			names[sim], mounted, gone, status.high_speed, status.generation);
+}
+
+bool sdcard_gone(void)
+{
+	return gone;
+}
+
+/* A card taken out in mid-transfer must not hold the reader for the HAL's
+ * data timeout, 0xFFFFFFFF bus clocks (89 s at 48 MHz): the transfer waits
+ * on a semaphore that only the timeout's error interrupt gives. At most 1 s
+ * at 48 MHz, twice the longest busy time the SD specification allows (SDXC
+ * writes, 500 ms). Linked with -Wl,--wrap=SDMMC_ConfigData.
+ */
+#define DATA_TIMEOUT_CLOCKS 48000000u
+
+HAL_StatusTypeDef __real_SDMMC_ConfigData(SDMMC_TypeDef *SDMMCx, const SDMMC_DataInitTypeDef *Data);
+
+HAL_StatusTypeDef __wrap_SDMMC_ConfigData(SDMMC_TypeDef *SDMMCx, const SDMMC_DataInitTypeDef *Data)
+{
+	SDMMC_DataInitTypeDef d = *Data;
+
+	d.DataTimeOut = MIN(d.DataTimeOut, DATA_TIMEOUT_CLOCKS);
+	return __real_SDMMC_ConfigData(SDMMCx, &d);
+}
+
+/* After every transfer Zephyr's driver spins until the card reports its
+ * transfer state, with no time limit; a card that has gone never does, and
+ * the spinning thread (the player's reader, priority 2) would starve every
+ * thread below it for good. With no card in the slot, report that state.
+ * Linked with -Wl,--wrap=HAL_SD_GetCardState.
+ */
+HAL_SD_CardStateTypeDef __real_HAL_SD_GetCardState(SD_HandleTypeDef *hsd);
+
+HAL_SD_CardStateTypeDef __wrap_HAL_SD_GetCardState(SD_HandleTypeDef *hsd)
+{
+	if (!in_slot()) { /* the switch itself, not a simulation: a card that is there answers */
+		return HAL_SD_CARD_TRANSFER;
+	}
+	return __real_HAL_SD_GetCardState(hsd);
+}
 
 /* Let the SDMMC2 DMA master act with the CPU's rights (secure, privileged,
  * compartment 1). Out of reset it is non-secure and its writes to the RAM
@@ -106,6 +184,142 @@ static void remove_if_there(const char *path)
 	}
 }
 
+/* A card taken out at any moment must leave every file whole, old or new.
+ * FAT has no rename that replaces, so a replace is three steps, each of which
+ * leaves something recover() can finish or undo at the next mount:
+ *
+ *   clips:    name -> name.old, upload.tmp -> name, delete name.old
+ *   settings: write name.new, delete name, name.new -> name
+ *
+ * An unfinished upload.tmp is deleted at mount (its clusters are freed).
+ */
+#define OLD_SUFFIX ".old"
+#define NEW_SUFFIX ".new"
+#define RECOVER_MAX 8
+
+/* Library lock held. */
+static int replace_clip(const char *from, const char *path)
+{
+	char old[PATH_MAX_LEN + 4];
+	int ret = 0;
+
+	snprintf(old, sizeof(old), "%s" OLD_SUFFIX, path);
+	remove_if_there(old);
+	if (exists(path)) {
+		ret = fs_rename(path, old);
+	}
+	if (ret == 0) {
+		ret = fs_rename(from, path);
+		if (ret != 0 && exists(old)) {
+			fs_rename(old, path); /* the old one back */
+		}
+	}
+	if (ret == 0) {
+		remove_if_there(old);
+	}
+	return ret;
+}
+
+/* At mount, library lock held. */
+static void recover(void)
+{
+	static struct fs_dirent ent;           /* 256 B of name: not on a watcher's stack */
+	static char old[RECOVER_MAX][SD_NAME_MAX + 4];
+	struct fs_dir_t dir;
+	char path[PATH_MAX_LEN + 4];
+	int n = 0;
+
+	if (exists(TMP_PATH)) {
+		fs_unlink(TMP_PATH);
+		LOG_INF("an unfinished upload removed");
+	}
+	fs_dir_t_init(&dir);
+	if (fs_opendir(&dir, SD_CLIPS_DIR) != 0) {
+		return;
+	}
+	/* names first, renames after: not while the directory is being read */
+	while (fs_readdir(&dir, &ent) == 0 && ent.name[0] != '\0' && n < RECOVER_MAX) {
+		size_t len = strlen(ent.name);
+
+		if (ent.type == FS_DIR_ENTRY_FILE && len > 4 && len < sizeof(old[0]) &&
+		    strcmp(ent.name + len - 4, OLD_SUFFIX) == 0) {
+			strcpy(old[n++], ent.name);
+		}
+	}
+	fs_closedir(&dir);
+	for (int i = 0; i < n; i++) {
+		snprintf(path, sizeof(path), "%s/%.*s", SD_CLIPS_DIR, (int)sizeof(old[0]) - 1, old[i]);
+		char *dot = path + strlen(path) - 4;
+
+		*dot = '\0';
+		bool replaced = exists(path);
+
+		*dot = '.';
+		if (replaced) {
+			fs_unlink(path); /* the new clip is in place: the old copy goes */
+		} else {
+			char base[PATH_MAX_LEN + 4];
+
+			snprintf(base, sizeof(base), "%.*s", (int)(dot - path), path);
+			fs_rename(path, base); /* the new one never arrived: the old one back */
+		}
+		LOG_INF("%s: an interrupted replace %s", old[i], replaced ? "finished" : "undone");
+	}
+}
+
+int sdcard_save(const char *path, const void *data, size_t len)
+{
+	char tmp[64];
+	struct fs_file_t f;
+	int ret = -ENODEV;
+
+	snprintf(tmp, sizeof(tmp), "%s" NEW_SUFFIX, path);
+	sdcard_library_lock();
+	if (mounted && !gone) {
+		remove_if_there(tmp);
+		fs_file_t_init(&f);
+		ret = fs_open(&f, tmp, FS_O_CREATE | FS_O_WRITE);
+		if (ret == 0) {
+			ssize_t w = fs_write(&f, data, len);
+			int c = fs_close(&f);
+
+			ret = w != (ssize_t)len ? -EIO : c;
+		}
+		if (ret == 0) {
+			remove_if_there(path);
+			ret = fs_rename(tmp, path);
+		}
+	}
+	sdcard_library_unlock();
+	return ret;
+}
+
+int sdcard_load(const char *path, void *buf, size_t cap)
+{
+	char tmp[64];
+	struct fs_file_t f;
+	int ret = -ENODEV;
+
+	snprintf(tmp, sizeof(tmp), "%s" NEW_SUFFIX, path);
+	sdcard_library_lock();
+	if (mounted && !gone) {
+		if (!exists(path) && exists(tmp)) {
+			fs_rename(tmp, path); /* the card went between the delete and the rename */
+			LOG_INF("%s: an interrupted save finished", path);
+		} else {
+			remove_if_there(tmp); /* written only in part: the file itself is whole */
+		}
+		ret = -ENOENT;
+		fs_file_t_init(&f);
+		if (exists(path) && fs_open(&f, path, FS_O_READ) == 0) {
+			ret = (int)fs_read(&f, buf, cap);
+			fs_close(&f);
+		}
+	}
+	sdcard_library_unlock();
+	return ret;
+}
+
 void sdcard_note_change(const char *name)
 {
 	k_spinlock_key_t key = k_spin_lock(&st_lock);
@@ -117,12 +331,48 @@ void sdcard_note_change(const char *name)
 	k_spin_unlock(&st_lock, key);
 }
 
+/* A card came or went: maybe another card, so every file on it is new to
+ * whoever watches. The generation moves on by more than the changes
+ * remembered (Cinema then makes every card clip's picture again).
+ */
+static void note_swap(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&st_lock);
+
+	status.generation += SD_CHANGES + 1;
+	memset(status.changed, 0, sizeof(status.changed));
+	status.receiving = false;
+	k_spin_unlock(&st_lock, key);
+}
+
+/* Leave the disk deinitialised, its reference count at zero, whatever the
+ * unmount or a failed mount left. After an I/O error the driver reports the
+ * disk uninitialised, FatFs then "initialises" it again on its next call,
+ * and that only raises the reference count (the real init runs at zero): the
+ * unmount lowered it to one without deinitialising, and no later mount
+ * initialised the card (seen 2026-11-19 with a card taken out mid-write:
+ * every mount failed on its first read). A forced deinit sets the count to
+ * zero and resets the controller.
+ */
+#define DISK_NAME "SD"
+
+static void disk_reset(void)
+{
+	if (disk_access_status(DISK_NAME) != DISK_STATUS_UNINIT) {
+		bool force = true;
+
+		disk_access_ioctl(DISK_NAME, DISK_IOCTL_CTRL_DEINIT, &force);
+	}
+}
+
 int sdcard_mount(void)
 {
 	int ret = 0;
 
 	k_mutex_lock(&mount_lock, K_FOREVER);
-	if (!mounted) {
+	if (!mounted && !sdcard_present()) {
+		ret = -ENODEV; /* asking an empty slot takes the HAL seconds of retries */
+	} else if (!mounted) {
 		rif_open(); /* without it: "fs mount error (-19)", the DMA's writes do not land */
 		ret = fs_mount(&mnt);
 		if (ret == 0) {
@@ -131,18 +381,57 @@ int sdcard_mount(void)
 			if (mk != 0) {
 				LOG_WRN("cannot create %s (%d)", SD_CLIPS_DIR, mk);
 			}
+			sdcard_library_lock();
+			recover(); /* what a card taken out at the wrong moment left */
+			sdcard_library_unlock();
+			gone = false;
 			mounted = true;
 			status.mounted = true;
-			sdcard_note_change("");
 			status.high_speed = high_speed;
+			note_swap();
 			LOG_INF("card mounted, %s, %s", fat.fs_type == FS_EXFAT ? "exFAT" : "FAT",
 				high_speed ? "High Speed at 48 MHz" : "Default Speed at 24 MHz");
 		} else {
 			LOG_WRN("no usable card (%d)", ret);
+			disk_reset(); /* the next try starts from scratch */
 		}
 	}
 	k_mutex_unlock(&mount_lock);
 	return ret;
+}
+
+/* The card was taken out: let go of it. The library and I/O locks keep any
+ * reader, scan or upload write out of FatFs meanwhile; the unmount powers the
+ * disk down and brings its reference count to zero, so the next mount
+ * initialises the card that is put in. Files still open (the player's, an
+ * upload's) are invalid afterwards: their reads fail, their close frees them.
+ */
+static void unmount(void)
+{
+	k_mutex_lock(&mount_lock, K_FOREVER);
+	sdcard_library_lock();
+	k_mutex_lock(&io_lock, K_FOREVER);
+	if (mounted) {
+		int ret = fs_unmount(&mnt);
+
+		disk_reset(); /* after an I/O error the unmount alone does not deinitialise */
+		mounted = false;
+		k_spinlock_key_t key = k_spin_lock(&st_lock);
+
+		status.mounted = false;
+		status.high_speed = false;
+		status.space_known = false;
+		status.total_mb = status.free_mb = 0;
+		k_spin_unlock(&st_lock, key);
+		note_swap();
+		LOG_INF("card taken out%s", ret ? " (unmount reported an error)" : "");
+		if (ret != 0) {
+			LOG_WRN("unmount: %d", ret);
+		}
+	}
+	k_mutex_unlock(&io_lock);
+	sdcard_library_unlock();
+	k_mutex_unlock(&mount_lock);
 }
 
 bool sdcard_mounted(void)
@@ -174,6 +463,10 @@ int sdcard_read_at(struct fs_file_t *f, uint32_t off, void *dst, uint32_t len)
 	int ret = 0;
 
 	k_mutex_lock(&io_lock, K_FOREVER);
+	if (gone || !mounted || !in_slot()) {
+		len = 0; /* the card is out, or on its way: do not ask it */
+		ret = -ENODEV;
+	}
 	while (len > 0) {
 		uint32_t base = off & ~511u, skip = off - base;
 		uint32_t want = MIN(ROUND_UP(skip + len, 512), SD_IO_BLOCK);
@@ -211,8 +504,14 @@ int sdcard_read_at(struct fs_file_t *f, uint32_t off, void *dst, uint32_t len)
 static void refresh_space(void)
 {
 	struct fs_statvfs sv;
+	int ret = -ENODEV;
 
-	if (mounted && fs_statvfs("/SD:", &sv) == 0) {
+	sdcard_library_lock(); /* not while the card is being let go of */
+	if (mounted) {
+		ret = fs_statvfs("/SD:", &sv);
+	}
+	sdcard_library_unlock();
+	if (ret == 0) {
 		k_spinlock_key_t key = k_spin_lock(&st_lock);
 
 		status.total_mb = (uint32_t)(((uint64_t)sv.f_blocks * sv.f_frsize) >> 20);
@@ -250,7 +549,9 @@ static int cmd_list(int s, char *out, size_t out_len)
 	int count = 0;
 
 	fs_dir_t_init(&dir);
-	if (fs_opendir(&dir, SD_CLIPS_DIR) != 0) {
+	sdcard_library_lock();
+	if (!mounted || fs_opendir(&dir, SD_CLIPS_DIR) != 0) {
+		sdcard_library_unlock();
 		return snprintf(out, out_len, "err cannot read %s\n", SD_CLIPS_DIR);
 	}
 	while (fs_readdir(&dir, &ent) == 0 && ent.name[0] != '\0') {
@@ -262,6 +563,7 @@ static int cmd_list(int s, char *out, size_t out_len)
 		}
 	}
 	fs_closedir(&dir);
+	sdcard_library_unlock();
 	return snprintf(out, out_len, "ok %d\n", count);
 }
 
@@ -282,9 +584,15 @@ static int cmd_put(int s, const char *name, uint32_t size, uint32_t crc_want, ch
 	if (player_using_file(name)) {
 		return snprintf(out, out_len, "err busy: that clip is playing\n");
 	}
-	remove_if_there(TMP_PATH);
 	fs_file_t_init(&f);
-	ret = fs_open(&f, TMP_PATH, FS_O_CREATE | FS_O_WRITE);
+	sdcard_library_lock();
+	if (mounted) {
+		remove_if_there(TMP_PATH);
+		ret = fs_open(&f, TMP_PATH, FS_O_CREATE | FS_O_WRITE);
+	} else {
+		ret = -ENODEV;
+	}
+	sdcard_library_unlock();
 	if (ret != 0) {
 		return snprintf(out, out_len, "err cannot create the file (%d)\n", ret);
 	}
@@ -318,8 +626,13 @@ static int cmd_put(int s, const char *name, uint32_t size, uint32_t crc_want, ch
 		}
 		if (ret == 0) {
 			uint32_t t2 = k_uptime_get_32();
-			ssize_t w = fs_write(&f, rx_buf, fill);
+			ssize_t w = -ENODEV;
 
+			k_mutex_lock(&io_lock, K_FOREVER); /* not while the card is being let go of */
+			if (!gone && mounted && in_slot()) {
+				w = fs_write(&f, rx_buf, fill);
+			}
+			k_mutex_unlock(&io_lock);
 			net_ms += t2 - t1;
 			card_ms += k_uptime_get_32() - t2;
 			crc = crc32_ieee_update(crc, rx_buf, fill);
@@ -334,8 +647,10 @@ static int cmd_put(int s, const char *name, uint32_t size, uint32_t crc_want, ch
 			k_spin_unlock(&st_lock, key);
 		}
 	}
+	sdcard_library_lock();
 	int cl = fs_close(&f);
 
+	sdcard_library_unlock();
 	if (ret == 0 && cl != 0) {
 		ret = cl;
 	}
@@ -349,13 +664,18 @@ static int cmd_put(int s, const char *name, uint32_t size, uint32_t crc_want, ch
 		if (player_using_file(name)) {
 			ret = -EBUSY;
 		} else {
-			remove_if_there(path);
-			ret = fs_rename(TMP_PATH, path);
+			ret = replace_clip(TMP_PATH, path);
 		}
 		sdcard_library_unlock();
 	}
 	if (ret != 0) {
-		remove_if_there(TMP_PATH);
+		/* after an I/O error (a card taken out mid-write) the next mount's
+		 * recover() deletes it: asking the card now only logs more errors */
+		sdcard_library_lock();
+		if (mounted && !gone && in_slot() && ret != -EIO) {
+			remove_if_there(TMP_PATH);
+		}
+		sdcard_library_unlock();
 	}
 	sdcard_note_change(name);
 	refresh_space();
@@ -479,3 +799,51 @@ static void service_thread(void *p1, void *p2, void *p3)
 	}
 }
 K_THREAD_DEFINE(sd_service, 6144, service_thread, NULL, NULL, NULL, 10, 0, 0);
+
+/* The card-detect switch, polled ten times a second. A card taken out is let
+ * go of at once, so that nothing waits on it; one put in is mounted when it
+ * has sat for half a second (contacts bounce while it slides in). A card
+ * that will not mount is tried three times, then left until it is taken out.
+ * At boot player_init() has mounted what is there; this starts after it.
+ */
+#define WATCH_MS  100
+#define IN_POLLS  5
+#define OUT_POLLS 2
+#define TRIES     3
+
+static void watch_thread(void *p1, void *p2, void *p3)
+{
+	int in = 0, out = 0, tries = 0;
+
+	ARG_UNUSED(p1);
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+	for (;;) {
+		k_msleep(WATCH_MS);
+		if (sdcard_present()) {
+			out = 0;
+			if (!mounted && tries < TRIES && ++in >= IN_POLLS) {
+				in = 0;
+				if (sdcard_mount() == 0) {
+					tries = 0;
+					refresh_space();
+				} else if (++tries == TRIES) {
+					LOG_WRN("the card does not mount: take it out to try again");
+				}
+			}
+		} else {
+			in = 0;
+			tries = 0;
+			out = MIN(out + 1, OUT_POLLS);
+			if (out == OUT_POLLS && !gone) {
+				gone = true; /* readers fail fast from here on */
+				/* Let the files on it be closed first (Cinema closes a clip from
+				 * the card within a frame, an upload stops at its next write):
+				 * closed after the unmount, each one logs a close error. */
+				k_msleep(300);
+				unmount();
+			}
+		}
+	}
+}
+K_THREAD_DEFINE(sd_watch, 3072, watch_thread, NULL, NULL, NULL, 7, 0, 2000);

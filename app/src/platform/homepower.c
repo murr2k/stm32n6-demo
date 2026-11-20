@@ -141,20 +141,11 @@ int homepower_get_url(char *out, size_t len)
 
 static void load_cfg(void)
 {
-	struct fs_file_t f;
-	struct fs_dirent ent;
 	char buf[URL_MAX + 16] = {0};
 
-	if (sdcard_mount() != 0) {
+	if (sdcard_mount() != 0 || sdcard_load(CFG_PATH, buf, sizeof(buf) - 1) <= 0) {
 		return;
 	}
-	fs_file_t_init(&f);
-	/* ask first: the fs layer logs an error for every failed open */
-	if (fs_stat(CFG_PATH, &ent) != 0 || fs_open(&f, CFG_PATH, FS_O_READ) != 0) {
-		return;
-	}
-	fs_read(&f, buf, sizeof(buf) - 1);
-	fs_close(&f);
 	if (strncmp(buf, "url=", 4) == 0) {
 		buf[4 + strcspn(buf + 4, " \r\n")] = '\0';
 		k_spinlock_key_t key = k_spin_lock(&lock);
@@ -169,19 +160,11 @@ static void load_cfg(void)
 
 static void save_cfg(const char *u)
 {
-	struct fs_file_t f;
 	char line[URL_MAX + 8];
 	int len = snprintf(line, sizeof(line), "url=%s\n", u);
 
-	if (sdcard_mount() != 0) {
+	if (sdcard_mount() != 0 || sdcard_save(CFG_PATH, line, len) != 0) {
 		LOG_WRN("no card: the monitor's address is kept until power-off");
-		return;
-	}
-	fs_file_t_init(&f);
-	if (fs_open(&f, CFG_PATH, FS_O_CREATE | FS_O_WRITE) == 0) {
-		fs_truncate(&f, 0);
-		fs_write(&f, line, len);
-		fs_close(&f);
 	}
 }
 

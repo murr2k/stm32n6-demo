@@ -129,13 +129,27 @@
  * Default Speed's 25 MHz. src/media/sdcard.c then switches it to High Speed
  * (CMD6) and, if it agrees, clears the divider: the bus at 48 MHz. Left at 0,
  * the HAL ran the bus at 48 MHz in Default Speed, out of the specification.
+ *
+ * The card-detect pin is taken from the driver and watched by the app
+ * (sdcard.c, zephyr,user sd-cd-gpios below): the driver's own handler
+ * deinitialised the controller from the system work queue under a transfer
+ * in flight (which then waited for ever), turned the detect interrupt off
+ * (so a card put back went unnoticed) and left the disk's reference count at
+ * one (so a later mount did not initialise the card). The app unmounts with
+ * the card's locks held, which deinitialises the disk properly, and mounts
+ * again when a card is back.
  */
 &sdmmc2 {
 	idma;
 	clk-div = <1>;
+	/delete-property/ cd-gpios;
 };
 
 / {
+	zephyr,user {
+		sd-cd-gpios = <&gpion 12 GPIO_ACTIVE_LOW>;
+	};
+
 	/* What the WM8904 driver queries for the MCLK rate; the SAI generates it. */
 	audio_mclk: audio-mclk {
 		compatible = "n6demo,audio-mclk";

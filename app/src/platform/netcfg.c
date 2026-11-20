@@ -68,7 +68,6 @@ const char *netcfg_check(const struct netcfg *cfg)
 
 void netcfg_load(struct netcfg *cfg)
 {
-	struct fs_file_t f;
 	char buf[160] = {0};
 
 	memset(cfg, 0, sizeof(*cfg));
@@ -78,14 +77,7 @@ void netcfg_load(struct netcfg *cfg)
 		LOG_WRN("USER button held: DHCP, the stored address is ignored");
 	}
 	if (sdcard_mount() == 0) {
-		struct fs_dirent ent;
-
-		fs_file_t_init(&f);
-		/* ask first: the fs layer logs an error for every failed open */
-		if (fs_stat(CFG_PATH, &ent) == 0 && fs_open(&f, CFG_PATH, FS_O_READ) == 0) {
-			fs_read(&f, buf, sizeof(buf) - 1);
-			fs_close(&f);
-		}
+		sdcard_load(CFG_PATH, buf, sizeof(buf) - 1);
 	}
 	/* "mode=static ip=a.b.c.d mask=... gw=..." on one line */
 	char mode[8] = "";
@@ -151,7 +143,6 @@ static void save_thread(void *a, void *b, void *c)
 {
 	for (;;) {
 		struct netcfg cfg;
-		struct fs_file_t f;
 		char line[128];
 
 		k_sem_take(&save_req, K_FOREVER);
@@ -168,16 +159,7 @@ static void save_thread(void *a, void *b, void *c)
 			store_state = "no card: kept until power-off";
 			continue;
 		}
-		fs_file_t_init(&f);
-		if (fs_open(&f, CFG_PATH, FS_O_CREATE | FS_O_WRITE) == 0) {
-			fs_truncate(&f, 0);
-			int w = fs_write(&f, line, len);
-
-			fs_close(&f);
-			store_state = w == len ? "saved on the card" : "card write failed";
-		} else {
-			store_state = "card write failed";
-		}
+		store_state = sdcard_save(CFG_PATH, line, len) == 0 ? "saved on the card" : "card write failed";
 		LOG_INF("address setting: %s (%s)", line, (const char *)store_state);
 	}
 }

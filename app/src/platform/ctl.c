@@ -339,6 +339,23 @@ static int handle(char *line, char *out, size_t out_len)
 				"gen=%u receiving=%d psram_kb=%u\n",
 				sd.mounted, sd.high_speed, clips, on_card, first_card, sd.total_mb, sd.free_mb,
 				sd.generation, sd.receiving, (unsigned int)(psram_used() / 1024));
+	} else if (!strcmp(cmd, "sdcard")) {
+		/* "sdcard": the card watcher; "sdcard out|in|auto": act as if the card were
+		 * taken out or put in (testing), or follow the detect switch again */
+		char mode[8] = "";
+
+		if (sscanf(line, "%*s %7s", mode) == 1) {
+			if (!strcmp(mode, "out")) {
+				sdcard_simulate(SD_SIM_OUT);
+			} else if (!strcmp(mode, "in")) {
+				sdcard_simulate(SD_SIM_IN);
+			} else if (!strcmp(mode, "auto")) {
+				sdcard_simulate(SD_SIM_AUTO);
+			} else {
+				return snprintf(out, out_len, "err sdcard [out | in | auto]\n");
+			}
+		}
+		return sdcard_watch_status(out, out_len);
 	} else if (!strcmp(cmd, "card") && n >= 2) {
 		player_use_card(a[0] != 0);
 	} else if (!strcmp(cmd, "clip") && n >= 2) {

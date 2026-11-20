@@ -653,6 +653,11 @@ static void service(uint32_t now_ms)
 	if (lap_on && !shell_in_attract()) {
 		close_player(); /* someone touched: the lap and its music stop, wherever they are */
 	}
+	if (open_clip >= 0 && sdcard_gone() && (open_clip == LAP_CLIP || player_clip_on_card(open_clip))) {
+		/* its card was taken out: back to the list, which is read again without
+		 * it (the attract lap then falls back to the screens taking turns) */
+		close_player();
+	}
 	if (thumbs_dirty) {
 		thumbs_dirty = false;
 		lv_obj_invalidate(row);

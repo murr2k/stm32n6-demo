@@ -24,10 +24,12 @@ if(CONFIG_VIDEO_STM32_VENC)
     -Wl,--wrap=EWLMallocRefFrm -Wl,--wrap=EWLFreeRefFrm)
 endif()
 
-# The microSD card switched to High Speed (CMD6) between Zephyr's driver's
-# HAL_SD_Init() and its 4-bit setup, so that its bus may run at 48 MHz
-# (src/media/sdcard.c).
-zephyr_ld_options(-Wl,--wrap=HAL_SD_Init)
+# The microSD card (src/media/sdcard.c): switched to High Speed (CMD6)
+# between Zephyr's driver's HAL_SD_Init() and its 4-bit setup, so that its bus
+# may run at 48 MHz; a data timeout of 1 s instead of 89, and no endless wait
+# for the card's state, so that a card taken out mid-transfer fails at once.
+zephyr_ld_options(-Wl,--wrap=HAL_SD_Init -Wl,--wrap=SDMMC_ConfigData
+                  -Wl,--wrap=HAL_SD_GetCardState)
 
 # LVGL's Helium (MVE) blend routines. The Zephyr module build lists the C
 # sources but not this assembly file, so without it CONFIG_LV_DRAW_SW_ASM_HELIUM

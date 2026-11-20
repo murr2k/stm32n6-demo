@@ -299,7 +299,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
 </section>
 
 <section>
-  <span class="eyebrow">Next &middot; planned 2026-11-19 &middot; High Speed built the same day</span>
+  <span class="eyebrow">Built 2026-11-19 &middot; a formatter next, if wanted</span>
   <h2>The microSD card: at full speed, and taken out and put back</h2>
   <p>Found while looking at internal RAM: the card's bus ran at 48 MHz in Default Speed mode, which the SD specification allows only to 25 MHz, because nothing ever switched the card to High Speed (CMD6). It runs at 24 MHz now, within the specification; measured with a 48.7 MB upload, the card writes 5.4 MB/s there against 9.0 MB/s at 48 MHz (uploads 2.7 against 3.65 MB/s; playback needs about 1 MB/s either way).</p>
   <div class="two">
@@ -312,11 +312,12 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
       </ul>
     </div>
     <div>
-      <h3>2. A card taken out and put back while the demo runs</h3>
+      <h3>2. A card taken out and put back while the demo runs <span class="pill ok">done</span></h3>
       <ul>
         <li>Today a card put in after boot is mounted only on request (<code>n6v.py mount</code>), and one pulled while mounted is lost until a restart; a clip playing from it, the attract lap's among them, would most likely hold.</li>
         <li>The plan: watch the card-detect pin (debounced). On removal close a clip playing from the card, unmount, deinitialise the disk; the card's clips leave Cinema's list (flash copies take their place) and attract mode falls back to the screens taking turns. On insertion initialise (through the same wrap, so at High Speed again), mount, rescan and rebuild the gallery off the UI thread.</li>
-        <li>Done when: pulling and replacing the card during playback, during the attract lap and during an upload leaves no hung screen or thread, the clips come back, and the frame and underrun counts stay at 0.</li>
+        <li>Done when: pulling and replacing the card during playback, during the attract lap and during an upload leaves no hung screen or thread, the clips come back, and the frame and underrun counts stay at 0. Met on 2026-11-19 with the card pulled by hand: the clip closed in 0.15 to 0.22 s, the card was back 0.52 to 1.17 s after it went in, at High Speed, 0 dropped frames (audio underruns not measured in that run; the tour now acts the removals out and counts them: 0). The first round found one more trap (after a write cut off, the disk's reference count stayed up and no mount initialised the card again): fixed with a forced deinit after every unmount and failed mount.</li>
+        <li>Also: every file stays whole whatever the moment (clips replaced via name.old, settings via name.new, an unfinished upload deleted at the next mount), and <code>ctl.py "sdcard out|in"</code> acts a removal out for tests without hands.</li>
       </ul>
     </div>
   </div>

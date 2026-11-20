@@ -19,6 +19,7 @@
  *   media                      the clip list and the SD card
  *   clip <n>                   clip n: its file on the card, frames, title
  *   card <0|1>                 list the card's clips or only the flash ones
+ *   sdcard [out|in|auto]       the card watcher: slot switch, mounted, gone; act as if taken out or put in (testing)
  *   play <n>                   go to Cinema and open clip n
  *   netcfg [dhcp | static IP MASK [GW]]  the board's address: show, or change now (and store)
  *   hoodt                      Under the Hood: worst sampling, stack scan, network and side panel times, us
