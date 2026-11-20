@@ -1,11 +1,11 @@
 # Changelog
 
-No releases are tagged; changes are listed by day, newest first. Each line
-names what a user of the demo or of its tools would notice; the commit log
-has the detail, and `CLAUDE.md` the reasons behind the rules that came out of
-them.
+Changes are listed by day, newest first; a day that ended in a tagged
+release says so. Each line names what a user of the demo or of its tools
+would notice; the commit log has the detail, and `CLAUDE.md` the reasons
+behind the rules that came out of them.
 
-## 2026-11-19
+## 2026-11-19: v1.0.0, the first tagged release
 
 ### Added
 

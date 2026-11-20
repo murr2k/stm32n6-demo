@@ -65,7 +65,10 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   clips), records the sound of a drag on the slider (`discontinuities 0`), and
   uploads, plays, seeks and deletes a generated test clip.
 - `CHANGELOG.md` gets a line for every change a user of the demo or its
-  tools would notice, under the day it is committed (no tagged releases).
+  tools would notice, under the day it is committed. Releases are tagged
+  only when the user asks (v1.0.0 on 2026-11-19, with a GitHub Release of
+  notes and no firmware binary: the built image links ST's SLA0044 code);
+  the day's heading names the tag.
   README images are the board's own screenshots; one of the Camera screen
   must show no face (the repository is public: pick a frame with a hand only).
 - Build times: a source-only change is about 2 min; any `prj.conf`, Kconfig or
