@@ -54,6 +54,40 @@ static void rif_open(void)
 					      RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
 }
 
+/* The card's bus at 48 MHz, in High Speed mode. Zephyr's driver calls
+ * HAL_SD_Init(), which brings the card up and sets the 1-bit bus to the
+ * clock of hsd->Init.ClockDiv, then HAL_SD_ConfigWideBusOperation() for 4
+ * bits, which takes the clock from it again. Neither ever sends CMD6, and
+ * without it the card stays in Default Speed signalling, specified to
+ * 25 MHz. So: initialise at the overlay's clk-div (24 MHz), switch the card
+ * to High Speed, and only if it agrees clear the divider (the kernel clock,
+ * 48 MHz) for the 4-bit setup that follows. A card that refuses stays at
+ * 24 MHz. Linked with -Wl,--wrap=HAL_SD_Init (app/CMakeLists.txt).
+ */
+static volatile bool high_speed;
+
+HAL_StatusTypeDef __real_HAL_SD_Init(SD_HandleTypeDef *hsd);
+
+HAL_StatusTypeDef __wrap_HAL_SD_Init(SD_HandleTypeDef *hsd)
+{
+	hsd->Init.ClockDiv = MAX(hsd->Init.ClockDiv, 1U); /* again 24 MHz on a re-init */
+	high_speed = false;
+
+	HAL_StatusTypeDef ret = __real_HAL_SD_Init(hsd);
+
+	if (ret != HAL_OK) {
+		return ret;
+	}
+	if (HAL_SD_ConfigSpeedBusOperation(hsd, SDMMC_SPEED_MODE_HIGH) == HAL_OK) {
+		hsd->Init.ClockDiv = 0;
+		high_speed = true;
+	} else {
+		hsd->ErrorCode = HAL_SD_ERROR_NONE;
+		hsd->State = HAL_SD_STATE_READY;
+	}
+	return HAL_OK;
+}
+
 /* Zephyr's fs layer logs an error for every call that fails, also where failing
  * is the normal case (a temporary file that is not there, a directory that
  * is): ask first. fs_stat() is quiet about a missing entry.
@@ -100,7 +134,9 @@ int sdcard_mount(void)
 			mounted = true;
 			status.mounted = true;
 			sdcard_note_change("");
-			LOG_INF("card mounted, %s", fat.fs_type == FS_EXFAT ? "exFAT" : "FAT");
+			status.high_speed = high_speed;
+			LOG_INF("card mounted, %s, %s", fat.fs_type == FS_EXFAT ? "exFAT" : "FAT",
+				high_speed ? "High Speed at 48 MHz" : "Default Speed at 24 MHz");
 		} else {
 			LOG_WRN("no usable card (%d)", ret);
 		}

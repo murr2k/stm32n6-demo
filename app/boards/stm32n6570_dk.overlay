@@ -123,9 +123,16 @@
  * 12 MB/s works out to about 370 000 a second: frame time taken from the UI.
  * The DMA is a bus master of its own and gets its RIF master attributes in
  * src/media/sdcard.c; Zephyr's SoC code does not set them for the SDMMC.
+ *
+ * clk-div 1: the card comes up at 24 MHz (on this SDMMC, kernel clock /
+ * (2 x clk-div); the binding's own formula is the older block's), within
+ * Default Speed's 25 MHz. src/media/sdcard.c then switches it to High Speed
+ * (CMD6) and, if it agrees, clears the divider: the bus at 48 MHz. Left at 0,
+ * the HAL ran the bus at 48 MHz in Default Speed, out of the specification.
  */
 &sdmmc2 {
 	idma;
+	clk-div = <1>;
 };
 
 / {

@@ -45,6 +45,7 @@
 
 struct sd_status {
 	bool mounted;
+	bool high_speed;             /* switched to High Speed (CMD6): the bus at 48 MHz, else 24 */
 	bool space_known;
 	uint32_t total_mb, free_mb;
 	uint32_t generation;         /* goes up by one whenever the clips on the card change */

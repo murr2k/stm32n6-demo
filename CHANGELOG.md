@@ -5,6 +5,24 @@ release says so. Each line names what a user of the demo or of its tools
 would notice; the commit log has the detail, and `CLAUDE.md` the reasons
 behind the rules that came out of them.
 
+## 2026-11-19, after v1.0.0
+
+### Changed
+
+- **121 KB of internal RAM free instead of 3.4 KB**, for the next features:
+  the LVGL pool is 192 KB (was 256; 108 KB at its peak after a tour), the
+  kernel heap 16 KB (was 64; 140 bytes at its peak) and the main stack
+  10 KB (was 16; 5.8 KB used). `ctl.py mem stacks` shows the margins.
+
+### Fixed
+
+- **The microSD card's bus ran out of its specification**: at 48 MHz in
+  Default Speed mode, which goes to 25 MHz, because nothing switched the
+  card to High Speed mode. The card now comes up at 24 MHz, is switched to
+  High Speed and then runs at 48 MHz (a card that refuses stays at 24).
+  Uploads measured 3.5 MB/s (2.7 at 24 MHz); the console and `ctl.py
+  media` (`high_speed=1`) say which mode the card is in.
+
 ## 2026-11-19: v1.0.0, the first tagged release
 
 ### Added

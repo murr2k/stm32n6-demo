@@ -177,9 +177,15 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   815 of 840 KB (819 since the theremin, 2026-11-17: 21 KB left; 829 since
   the recorder, the same day: 11 KB left; 830 since the attract lap's
   overlay mix, 2026-11-18: 10 KB left; 836.6 since Home Power, 2026-11-19, nearly all
-  of it Zephyr's DNS resolver: 3.4 KB left, so new threads put their stacks in
-  PSRAM as homepower.c does) (LVGL pool 256 KB, heap 64 KB, the card's two 32 KB I/O
-  buffers, stacks; the NPU's thread 8 KB), all screens' LVGL objects are
+  of it Zephyr's DNS resolver: 3.4 KB left; then, the same day, the pools
+  sized to their measured peaks: 718.6 KB, **121 KB left**) (LVGL pool 192 KB,
+  peak 108 KB after a tour; kernel heap 16 KB, peak 140 B, getaddrinfo its
+  only user; main stack 10 KB, 5.8 KB used; network buffers 128 KB, not yet
+  measured; the card's two 32 KB I/O buffers; other stacks; the NPU's thread
+  8 KB). Before growing a pool or adding a thread, read `ctl.py mem stacks`
+  after a tour; new threads may put their stacks in PSRAM as homepower.c
+  does. Still unused: the M55's own TCMs (DTCM 128 KB at 0x3000_0000, ITCM
+  64 KB at 0x1000_0000), not in Zephyr's N6 device tree. All screens' LVGL objects are
   built at boot and kept; PSRAM 13.4 of 28 MB and never freed: the player
   7.0 MB (4 MB read-ahead window, three 576 KB decode buffers, 1 MB index),
   Cinema 2.4 MB, camera 2.1 MB, screenshot 1.5 MB (14 MB more when Explorer's
@@ -719,6 +725,24 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   attributes for the display, camera, Ethernet, DMA2D, NPU and video encoder
   but not for the SDMMC. Checked by leaving the call out: the mount fails
   with `fs mount error (-19)`, the DMA's writes do not land.
+- **Never clock the card above 25 MHz unless it has been switched to High
+  Speed mode (CMD6): the overlay's `clk-div = <1>` brings it up at 24 MHz,
+  and `__wrap_HAL_SD_Init` in sdcard.c (`-Wl,--wrap=HAL_SD_Init`) switches
+  it with the HAL's `HAL_SD_ConfigSpeedBusOperation` and only then clears
+  the divider for the driver's 4-bit setup (48 MHz).** **Why:** with
+  `clk-div` 0 the HAL ran the bus at the full 48 MHz kernel clock for any
+  SDHC card, but neither Zephyr's driver nor the HAL's init sends CMD6, so
+  the card stayed in Default Speed signalling, specified to 25 MHz: it
+  worked with this card, outside the margins another card may need. A card
+  that refuses the switch stays at 24 MHz. The wrap also runs on a re-init
+  (it resets the divider first). Measured 2026-11-19, 48.7 MB uploads:
+  2.71 MB/s at 24 MHz, 3.46 to 3.56 at 48 MHz High Speed (card writes 5.4
+  and 6.7 MB/s); at 24 MHz the tour's first card seek took 88 ms and the
+  scrub sound covered 52 % of the drag (13 to 31 ms and 78 % at 48). Check:
+  the console says "High Speed at 48 MHz", `ctl.py media` `high_speed=1`,
+  `ctl.py "peek 0x58026804"` (CLKCR) 0x00024000, CLKDIV (bits 9:0) 0. The
+  divider on this SDMMC is kernel clock / (2 x clk-div), not the binding's
+  formula (that is the older block's).
 - **Card reads go through `sdcard_read_at()`: whole sectors into one
   cache-line-aligned buffer, then a copy.** **Why:** the driver invalidates
   the data cache over the DMA target, so a buffer that shares a cache line

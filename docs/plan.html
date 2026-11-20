@@ -299,6 +299,30 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
 </section>
 
 <section>
+  <span class="eyebrow">Next &middot; planned 2026-11-19 &middot; High Speed built the same day</span>
+  <h2>The microSD card: at full speed, and taken out and put back</h2>
+  <p>Found while looking at internal RAM: the card's bus ran at 48 MHz in Default Speed mode, which the SD specification allows only to 25 MHz, because nothing ever switched the card to High Speed (CMD6). It runs at 24 MHz now, within the specification; measured with a 48.7 MB upload, the card writes 5.4 MB/s there against 9.0 MB/s at 48 MHz (uploads 2.7 against 3.65 MB/s; playback needs about 1 MB/s either way).</p>
+  <div class="two">
+    <div>
+      <h3>1. High Speed at 48 MHz <span class="pill ok">done</span></h3>
+      <ul>
+        <li>A linker wrap around <code>HAL_SD_Init</code> in <code>sdcard.c</code>: the card comes up at 24 MHz, is switched to High Speed with the HAL's own <code>HAL_SD_ConfigSpeedBusOperation</code>, and only if it agrees does the 4-bit setup that follows run the bus at 48 MHz. A card that refuses stays at 24 MHz.</li>
+        <li>Every SDHC and SDXC card supports High Speed; the faster UHS-I modes need 1.8 V signalling, which this board does not switch to.</li>
+        <li>Done when: CLKCR shows the undivided clock, uploads are back to their old speed, checksums verify, and the tour is clean. Met on 2026-11-19: the card accepted the switch ("High Speed at 48 MHz"), CLKCR 0x00024000, uploads 3.46 and 3.56 MB/s (2.71 at 24 MHz), card seeks 13 to 31 ms again (88 ms at 24 MHz), 0 dropped frames in the tour.</li>
+      </ul>
+    </div>
+    <div>
+      <h3>2. A card taken out and put back while the demo runs</h3>
+      <ul>
+        <li>Today a card put in after boot is mounted only on request (<code>n6v.py mount</code>), and one pulled while mounted is lost until a restart; a clip playing from it, the attract lap's among them, would most likely hold.</li>
+        <li>The plan: watch the card-detect pin (debounced). On removal close a clip playing from the card, unmount, deinitialise the disk; the card's clips leave Cinema's list (flash copies take their place) and attract mode falls back to the screens taking turns. On insertion initialise (through the same wrap, so at High Speed again), mount, rescan and rebuild the gallery off the UI thread.</li>
+        <li>Done when: pulling and replacing the card during playback, during the attract lap and during an upload leaves no hung screen or thread, the clips come back, and the frame and underrun counts stay at 0.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
   <span class="eyebrow">Built 2026-11-15 to 17 &middot; faces next</span>
   <h2>The NPU on the camera picture: hands, then faces</h2>
   <p>The Camera screen (IMX335 at 30 fps through ST's ISP) runs recognition on the N6's Neural-ART NPU: <b>hand tracking with gestures</b> (any orientation, either hand) is built; <b>face detection with recognition of faces it has been taught</b> comes next. The figures below come from converting each model with ST Edge AI 4.0 for this chip.</p>
@@ -697,10 +721,10 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
       <span class="s1" style="width:19.5%"></span><span class="s2" style="width:34.9%"></span><span class="s3" style="width:34.9%"></span><span class="s4" style="width:10.7%"></span>
     </div>
     <div class="keys">
-      <span><i class="s1"></i>App: data, stacks, LVGL pool, heap <b>840 KB, 11 KB free</b></span><span><i class="s2"></i>Frame buffer A <b>1.5 MB</b></span><span><i class="s3"></i>Frame buffer B, lent to the NPU on Camera <b>1.5 MB</b></span><span><i class="s4"></i>AHBSRAM (audio and microphone DMA) and other regions</span>
+      <span><i class="s1"></i>App: data, stacks, LVGL pool, heap <b>840 KB, 121 KB free</b></span><span><i class="s2"></i>Frame buffer A <b>1.5 MB</b></span><span><i class="s3"></i>Frame buffer B, lent to the NPU on Camera <b>1.5 MB</b></span><span><i class="s4"></i>AHBSRAM (audio and microphone DMA) and other regions</span>
     </div>
   </div>
-  <p class="muted">Internal RAM is nearly full since the recorder (829 of 840 KB), so the next feature with buffers goes in PSRAM and needs a place in this budget before it is written. Read-only data (clips, weights, Explorer's samples) is used in place from the flash: generated into PSRAM, Explorer's data set alone held 14 MB. The flash's clip partition is full; more clips go on the card.</p>
+  <p class="muted">Internal RAM was down to 3.4 KB after Home Power's DNS resolver (2026-11-19); the pools were then sized to their measured peaks (LVGL pool 192 KB, peak 108; kernel heap 16 KB, peak 140 bytes; main stack 10 KB, 5.8 used), leaving 121 KB. Still to measure: the 128 KB of network buffers. Still unused: the M55's own TCMs (128 KB DTCM, 64 KB ITCM), not in Zephyr's device tree for the N6. A feature with large buffers still goes in PSRAM and needs a place in this budget before it is written. Read-only data (clips, weights, Explorer's samples) is used in place from the flash: generated into PSRAM, Explorer's data set alone held 14 MB. The flash's clip partition is full; more clips go on the card.</p>
 </section>
 
 <section>

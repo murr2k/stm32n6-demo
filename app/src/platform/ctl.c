@@ -335,10 +335,10 @@ static int handle(char *line, char *out, size_t out_len)
 			}
 		}
 		return snprintf(out, out_len,
-				"mounted=%d clips=%d card_clips=%d first_card=%d total_mb=%u free_mb=%u gen=%u "
-				"receiving=%d psram_kb=%u\n",
-				sd.mounted, clips, on_card, first_card, sd.total_mb, sd.free_mb, sd.generation,
-				sd.receiving, (unsigned int)(psram_used() / 1024));
+				"mounted=%d high_speed=%d clips=%d card_clips=%d first_card=%d total_mb=%u free_mb=%u "
+				"gen=%u receiving=%d psram_kb=%u\n",
+				sd.mounted, sd.high_speed, clips, on_card, first_card, sd.total_mb, sd.free_mb,
+				sd.generation, sd.receiving, (unsigned int)(psram_used() / 1024));
 	} else if (!strcmp(cmd, "card") && n >= 2) {
 		player_use_card(a[0] != 0);
 	} else if (!strcmp(cmd, "clip") && n >= 2) {
