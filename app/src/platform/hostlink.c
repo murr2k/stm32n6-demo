@@ -12,6 +12,7 @@
 #include <zephyr/net/socket.h>
 #include <zephyr/sys/byteorder.h>
 
+#include "ctl.h"
 #include "hostlink.h"
 #include "net.h"
 #include "psram.h"
@@ -83,11 +84,21 @@ static void hostlink_thread(void *p1, void *p2, void *p3)
 		if (n < HL_HDR + cores) {
 			continue;
 		}
-		/* answer first: the reply is what the host times */
-		uint8_t reply[8] = {'N', '6', 'H', 'R'};
+		/* answer first: the reply is what the host times. When the web remote
+		 * has asked for a tour, one reply (to one companion) carries the
+		 * request's number after the sequence number (ctl.h). */
+		uint8_t reply[12] = {'N', '6', 'H', 'R'};
+		uint32_t tour = ctl_tour_take_request();
 
 		sys_put_le32(seq, reply + 4);
-		zsock_sendto(s, reply, sizeof(reply), 0, (struct sockaddr *)&from, from_len);
+		sys_put_le32(tour, reply + 8);
+		zsock_sendto(s, reply, tour ? 12 : 8, 0, (struct sockaddr *)&from, from_len);
+		if (tour) {
+			char ip[NET_IPV4_ADDR_LEN];
+
+			net_addr_ntop(AF_INET, &from.sin_addr, ip, sizeof(ip));
+			LOG_INF("tour %u asked of the companion at %s", (unsigned int)tour, ip);
+		}
 
 		if (st.packets > 0 && seq > last_seq + 1) {
 			st.lost += seq - last_seq - 1;

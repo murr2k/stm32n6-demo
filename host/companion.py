@@ -17,7 +17,13 @@ to the same socket, which Windows' firewall lets through without a prompt.
 to test how the screens cope with a large CPU. The board cannot tell it
 apart from a real host: use it for tests only.
 
-Usage: companion.py [--host IP] [--rate 10] [--cores N]
+The board's web remote can start the project's test tour (tools/tour.py) on
+this PC: the request comes back in one of the board's replies, and the
+companion runs the tour against that board, with its output in
+captures/tour/remote.log. One tour at a time; a tour the companion started
+is ended with it. --no-tour refuses such requests.
+
+Usage: companion.py [--host IP] [--rate 10] [--cores N] [--no-tour]
 Protocol: app/src/platform/hostlink.h
 """
 from __future__ import annotations
@@ -26,8 +32,10 @@ import argparse
 import os
 import socket
 import struct
+import subprocess
 import sys
 import time
+from pathlib import Path
 
 try:
     import psutil
@@ -37,6 +45,43 @@ except ImportError:
 PORT = 5557
 MAX_CORES = 255  # the datagram's core count is a byte; the board keeps the first 128
 PLAIN, P_CORE, E_CORE, LPE_CORE = 0, 1, 2, 3
+ROOT = Path(__file__).resolve().parent.parent
+
+
+class Tour:
+    """tools/tour.py on this PC, when a board's web remote asks for it."""
+
+    def __init__(self, allowed: bool):
+        self.allowed = allowed
+        self.proc: subprocess.Popen | None = None
+        self.log = None
+
+    def start(self, board: str, request: int) -> None:
+        if not self.allowed:
+            print(f"{board} asked for a test tour: refused (--no-tour)")
+            return
+        if self.proc and self.proc.poll() is None:
+            print(f"{board} asked for a test tour: one is running already")
+            return
+        out = ROOT / "captures" / "tour"
+        out.mkdir(parents=True, exist_ok=True)
+        self.log = open(out / "remote.log", "w", encoding="utf-8")
+        # --no-companion: this companion feeds Host Link and Core Map meanwhile
+        self.proc = subprocess.Popen([sys.executable, "-u", str(ROOT / "tools" / "tour.py"), "--host", board,
+                                      "--no-companion"], cwd=ROOT, stdout=self.log, stderr=subprocess.STDOUT)
+        print(f"{board}: its web remote started a test tour (request {request}), output in {out / 'remote.log'}")
+
+    def poll(self) -> None:
+        if self.proc and self.proc.poll() is not None:
+            print(f"the test tour ended (exit code {self.proc.returncode})")
+            self.proc = None
+            self.log.close()
+
+    def stop(self) -> None:
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+            self.proc.wait(5)
+            self.log.close()
 
 
 def topology(n: int) -> bytes:
@@ -130,7 +175,9 @@ def main() -> None:
     ap.add_argument("--cores", type=int, help="TEST ONLY: send a synthetic load on this many processors")
     ap.add_argument("--rate", type=float, default=10.0, help="datagrams per second")
     ap.add_argument("--secs", type=float, help="stop after this long (default: run until Ctrl+C)")
+    ap.add_argument("--no-tour", action="store_true", help="refuse a board's requests to run tools/tour.py here")
     a = ap.parse_args()
+    tour = Tour(not a.no_tour)
 
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.settimeout(0.05)
@@ -183,17 +230,24 @@ def main() -> None:
                 s.sendto(pkt, (ip, PORT))
             try:
                 while True:
-                    data, _ = s.recvfrom(64)
-                    if len(data) == 8 and data[:4] == b"N6HR" and struct.unpack_from("<I", data, 4)[0] == seq:
+                    data, addr = s.recvfrom(64)
+                    if len(data) < 8 or data[:4] != b"N6HR":
+                        continue
+                    if len(data) >= 12 and struct.unpack_from("<I", data, 8)[0]:
+                        tour.start(addr[0], struct.unpack_from("<I", data, 8)[0])  # asked for by the web remote
+                    if struct.unpack_from("<I", data, 4)[0] == seq:
                         rtt_us = int((time.perf_counter() - t_send) * 1e6)
                         replies += 1
                         break
             except (socket.timeout, ConnectionResetError):
                 pass  # board not there (yet): keep sending
+            tour.poll()
             if seq % int(a.rate * 5) == 0:
                 print(f"sent {seq}, answered {replies}, last round trip {rtt_us} us")
     except KeyboardInterrupt:
         pass
+    finally:
+        tour.stop()
     print(f"sent {seq}, answered {replies}")
 
 

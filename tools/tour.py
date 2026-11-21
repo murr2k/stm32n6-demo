@@ -6,31 +6,71 @@ then exercises the multi-touch paths with injected contacts (Touch Lab,
 Explorer, Core Map), plays Signal Lab's theremin and records its sound,
 drags the microphone monitor's equalizer bands,
 checks that touch releases never change screen, runs a
-set of screen transitions, audio and video playback from flash, an upload to
+set of screen transitions, drives the web remote (http/80: its page, its
+state, its actions and its guard), audio and video playback from flash, an upload to
 the microSD card with playback and seeks from it, the card taken out and put
 back (acted out: idle, playing, during the attract lap and an upload), and
 one lap of attract mode. host/companion.py is started for the run so Host Link and Core Map
 show live data. Output goes to captures/tour/. Takes about seven minutes.
+
+The board knows the tour runs ("tour begin", a "tour step" per part, "tour
+end"), and its web remote outranks it: anything picked on the remote stops
+the tour (the board refuses its next command and it ends here, removing its
+test clip from the card if it got that far). The remote can also start a
+tour: host/companion.py runs this script with --no-companion.
 
 Usage: tour.py [--host IP] [--screens home,deck,...] [--no-touch] [--no-media] [--no-attract]
 """
 from __future__ import annotations
 
 import argparse
+import gzip
+import json
 import math
 import re
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ctl  # noqa: E402
 from acap import capture, clicks  # noqa: E402
-from ctl import DEFAULT_HOST, send  # noqa: E402
+from ctl import DEFAULT_HOST  # noqa: E402
 from shot import grab  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "captures" / "tour"
+TEST_CLIP = "card-test.n6v"  # on the card while card_tests runs
+
+
+class Stopped(Exception):
+    """The board's web remote took the board back: from then on the board
+    refuses the tour's commands ("err stopped from the web remote")."""
+
+
+def send(host: str, commands: list[str]) -> list[str]:
+    """ctl.send, with a stop from the web remote turned into Stopped."""
+    replies = ctl.send(host, commands)
+    if any(r.startswith("err stopped") for r in replies):
+        raise Stopped()
+    return replies
+
+
+def step(host: str, name: str) -> None:
+    """Tell the board what the tour does now (the web remote shows it)."""
+    send(host, [f"tour step {name}"])
+
+
+def wait(host: str, secs: float) -> None:
+    """A long wait that keeps saying "tour alive": the board gives up a tour
+    whose control port is silent for 30 s, and a stopped one finds out here."""
+    end = time.monotonic() + secs
+    while (left := end - time.monotonic()) > 0:
+        time.sleep(min(5.0, left))
+        send(host, ["tour alive"])
 SCREENS = ["home", "deck", "siglab", "explorer", "touchlab", "hostlink", "coremap", "cinema", "specimen", "hood", "settings", "camera",
            "power"]  # Home Power: on Home and in the swipes only while the energy monitor answers
 
@@ -508,6 +548,50 @@ def transition_test(host: str, film: int = 6) -> None:
           f"dropped {int(s['dropped'] - before['dropped'])}")
 
 
+def remote_test(host: str) -> None:
+    """The web remote on http/80, as a phone uses it: the page, the state it
+    polls, screen changes, the demo started and stopped, and the guard (a POST
+    without the header X-N6 is refused, so another site's page cannot drive
+    the board). None of it may cost the UI a frame."""
+    base = f"http://{host}"
+
+    def get(path: str) -> bytes:
+        with urllib.request.urlopen(base + path, timeout=5) as r:
+            return r.read()
+
+    def post(path: str, guard: bool = True) -> int:
+        # X-N6-Tour: the tour's own test of the remote, which must not stop the tour
+        rq = urllib.request.Request(base + path, method="POST", headers={"X-N6": "1", "X-N6-Tour": "1"} if guard else {})
+        try:
+            with urllib.request.urlopen(rq, timeout=5) as r:
+                return r.status
+        except urllib.error.HTTPError as e:
+            return e.code
+
+    send(host, ["screen 0", "sleep 1.0", "reset"])
+    before = stats(host)
+    page = gzip.decompress(get("/"))
+    state = json.loads(get("/remote.json"))
+    refused = post(f"/screen/{SCREENS.index('siglab')}", guard=False)
+    landed = []
+    for name in ("siglab", "coremap", "home"):
+        post(f"/screen/{SCREENS.index(name)}")
+        time.sleep(1.0)
+        landed.append(where(host)[0] == name)
+    post("/demo/start")
+    time.sleep(2.0)
+    started = where(host)[1]
+    post("/demo/stop")
+    time.sleep(1.0)
+    stopped = not where(host)[1]
+    s = stats(host)
+    send(host, ["screen 0"])
+    print(f"web remote: page {len(page)} B, {len(state['screens'])} screens and {len(state['clips'])} clips listed; "
+          f"a POST without its header {refused} (403 expected); screen changes landed {sum(landed)} of {len(landed)}; "
+          f"demo {'started' if started else 'NOT started'} and {'stopped' if stopped else 'NOT stopped'}; "
+          f"frame worst {s['render_worst_us'] / 1000:.2f} ms, dropped {int(s['dropped'] - before['dropped'])}")
+
+
 def attract_test(host: str, secs: float) -> None:
     """Attract mode, one lap: every screen it shows, Explorer's zoom tour and the film.
 
@@ -519,7 +603,7 @@ def attract_test(host: str, secs: float) -> None:
     send(host, ["reset"])
     before, a0 = stats(host), kv(host, "audio")
     send(host, ["attract"])
-    time.sleep(secs)
+    wait(host, secs)
     s, a1 = stats(host), kv(host, "audio")
     send(host, ["screen 0"])  # counts as input: ends attract mode
     print(f"attract mode: {secs:.0f} s, frame worst {s['render_worst_us'] / 1000:.2f} ms, "
@@ -665,31 +749,76 @@ def main() -> None:
     ap.add_argument("--attract", type=float, default=170.0, help="seconds of attract mode (one lap, end titles and pause included, is about 159)")
     a = ap.parse_args()
     OUT.mkdir(parents=True, exist_ok=True)
-    companion = None
-    if not a.no_companion:
-        # Host Link and Core Map are measured with live data, not their waiting state
-        companion = subprocess.Popen([sys.executable, str(ROOT / "host" / "companion.py"), "--host", a.host],
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(1.5)
+    # The board knows the tour runs (the web remote shows it, and can stop it).
+    began = ctl.send(a.host, ["tour begin"])[0]
+    if began.startswith("err"):
+        sys.exit(f"tour: the board says {began[4:]}")
+    companion, end = None, "failed"
     try:
+        if not a.no_companion:
+            # Host Link and Core Map are measured with live data, not their waiting state
+            # (--no-tour: this one never starts a tour of its own)
+            companion = subprocess.Popen([sys.executable, str(ROOT / "host" / "companion.py"), "--host", a.host,
+                                          "--no-tour"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(1.5)
         run(a)
+        end = "finished"
+    except Stopped:
+        end = "stopped"
+    except KeyboardInterrupt:
+        end = "interrupted"
+    except Exception:
+        # a command refused inside a helper (acap, a reply that no longer parses)
+        if "state=stopping" not in ctl.send(a.host, ["tour"])[0]:
+            raise
+        end = "stopped"
     finally:
+        if end == "stopped":
+            print("tour: stopped from the board's web remote")
+            remove_test_clip(a.host)
+        try:
+            ctl.send(a.host, [f"tour end {end}"])
+        except OSError:
+            pass
         if companion:
             companion.terminate()
 
 
+def remove_test_clip(host: str) -> None:
+    """A tour stopped mid-upload leaves the test clip on the card (the upload
+    service, unlike the control port, still serves it)."""
+    import n6v
+
+    try:
+        card = n6v.Card(host)
+        card.ask(f"del {TEST_CLIP}")
+        card.close()
+    except (OSError, SystemExit):
+        pass
+
+
 def run(a: argparse.Namespace) -> None:
+    step(a.host, "screens")
     for name in a.screens.split(","):
         visit(a.host, SCREENS.index(name), name, settle=2.0, run=a.run)
     if not a.no_touch:
+        step(a.host, "touch")
         touch_tests(a.host)
+        step(a.host, "theremin")
         theremin_test(a.host)
+        step(a.host, "monitor")
         monitor_test(a.host)
+    step(a.host, "transitions")
     transition_test(a.host)
+    step(a.host, "remote")
+    remote_test(a.host)
     if not a.no_media:
+        step(a.host, "media")
         media_tests(a.host)
+        step(a.host, "card")
         card_tests(a.host)
     if not a.no_attract:
+        step(a.host, "attract")
         attract_test(a.host, a.attract)
     ds = dict(re.findall(r"(\w+)=(\S+)", send(a.host, ["ds"])[0]))
     print(f"memory: PSRAM in use {media(a.host)['psram_kb'] / 1000:.1f} of 28 MB; Explorer's data set from "

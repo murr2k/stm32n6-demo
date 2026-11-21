@@ -25,9 +25,10 @@ not to be modified from here.
 .\.venv\Scripts\python.exe tools\fuzz_player.py --secs 120   # random abuse of the video player
 .\.venv\Scripts\python.exe tools\acap.py --secs 2 -o captures\x.wav --clicks "tap 40 444"   # record the DAC feed while commands run, count discontinuities
 .\.venv\Scripts\python.exe tools\n6v.py upload media\out\n6_film.n6v   # clip to the microSD card over Ethernet (4 MB/s); also ls, rm, df
+.\.venv\Scripts\python.exe tools\ctl.py tour   # the test tour as the board sees it: state, step, how the last one ended (the web remote stops and starts it)
 .\.venv\Scripts\python.exe tools\ctl.py sdcard media   # the card watcher (slot, mounted, gone, High Speed) and the clip list; "sdcard out|in|auto" acts out a card taken out or put in
 .\.venv\Scripts\python.exe tools\acap.py --mic --secs 3 -o captures\mic.wav   # record the microphone (24 bit), print its level
-Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself (also / and /status.json)
+Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself (also /about, /status.json); http://192.168.254.86/ is the web remote (the Settings QR code opens it), /remote.json its state
 .\.venv\Scripts\python.exe tools\ctl.py netcfg     # the board's address; "netcfg static IP MASK GW" or "netcfg dhcp" changes it now
 .\.venv\Scripts\python.exe tools\ctl.py power      # Home Power's feed: online, state, requests, figures; "power url http://HOST" sets the energy monitor (kept on the card, never in the repo)
 .\.venv\Scripts\python.exe tools\ctl.py "power range 7d" powert   # the panel's chart range (1h 6h 24h 7d 30d); its worst gauge, chart and tick times, us
@@ -180,7 +181,9 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   overlay mix, 2026-11-18: 10 KB left; 836.6 since Home Power, 2026-11-19, nearly all
   of it Zephyr's DNS resolver: 3.4 KB left; then, the same day, the pools
   sized to their measured peaks: 718.6 KB, 121 KB left; 721.9 with the card
-  watcher's 3 KB stack, **118 KB left**) (LVGL pool 192 KB,
+  watcher's 3 KB stack, 118 KB left; 702.2 (719,072 B) once the HTTP
+  server's 20.5 KB of buffers went to PSRAM with the web remote, **138 KB
+  left**) (LVGL pool 192 KB,
   peak 108 KB after a tour; kernel heap 16 KB, peak 140 B, getaddrinfo its
   only user; main stack 10 KB, 5.8 KB used; network buffers 128 KB, not yet
   measured; the card's two 32 KB I/O buffers; other stacks; the NPU's thread
@@ -193,7 +196,10 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   Cinema 2.4 MB, camera 2.1 MB, screenshot 1.5 MB (14 MB more when Explorer's
   data set has to be generated because the flash holds no copy); code
   1.77 MB in a 2 MB slot of a 128 MB flash (1.997 of 2.09 MB, 95 %, since
-  Home Power, 2026-11-19: the slot is nearly full too). A new demo with buffers needs a place in this before it is written.
+  Home Power, 2026-11-19; 2.016 MB (2,016,084 B), 96.3 %, 76 KB left, with
+  the card watcher and the web remote, 2026-11-20: the slot is nearly full too;
+  the NPU programs, about 460 KB, could move out of it to the weights'
+  region). A new demo with buffers needs a place in this before it is written.
 - Flash map (128 MB at 0x7000_0000): MCUboot and the two image slots up to
   0x7041_0000, media partition 0x7042_0000 to 0x7580_0000 (84 MB, 83.7 MB
   used: full, more clips go on the card), the NPU's weights 0x7580_0000 to
@@ -396,8 +402,12 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   explorer, touchlab, hostlink, coremap, cinema, specimen, hood, settings, camera, power. Home shows two
   rows of four tiles; a ninth and later ones go into further columns on the
   right (same tile size) and the field pans sideways. `ctl.py "hometiles 5"`
-  adds placeholder tiles to try that with (`hometiles 0` removes them). The
-  shell holds 16 screens (`MAX_SCREENS` in shell.c), Home 24 tiles. A screen
+  adds placeholder tiles to try that with (`hometiles 0` removes them); each
+  change drops a frame or two while Home shows (the main loop 9 ms, then a
+  full redraw, LVGL 21 ms; measured 2026-11-20): the tour's touch part does
+  both outside its measured windows, so the board's count since boot gains 3
+  in a tour. Home Power's tile coming or going takes the same path
+  (`place()`; not measured). The shell holds 16 screens (`MAX_SCREENS` in shell.c), Home 24 tiles. A screen
   with a `listed` hook (Home Power) has a tile, a page dot and a place in the
   edge swipes only while it returns true (and while it is the current
   screen); Home and the dots move their objects only when that set changes
@@ -431,6 +441,60 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   had 1.9 ms to spare; without it about 10 ms warm, 13 ms on the first
   visit after boot). Measured: a request 180 to 480 ms (DNS and connect in
   the first), the 30-day chart 3.1 ms to draw.
+- Web remote (platform/http.c, platform/remote.html; built 2026-11-19): a
+  phone on the LAN opens `http://<board>/` (the Settings screen's QR code
+  points there) and sees the screen on the panel, a clip playing, the demo
+  (Run, Stop, the attract lap's position), every listed screen and clip as
+  a button, and fps, frame time, dropped frames and uptime. The page is
+  one self-contained file (no fonts or scripts from elsewhere: it works on a
+  network without the internet), gzipped into the image by
+  `generate_inc_file_for_target` (app/CMakeLists.txt, about 4.8 KB) and
+  served with `Content-Encoding: gzip`; colours are theme.h's. It polls
+  `/remote.json` once a second while visible, one request at a time (the
+  server takes one client at a time), and soon after an action. Actions are
+  `POST /screen/N`, `/play/N`, `/demo/start`, `/demo/stop`, queued for the
+  UI thread with `ctl_post()` like the control port's (`CTL_INPUT` ends
+  attract mode as a touch does); each needs the header `X-N6: 1`, which a
+  page from another site cannot send without a CORS preflight that this
+  server never answers (403 without it). No login: trusted LAN only, and
+  nothing destructive is offered (no deletes, no address or monitor
+  settings). The description moved from `/` to `/about`. The server reads
+  the whole request before answering (a socket closed with unread data
+  sends a reset, and a browser may drop the answer on it) and sets
+  `TCP_NODELAY` (the head and the body are two sends: with Nagle, a 1 KB
+  answer waited 40 to 70 ms for the client's delayed acknowledgement; 2 to
+  21 ms without). Its buffers are in PSRAM (they were 21 KB of internal
+  RAM). Measured: a minute of polling on Explorer, 0 failures, 0 dropped
+  frames, the slowest answer 29 ms. `tour.py` drives it (`web remote`).
+  The remote outranks the PC's test tour (the user's rule, 2026-11-19,
+  after a running tour kept overriding their picks): `tour.py` says
+  `tour begin`, `tour step NAME` per part and `tour end WHY` on the control
+  port (ctl.c: `ctl_tour_*`; while it runs every control command is its
+  sign of life, its 170 s attract wait says `tour alive`; silent 30 s, it
+  is given up). Any action on the remote stops it (`POST /tour/stop` too):
+  the board refuses its next command (`err stopped from the web remote`),
+  undoes what the step may have left (held injected touches, `sdcard auto`,
+  `card 1`, Home's placeholder tiles in the touch step, LISTEN off and the
+  generator back in the theremin and monitor steps, attract mode ended),
+  and `tour.py` quits and deletes its test clip from the card. The tour's
+  own test of the remote marks its POSTs `X-N6-Tour`, which does not stop
+  it. `POST /tour/start` asks the companion: the next host link reply to
+  one companion carries the request (12 bytes instead of 8, hostlink.h),
+  and `run.cmd`'s companion runs `tour.py --no-companion` with its output
+  in `captures/tour/remote.log` (`--no-tour` refuses; a request not begun
+  in 20 s is given up). While a remote polls, the demo does not start by
+  itself (`shell_note_presence`: the idle timer restarts, a running demo
+  goes on); 90 s after the polling stops, it does. `/status.json` and
+  `/remote.json` say how many devices have the remote open (`remotes`: the
+  addresses that polled or acted in the last 5 s, up to 4 kept; the log
+  says `a remote is open at IP` for a new one, and the page says so when
+  there are more than one): a demo that does not start by itself is usually
+  a phone with the page still open. Measured: a pick stopped a running tour
+  in 1.4 s and the screen stayed; a tour started from the remote ran 0.6 s
+  after the request; stopped in its touch step it ended in 1.0 s and Home's
+  placeholder tiles were gone; with no remote open the demo started 89 s
+  after 110 s of polling stopped; a full tour started from the remote
+  (2026-11-20) finished in 7:44 with 0 dropped frames in every window.
 
 ## Invariants & "do not regress"
 
@@ -441,10 +505,28 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   firmware is running. Cost about two hours to find on 2026-11-14.
 - **No `ap=` in the SWD connect string**, and do not use `west flash`.
   **Why:** upstream `board.cmake` passes `ap=1`, which this probe/chip refuses.
-- **Do not attach a debugger to the running app and expect it to work.**
-  **Why:** with Zephyr idle in WFI the access port errors out
-  (`DEV_AP_ACCESS_ERROR`, device shows as "Rev Z"). Debug from reset with
-  `gdbrun.ps1` instead.
+- **Do not attach the ST-LINK to the running app and expect it to work; a
+  J-Link does, at a cost.** **Why:** with Zephyr idle in WFI the ST-LINK's
+  access port errors out (`DEV_AP_ACCESS_ERROR`, device shows as "Rev Z");
+  debug from reset with `gdbrun.ps1` instead. A SEGGER J-Trace PRO on the
+  MIPI20 connector CN10 (2026-11-20; J-Link V9.96a, probe firmware of
+  2026-10-28, on USB: its Ethernet port has a fixed 10.0.0.10, off this LAN;
+  `-device STM32N657X0 -if SWD`) reads memory while the demo runs (DBGMCU_CR is 0), but J-Link
+  Commander's `connect` halts the core: follow it with `g` at once. The halt
+  measured 25 to 45 ms from outside (the host link's discovery query every
+  5 ms); the board's own counters (`dropped`, `late_swaps`, audio `errors`)
+  do not see it, because the clocks they use stop with the core. It leaves
+  no vector catch on (DEMCR 0x01100000). PC samples read from `DWT_PCSR`
+  (0xE000101C) map to functions with `arm-zephyr-eabi-addr2line`; none of 8
+  fell in idle on a screen 36 % busy, so they may be biased (the reads may
+  wait while the core sleeps). The ST-LINK flashes and starts the board as
+  before with the J-Trace attached; never use the two at once. CN10's trace
+  pins are SAI1's (TRACECLK PG7 is MCLK, TRACED1 to 3 on PB0, PB6, PB7 are
+  FS, SCK, SD; only TRACED0 PE3 and SWO PB5 are free), so streaming trace
+  and sound exclude each other; with the ribbon on those lines the film's
+  sound and the microphone monitor are clean (the user, by ear,
+  2026-11-20). Ozone and SystemView are not
+  installed.
 - **A new `.overlay` or `.conf` file needs a pristine build (`-p`).**
   **Why:** CMake only discovers them at configure time; an incremental build
   silently ignores the new file.
@@ -573,7 +655,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   `_SNDTIMEO`, and without them `setsockopt` failed unchecked, so a client
   that left its connection open (`n6v.Card.close()` closed the socket but
   not its `makefile()` reader) held the port until a restart. Never touch
-  the control port while `tour.py` runs. A board that does not answer
+  the control port while `tour.py` runs (the web remote is the way in
+  then: it outranks the tour and stops it, see Web remote). A board that does not answer
   but shows the WFI debugger signature (Rev Z, `DEV_AP_ACCESS_ERROR`) is in
   this state, not halted. Do not probe a running board with a hot-plug
   `-halt`: it stops the core.
@@ -1203,10 +1286,10 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 - A card taken out and put back while the demo runs: built 2026-11-19 (see
   the invariant on the card watcher); checked with the card really pulled
   and put back by the user while a card clip played, during the attract lap
-  and during an upload. Not built: a formatter (designed 2026-11-19: FAT32 up
-  to 32 GB, exFAT above, aligned to the card's allocation unit, settings
-  carried over, optionally the flash clips copied on; needs
-  `CONFIG_FS_FATFS_MKFS`), fast seeks in very large files (FatFs walks the
+  and during an upload. Not built: a formatter (the user's decision,
+  2026-11-19: a PC with the SD Association's formatter does the job, and a
+  format would wipe the attract lap's clip, which only the card holds),
+  fast seeks in very large files (FatFs walks the
   cluster chain: a backward seek in a 1 GB clip on FAT32 may take a few
   hundred ms; untested), FAT timestamps.
 - Microphone: works on the replacement DK (2026-11-17, claps and taps with
@@ -1240,7 +1323,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   step by step. A search for a second hand costs the first a 130 ms frame
   twice a second. The palm detector varies 58 to 165 ms (142 to 165 in
   attract laps, cause not known; it only delays finding a hand). Faces (N3)
-  next. The soak test (N4) passed on 2026-11-17: 9 hours, 20 minutes of
+  dropped by the user on 2026-11-19 (designed in docs/plan.html, not
+  built; nor a one-person version, nor a liveness check). The soak test (N4) passed on 2026-11-17: 9 hours, 20 minutes of
   each on the Camera screen with both networks every frame (`nn hands 3`),
   no reset, fault or leak, frame times unchanged; its 2 dropped frames were
   Flight Deck's fade-in (see the settle in the fade invariant).

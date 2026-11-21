@@ -31,6 +31,11 @@ endif()
 zephyr_ld_options(-Wl,--wrap=HAL_SD_Init -Wl,--wrap=SDMMC_ConfigData
                   -Wl,--wrap=HAL_SD_GetCardState)
 
+# The web remote's page, gzipped into the image; src/platform/http.c serves
+# it at / with Content-Encoding: gzip.
+generate_inc_file_for_target(app ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/remote.html
+  ${ZEPHYR_BINARY_DIR}/include/generated/remote.html.gz.inc --gzip)
+
 # LVGL's Helium (MVE) blend routines. The Zephyr module build lists the C
 # sources but not this assembly file, so without it CONFIG_LV_DRAW_SW_ASM_HELIUM
 # fails at link time.

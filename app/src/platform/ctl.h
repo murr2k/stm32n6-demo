@@ -58,6 +58,9 @@
  *                              recording with it)
  *   saiclk, peek <addr>        bring-up register readouts
  *   reset                      clear the worst-case counters
+ *   tour [begin | step NAME | alive | end WHY]   the PC's regression test (tools/tour.py) says what
+ *                              it does; "tour" alone: its state. Stopped from the web remote, the
+ *                              port refuses every command but "tour" and "tour end" until it ends
  *   tap <x> <y>                press and release
  *   swipe <x1> <y1> <x2> <y2> <ms>
  *   touch <slot> <x> <y> <0|1> raw contact, for multi-touch tests
@@ -68,6 +71,7 @@
 #define PLATFORM_CTL_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 enum ctl_cmd {
 	CTL_NONE,
@@ -76,9 +80,48 @@ enum ctl_cmd {
 	CTL_ATTRACT,
 	CTL_PLAY,
 	CTL_HOME_TILES,
+	CTL_INPUT,      /* counts as a touch: ends attract mode */
 };
 
 /* UI thread: fetch the next pending UI command, if any. */
 enum ctl_cmd ctl_poll(int *arg);
+
+/* Any thread: queue a command for the UI thread (the web remote's way in).
+ * False if the queue is full. */
+bool ctl_post(enum ctl_cmd cmd, int arg);
+
+/* The PC's regression test (tools/tour.py), as the board knows it from the
+ * tour's own commands on this port. The web remote outranks it: it can ask
+ * the companion on the PC to start one (the request rides on the host link's
+ * replies, hostlink.c), and any of its actions stops one. A stopped tour has
+ * every further command refused ("err stopped from the web remote") until it
+ * says "tour end", so it quits at its next command, and the board undoes the
+ * test states it may have left (held touches, a card acted out as taken out,
+ * the card's clips hidden, Home's placeholder tiles, the theremin's or the
+ * monitor's test settings, attract mode). A tour silent for 30 s, or a
+ * request not taken up in 20 s, is given up. */
+enum ctl_tour_state {
+	CTL_TOUR_IDLE,
+	CTL_TOUR_REQUESTED,  /* asked of the companion, not begun yet */
+	CTL_TOUR_RUNNING,
+	CTL_TOUR_STOPPING,   /* stopped from the remote, not ended yet */
+};
+
+struct ctl_tour {
+	enum ctl_tour_state state;
+	char step[24];
+	uint32_t secs;       /* since it began or was asked for */
+	char last[48];       /* how the last one ended, "" before the first */
+};
+
+void ctl_tour_get(struct ctl_tour *t);
+/* The remote: ask the PC for a tour. False when one runs or is asked for. */
+bool ctl_tour_request(void);
+/* The remote: stop the tour or the request, if any. True if a running tour
+ * was stopped. */
+bool ctl_tour_stop(void);
+/* The host link, for each reply: a request to hand to that companion, once
+ * (a number that differs from the last one handed out), or 0. */
+uint32_t ctl_tour_take_request(void);
 
 #endif

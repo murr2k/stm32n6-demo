@@ -160,6 +160,9 @@ static volatile bool use_card = true;
 
 void player_use_card(bool on)
 {
+	if (use_card == on) {
+		return; /* no change: no new scan, no new thumbnails */
+	}
 	use_card = on;
 	sdcard_note_change(""); /* the list is read again */
 }
@@ -283,6 +286,13 @@ int player_commit(void)
 	lap_clip = staged_lap;
 	have_lap = staged_have_lap;
 	return n_clips;
+}
+
+const struct n6v_header *player_open_header(void)
+{
+	const struct clip *c = cur;
+
+	return c ? &c->hdr : NULL;
 }
 
 const struct n6v_header *player_attract_clip(void)

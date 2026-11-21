@@ -64,6 +64,9 @@ void shell_toggle_hud(void);
 
 /* Something other than a touch counted as user input (remote control). */
 void shell_note_input(void);
+/* Someone is there without touching (the web remote open on a phone): the
+ * demo does not start by itself, and one running is not ended. Any thread. */
+void shell_note_presence(void);
 /* Enter attract mode now instead of after the idle timeout. */
 void shell_start_attract(void);
 bool shell_in_attract(void);

@@ -217,8 +217,8 @@ static void create(lv_obj_t *root)
 	lv_obj_set_pos(qr, RIGHT_X, 30);
 	l_url = text(root, RIGHT_X + 146, 34, 0, &font_mono_12, C_AZURE, "-");
 	text(root, RIGHT_X + 150, 76, 154, &font_text_14, C_TEXT2,
-	     "What this board is, its screens and its network services, for a person or an agent "
-	     "(also as Markdown and JSON).");
+	     "A remote for a phone: the screens, the demo, the clips. Linked from it: what this board is, "
+	     "for a person or an agent.");
 
 	lv_obj_set_pos(ui_caption(root, "DATA HOST"), RIGHT_X, 186);
 	l_host = text(root, RIGHT_X, 202, 300, &font_text_14, C_TEXT, "-");

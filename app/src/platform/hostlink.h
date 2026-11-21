@@ -9,7 +9,10 @@
  *     kind: bits 0-1 the core type (HL_CORE_*), bits 2-3 the SMT thread
  *     core: index of the physical core this logical processor belongs to
  * The board answers each one with "N6HR", u32 seq so the host can time the
- * round trip; the host reports the previous round trip in rtt_us. n_cores is
+ * round trip; the host reports the previous round trip in rtt_us. When the
+ * web remote has asked for a tour (tools/tour.py), one answer, to one host,
+ * also carries u32 request (never 0): host/companion.py runs the tour on
+ * its PC (ctl.h). n_cores is
  * a byte, so a host can describe up to 255 logical processors; the board
  * keeps HL_MAX_CORES of them.
  *

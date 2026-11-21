@@ -1,0 +1,284 @@
+<!doctype html>
+<!-- The web remote, served by the board at / (http.c), gzipped into the image
+     at build time (app/CMakeLists.txt). Self-contained: no fonts, scripts or
+     images from elsewhere, so it works on a network without the internet.
+     Colours are the panel's (ui/theme.h). SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#080c12">
+<link rel="icon" href="data:,">
+<title>N6 Remote</title>
+<style>
+:root{--bg:#080c12;--card:#0f151e;--raised:#18212d;--line:#222d3c;--line2:#34435a;--fg:#e9eef5;--fg2:#98a6b8;--fg3:#5f6d80;
+--az:#4cb5ff;--ok:#3ddca0;--bad:#ff5252;
+--sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+--cond:"IBM Plex Sans Condensed","Roboto Condensed","Arial Narrow",var(--sans);
+--mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;color-scheme:dark}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 var(--sans);-webkit-tap-highlight-color:transparent}
+.wrap{max-width:560px;margin:0 auto;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header{position:sticky;top:0;z-index:2;padding-top:env(safe-area-inset-top,0px);background:rgba(8,12,18,.9);
+-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+header .wrap{display:flex;align-items:center;gap:10px;height:52px}
+.mark{font:600 13px/1 var(--mono);color:var(--bg);background:var(--az);border-radius:5px;padding:5px 6px}
+h1{font:600 17px/1 var(--sans);margin:0;flex:1}
+.live{display:flex;align-items:center;gap:7px;font:500 12px/1 var(--mono);color:var(--fg2)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--bad)}
+.on .dot{background:var(--ok);box-shadow:0 0 0 3px rgba(61,220,160,.18)}
+main{padding-bottom:8px;transition:opacity .2s}
+.cap{font:500 11px/1 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--fg3);margin:24px 0 10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+.now h2{font:600 30px/1.1 var(--cond);margin:0;text-wrap:balance}
+.now .sub{margin:4px 0 0;color:var(--fg2);min-height:1.45em}
+.np{margin-top:14px;padding-top:12px;border-top:1px solid var(--line);font-size:14px}
+.np .t{color:var(--fg);font-weight:600}
+.np .d{font-family:var(--mono);font-size:13px;color:var(--fg2);float:right}
+.bar{height:3px;background:var(--raised);border-radius:2px;margin-top:10px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--az);transition:width .9s linear}
+.nav{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:16px}
+button{font:inherit;color:inherit;background:var(--raised);border:1px solid var(--line2);border-radius:8px;min-height:44px;
+padding:0 14px;cursor:pointer;touch-action:manipulation}
+button:active{background:var(--line2)}
+button:disabled{opacity:.4;cursor:default}
+button:focus-visible{outline:2px solid var(--az);outline-offset:2px}
+.primary{background:var(--az);border-color:var(--az);color:#06111c;font-weight:600}
+.primary:active{background:#7cc9ff}
+.demo{display:flex;align-items:center;justify-content:space-between;gap:14px}
+.demo b{display:block;font-weight:600}
+.demo span{display:block;font-size:13px;color:var(--fg2)}
+.demo button{flex:none;min-width:84px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.scr{display:flex;flex-direction:column;gap:3px;min-height:74px;padding:12px;text-align:left;background:var(--card);border-color:var(--line)}
+.scr b{font-weight:600}
+.scr span{font-size:12.5px;line-height:1.3;color:var(--fg2)}
+.scr[aria-current=true]{border-color:var(--az);box-shadow:inset 0 0 0 1px var(--az)}
+.scr[aria-current=true] b{color:var(--az)}
+.scr.wait{animation:wait .7s ease-in-out infinite alternate}
+@keyframes wait{to{border-color:var(--az)}}
+.clips{padding:0;overflow:hidden}
+.clip{display:flex;align-items:center;gap:12px;width:100%;min-height:54px;padding:10px 16px;border:0;border-top:1px solid var(--line);
+border-radius:0;background:none;text-align:left}
+.clip:first-child{border-top:0}
+.clip .t{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.clip .d{font:13px var(--mono);color:var(--fg2)}
+.tag{font:500 10px/1 var(--mono);letter-spacing:.1em;padding:3px 5px;border:1px solid var(--line2);border-radius:3px;color:var(--fg3)}
+.go{flex:none;display:grid;place-items:center;width:30px;height:30px;border-radius:50%;background:var(--raised)}
+.go:before{content:"";margin-left:3px;border-left:9px solid var(--az);border-top:6px solid transparent;border-bottom:6px solid transparent}
+.empty{padding:14px 16px;color:var(--fg3)}
+.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.stat{min-width:0;padding:10px;background:var(--card);border:1px solid var(--line);border-radius:8px}
+.stat b{display:block;font:500 16px/1.25 var(--mono);white-space:nowrap}
+.stat span{font:500 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--fg3)}
+footer{margin:24px 0 0;padding-bottom:calc(24px + env(safe-area-inset-bottom,0px));font-size:13px;color:var(--fg3)}
+footer a{color:var(--fg2)}
+.banner{display:none;margin-top:16px;padding:12px 14px;border:1px solid var(--bad);border-radius:8px;color:var(--fg);background:rgba(255,82,82,.08)}
+.off .banner{display:block}
+.off main{opacity:.4;pointer-events:none}
+@media (max-width:370px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.now h2{font-size:26px}}
+@media (prefers-reduced-motion:reduce){.bar i{transition:none}.scr.wait{animation:none;border-color:var(--az)}}
+</style>
+</head>
+<body>
+<header><div class="wrap"><span class="mark">N6</span><h1>Remote</h1>
+<div class="live" id="live"><span class="dot"></span><span id="fps">connecting</span></div></div></header>
+<div class="wrap">
+<div class="banner" role="status">The board is not answering. Trying again every few seconds.</div>
+<main>
+<div class="cap">On the panel</div>
+<section class="card now">
+<h2 id="title">&nbsp;</h2><p class="sub" id="blurb"></p>
+<div class="np" id="np" hidden><span class="d" id="npd"></span><span id="nps"></span> <span class="t" id="npt"></span>
+<div class="bar"><i id="npbar"></i></div></div>
+<div class="nav"><button id="prev" aria-label="Previous screen">&lsaquo; Prev</button><button id="home">Home</button>
+<button id="next" aria-label="Next screen">Next &rsaquo;</button></div>
+</section>
+<div class="cap">Demo</div>
+<section class="card">
+<div class="demo"><div><b id="dst">&nbsp;</b><span id="dsub"></span></div><button id="demo" class="primary">Run</button></div>
+<div class="bar" id="lapw" hidden><i id="lap"></i></div>
+</section>
+<div class="cap">Test tour, on the PC</div>
+<section class="card">
+<div class="demo"><div><b id="tst">&nbsp;</b><span id="tsub"></span></div><button id="tour">Start</button></div>
+</section>
+<div class="cap">Screens</div>
+<div class="grid" id="screens"></div>
+<div class="cap">Clips</div>
+<section class="card clips" id="clips"><div class="empty">No clips</div></section>
+<div class="cap">The board, measured</div>
+<div class="stats">
+<div class="stat"><b id="s-fps">-</b><span>fps</span></div>
+<div class="stat"><b id="s-frame">-</b><span>frame avg</span></div>
+<div class="stat"><b id="s-drop">-</b><span>dropped</span></div>
+<div class="stat"><b id="s-up">-</b><span>up</span></div>
+</div>
+</main>
+<footer><span id="ip"></span> &middot; <a href="/about">About this board</a> &middot; <a href="/agent.md">agent.md</a>
+&middot; <a href="/status.json">status.json</a><br>No login: this page is for a trusted network.</footer>
+</div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let st = null, fails = 0, timer = 0, inflight = false, quick = false;
+let want = -1, wantUntil = 0, screensKey = "", clipsKey = "";
+/* tools/tour.py's steps ("tour step NAME"), as the page names them */
+const STEPS = {screens: "every screen", touch: "touch gestures", theremin: "the theremin", monitor: "the microphone monitor",
+  transitions: "screen transitions", remote: "this remote", media: "video and sound", card: "the microSD card",
+  attract: "the attract lap"};
+let q = Promise.resolve();
+
+/* one request at a time: the board serves one client at a time */
+function req(path, opt) {
+  const p = q.then(() => fetch(path, Object.assign({cache: "no-store"}, opt)));
+  q = p.catch(() => {});
+  return p;
+}
+/* an action, then a look at the board soon after (a screen change lands
+   when the fade-out ends) */
+function act(path) {
+  req(path, {method: "POST", headers: {"X-N6": "1"}}).catch(() => {});
+  quick = true;
+  if (!inflight) { clearTimeout(timer); timer = setTimeout(poll, 450); quick = false; }
+}
+function poll() {
+  clearTimeout(timer);
+  inflight = true;
+  req("/remote.json").then(r => r.ok ? r.json() : Promise.reject())
+    .then(s => { st = s; fails = 0; render(); }, () => { if (++fails >= 2) offline(); })
+    .finally(() => {
+      inflight = false;
+      clearTimeout(timer);
+      if (!document.hidden) timer = setTimeout(poll, quick ? 450 : fails ? 3000 : 1000);
+      quick = false;
+    });
+}
+document.addEventListener("visibilitychange", () => { clearTimeout(timer); if (!document.hidden && !inflight) poll(); });
+
+function mmss(s) { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); }
+function uptime(s) {
+  const d = Math.floor(s / 86400), h = Math.floor(s / 3600) % 24, m = Math.floor(s / 60) % 60;
+  return d ? d + "d " + h + "h" : h ? h + "h " + m + "m" : m + "m " + (s % 60) + "s";
+}
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function set(id, text) { const e = $(id); if (e.textContent !== text) e.textContent = text; }
+
+function offline() {
+  document.body.classList.add("off");
+  $("live").classList.remove("on");
+  set("fps", "offline");
+}
+
+function render() {
+  const s = st, cur = s.screens.find(x => x.i === s.screen);
+  document.body.classList.remove("off");
+  $("live").classList.add("on");
+  set("fps", s.fps.toFixed(1) + " fps");
+  set("title", cur ? cur.title : "Screen " + s.screen);
+  set("blurb", cur && cur.blurb ? cur.blurb : "");
+  set("ip", s.ip + (s.remotes > 1 ? " · this remote is open on " + s.remotes + " devices" : ""));
+
+  /* a clip playing (the attract lap's is shown under Demo instead) */
+  const c = s.clip;
+  $("np").hidden = !c || s.attract;
+  if (c && !s.attract) {
+    const len = c.frames / c.fps, at = c.frame / c.fps;
+    set("nps", c.playing ? "Playing" : "Paused");
+    set("npt", c.title);
+    set("npd", mmss(at) + " / " + mmss(len));
+    $("npbar").style.width = (100 * Math.min(1, c.frame / Math.max(1, c.frames))) + "%";
+  }
+
+  /* the demo */
+  const lap = s.attract && s.lap_ms >= 0 && s.lap_len_ms > 0;
+  set("dst", s.attract ? "Running" : "Not running");
+  set("dsub", s.attract ? (lap ? "The attract lap, " + mmss(s.lap_ms / 1000) + " of " + mmss(s.lap_len_ms / 1000) : "The screens take turns")
+                        : "It does not start by itself while this page is open");
+  set("demo", s.attract ? "Stop" : "Run");
+  $("demo").className = s.attract ? "" : "primary";
+  $("lapw").hidden = !lap;
+  if (lap) $("lap").style.width = (100 * s.lap_ms / s.lap_len_ms) + "%";
+
+  /* the PC's test tour: anything picked on this page stops it */
+  const t = s.tour, tb = $("tour");
+  if (t.state === "running") {
+    set("tst", "Running: " + (STEPS[t.step] || t.step || "starting"));
+    set("tsub", mmss(t.secs) + " in. Anything you pick here stops it");
+    set("tour", "Stop"); tb.disabled = false;
+  } else if (t.state === "requested") {
+    set("tst", "Starting on the PC"); set("tsub", "Waiting for tools/tour.py");
+    set("tour", "Cancel"); tb.disabled = false;
+  } else if (t.state === "stopping") {
+    set("tst", "Stopping"); set("tsub", "Waiting for the PC to let go");
+    set("tour", "Stop"); tb.disabled = true;
+  } else {
+    set("tst", "Not running");
+    set("tsub", !t.pc ? "Needs the companion (run.cmd) on the PC"
+                      : t.last ? "Last: " + t.last : "Every screen, measured: about 8 minutes");
+    set("tour", "Start"); tb.disabled = !t.pc;
+  }
+
+  /* the screens: rebuilt only when the set changes */
+  const key = JSON.stringify(s.screens);
+  if (key !== screensKey) {
+    screensKey = key;
+    const g = $("screens");
+    g.replaceChildren();
+    for (const x of s.screens) {
+      const b = el("button", "scr");
+      b.dataset.i = x.i;
+      b.append(el("b", null, x.title), el("span", null, x.blurb || ""));
+      b.onclick = () => { want = x.i; wantUntil = Date.now() + 3000; mark(); act("/screen/" + x.i); };
+      g.append(b);
+    }
+  }
+  if (want === s.screen || Date.now() > wantUntil) want = -1;
+  mark();
+
+  /* the clips */
+  const ck = JSON.stringify(s.clips);
+  if (ck !== clipsKey) {
+    clipsKey = ck;
+    const box = $("clips");
+    box.replaceChildren();
+    if (!s.clips.length) box.append(el("div", "empty", "No clips"));
+    for (const x of s.clips) {
+      const b = el("button", "clip");
+      b.setAttribute("aria-label", "Play " + x.title);
+      b.append(el("span", "go"), el("span", "t", x.title), el("span", "tag", x.card ? "CARD" : "FLASH"), el("span", "d", mmss(x.secs)));
+      b.onclick = () => act("/play/" + x.i);
+      box.append(b);
+    }
+  }
+
+  set("s-fps", s.fps.toFixed(1));
+  set("s-frame", (s.frame_avg_us / 1000).toFixed(1) + " ms");
+  set("s-drop", String(s.dropped));
+  set("s-up", uptime(s.uptime_s));
+}
+
+function mark() {
+  for (const b of $("screens").children) {
+    const i = +b.dataset.i;
+    b.setAttribute("aria-current", st && i === st.screen && want < 0 ? "true" : "false");
+    b.classList.toggle("wait", i === want);
+  }
+}
+
+function step(d) {
+  if (!st || !st.screens.length) return;
+  const l = st.screens, k = l.findIndex(x => x.i === st.screen);
+  const n = l[((k < 0 ? 0 : k) + d + l.length) % l.length];
+  want = n.i; wantUntil = Date.now() + 3000; mark(); act("/screen/" + n.i);
+}
+$("prev").onclick = () => step(-1);
+$("next").onclick = () => step(1);
+$("home").onclick = () => { want = 0; wantUntil = Date.now() + 3000; mark(); act("/screen/0"); };
+$("demo").onclick = () => act(st && st.attract ? "/demo/stop" : "/demo/start");
+$("tour").onclick = () => act(st && st.tour.state === "idle" ? "/tour/start" : "/tour/stop");
+poll();
+</script>
+</body>
+</html>

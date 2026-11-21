@@ -132,6 +132,9 @@ int main(void)
 		case CTL_HOME_TILES:
 			home_test_tiles(arg);
 			break;
+		case CTL_INPUT:
+			shell_note_input();
+			break;
 		default:
 			break;
 		}

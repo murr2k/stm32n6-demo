@@ -89,11 +89,189 @@ enum ctl_cmd ctl_poll(int *arg)
 	return c.cmd;
 }
 
-static void post(enum ctl_cmd cmd, int arg)
+bool ctl_post(enum ctl_cmd cmd, int arg)
 {
 	struct ui_cmd c = {cmd, arg};
 
-	k_msgq_put(&ui_q, &c, K_NO_WAIT);
+	return k_msgq_put(&ui_q, &c, K_NO_WAIT) == 0;
+}
+
+static void post(enum ctl_cmd cmd, int arg)
+{
+	ctl_post(cmd, arg);
+}
+
+/* ---- the PC's regression test (ctl.h) ----------------------------------- */
+
+#define TOUR_SILENT_MS 30000
+#define TOUR_ASKED_MS  20000
+
+static struct k_spinlock tour_lock;
+static volatile enum ctl_tour_state tour_state;
+static char tour_step[24], tour_last[48];
+static uint32_t tour_t0, tour_seen, tour_req, tour_req_handed;
+
+static const char *const tour_names[] = {"idle", "requested", "running", "stopping"};
+
+/* Under tour_lock: give up a tour that has gone silent, or a request the PC
+ * never took up. */
+static void tour_expire(uint32_t now)
+{
+	if ((tour_state == CTL_TOUR_RUNNING || tour_state == CTL_TOUR_STOPPING) &&
+	    (int32_t)(now - tour_seen) > TOUR_SILENT_MS) {
+		tour_state = CTL_TOUR_IDLE;
+		snprintf(tour_last, sizeof(tour_last), "lost: no word from it for 30 s");
+	} else if (tour_state == CTL_TOUR_REQUESTED && (int32_t)(now - tour_t0) > TOUR_ASKED_MS) {
+		tour_state = CTL_TOUR_IDLE;
+		snprintf(tour_last, sizeof(tour_last), "not started: no answer from the PC");
+	}
+}
+
+void ctl_tour_get(struct ctl_tour *t)
+{
+	uint32_t now = k_uptime_get_32();
+	k_spinlock_key_t key = k_spin_lock(&tour_lock);
+
+	tour_expire(now);
+	t->state = tour_state;
+	t->secs = tour_state == CTL_TOUR_IDLE ? 0 : (now - tour_t0) / 1000;
+	memcpy(t->step, tour_step, sizeof(t->step));
+	memcpy(t->last, tour_last, sizeof(t->last));
+	k_spin_unlock(&tour_lock, key);
+}
+
+bool ctl_tour_request(void)
+{
+	uint32_t now = k_uptime_get_32();
+	k_spinlock_key_t key = k_spin_lock(&tour_lock);
+	bool ok;
+
+	tour_expire(now);
+	ok = tour_state == CTL_TOUR_IDLE;
+	if (ok) {
+		tour_state = CTL_TOUR_REQUESTED;
+		tour_t0 = now;
+		tour_step[0] = '\0';
+		tour_req = tour_req + 1 ? tour_req + 1 : 1; /* never 0: that means "none" */
+	}
+	k_spin_unlock(&tour_lock, key);
+	return ok;
+}
+
+uint32_t ctl_tour_take_request(void)
+{
+	k_spinlock_key_t key = k_spin_lock(&tour_lock);
+	uint32_t r = 0;
+
+	if (tour_state == CTL_TOUR_REQUESTED && tour_req != tour_req_handed) {
+		r = tour_req_handed = tour_req; /* to one companion only */
+	}
+	k_spin_unlock(&tour_lock, key);
+	return r;
+}
+
+bool ctl_tour_stop(void)
+{
+	uint32_t now = k_uptime_get_32();
+	k_spinlock_key_t key = k_spin_lock(&tour_lock);
+	enum ctl_tour_state was;
+	char step[sizeof(tour_step)];
+
+	tour_expire(now);
+	was = tour_state;
+	memcpy(step, tour_step, sizeof(step));
+	if (was == CTL_TOUR_RUNNING) {
+		tour_state = CTL_TOUR_STOPPING;
+		tour_seen = now; /* given up 30 s from now if it never says "tour end" */
+	} else if (was == CTL_TOUR_REQUESTED) {
+		tour_state = CTL_TOUR_IDLE;
+		snprintf(tour_last, sizeof(tour_last), "not started: called off from the web remote");
+	}
+	k_spin_unlock(&tour_lock, key);
+	if (was != CTL_TOUR_RUNNING) {
+		return false;
+	}
+	LOG_INF("tour stopped from the web remote (in step %s)", step[0] ? step : "-");
+
+	/* What the tour may have left half done. Its next command is refused, so
+	 * it does not get to put these back itself. */
+	struct touch_state ts;
+
+	touch_get(&ts);
+	for (int i = 0; i < TOUCH_MAX_POINTS; i++) {
+		if (ts.pt[i].down) {
+			touch_inject(i, ts.pt[i].x, ts.pt[i].y, false);
+		}
+	}
+	sdcard_simulate(SD_SIM_AUTO);
+	player_use_card(true);
+	if (!strcmp(step, "touch")) {
+		post(CTL_HOME_TILES, 0);
+	}
+	if (!strcmp(step, "theremin") || !strcmp(step, "monitor")) {
+		monitor_set_listen(false);
+		theremin_set_sound(true);
+		sig_set_source(SIG_SRC_GENERATOR);
+	}
+	post(CTL_INPUT, 0); /* ends attract mode, if the tour had started it */
+	return true;
+}
+
+/* "tour", "tour begin", "tour step NAME", "tour alive", "tour end WHY" */
+static int tour_cmd(const char *line, char *out, size_t out_len)
+{
+	char verb[8] = "", arg[24] = "";
+	int k = sscanf(line, "%*s %7s %23s", verb, arg);
+	uint32_t now = k_uptime_get_32();
+	const char *err = NULL;
+	k_spinlock_key_t key = k_spin_lock(&tour_lock);
+
+	tour_expire(now);
+	if (k < 1) {
+		/* the state, below */
+	} else if (!strcmp(verb, "begin")) {
+		if (tour_state == CTL_TOUR_RUNNING || tour_state == CTL_TOUR_STOPPING) {
+			err = "a tour is running";
+		} else {
+			tour_state = CTL_TOUR_RUNNING;
+			tour_t0 = tour_seen = now;
+			tour_step[0] = '\0';
+		}
+	} else if (!strcmp(verb, "step") || !strcmp(verb, "alive")) {
+		if (tour_state == CTL_TOUR_STOPPING) {
+			err = "stopped from the web remote";
+		} else if (tour_state != CTL_TOUR_RUNNING) {
+			err = "no tour running";
+		} else {
+			tour_seen = now;
+			if (verb[0] == 's') {
+				memcpy(tour_step, arg, sizeof(tour_step));
+			}
+		}
+	} else if (!strcmp(verb, "end")) {
+		if (tour_state == CTL_TOUR_RUNNING || tour_state == CTL_TOUR_STOPPING) {
+			uint32_t s = (now - tour_t0) / 1000;
+
+			snprintf(tour_last, sizeof(tour_last), "%s after %u:%02u",
+				 tour_state == CTL_TOUR_STOPPING ? "stopped from the web remote" : arg[0] ? arg : "ended",
+				 s / 60, s % 60);
+			tour_state = CTL_TOUR_IDLE;
+		}
+	} else {
+		err = "tour [begin | step NAME | alive | end WHY]";
+	}
+	enum ctl_tour_state st = tour_state;
+	char step[sizeof(tour_step)], last[sizeof(tour_last)];
+
+	memcpy(step, tour_step, sizeof(step));
+	memcpy(last, tour_last, sizeof(last));
+	k_spin_unlock(&tour_lock, key);
+
+	if (err != NULL) {
+		return snprintf(out, out_len, "err %s\n", err);
+	}
+	return snprintf(out, out_len, "state=%s step=%s last=%s\n", tour_names[st], step[0] ? step : "-",
+			last[0] ? last : "-");
 }
 
 static void swipe(int x1, int y1, int x2, int y2, int ms)
@@ -117,6 +295,21 @@ static int handle(char *line, char *out, size_t out_len)
 
 	if (n < 1) {
 		return snprintf(out, out_len, "err empty\n");
+	}
+	if (!strcmp(cmd, "tour")) {
+		return tour_cmd(line, out, out_len);
+	}
+	if (tour_state == CTL_TOUR_STOPPING) {
+		/* the web remote took the board from the tour: nothing more from it
+		 * (tour_cmd gives up a tour that never says "tour end") */
+		struct ctl_tour t;
+
+		ctl_tour_get(&t);
+		if (t.state == CTL_TOUR_STOPPING) {
+			return snprintf(out, out_len, "err stopped from the web remote\n");
+		}
+	} else if (tour_state == CTL_TOUR_RUNNING) {
+		tour_seen = k_uptime_get_32(); /* while a tour runs, the port is its: a sign of life */
 	}
 	if (!strcmp(cmd, "screen") && n >= 2) {
 		post(CTL_SCREEN, a[0]);

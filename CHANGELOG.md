@@ -5,6 +5,35 @@ release says so. Each line names what a user of the demo or of its tools
 would notice; the commit log has the detail, and `CLAUDE.md` the reasons
 behind the rules that came out of them.
 
+## 2026-11-20
+
+### Added
+
+- **A web remote: a phone on the same network opens `http://<board>/`** (the
+  QR code on the Settings screen points there). It shows the screen on the
+  panel and a clip playing, with buttons for every screen, Previous, Home
+  and Next, Run and Stop for the demo (with the attract lap's position),
+  every clip to play in Cinema, and the frame rate, frame time, dropped
+  frames and uptime, updated every second. One self-contained page, works
+  without the internet; no login (trusted network only), and nothing on it
+  deletes or reconfigures anything. Its state is `/remote.json`, its
+  actions `POST /screen/N`, `/play/N`, `/demo/start`, `/demo/stop` with
+  the header `X-N6: 1`. The page, `/status.json` and `/remote.json` say how
+  many devices have it open (`remotes`).
+- **The remote outranks the test tour** (`tools/tour.py`): it shows a tour
+  running and its current step, anything picked on it stops the tour at
+  once (the board refuses the tour's next command, puts back what the test
+  had changed, and the tour quits and removes its test clip), and Start runs
+  a tour on the PC through the companion (`run.cmd`; `--no-tour` refuses).
+  While the remote is open on a phone the demo does not start by itself.
+  `ctl.py tour` shows the tour as the board sees it.
+
+### Changed
+
+- **The board's description page moved from `/` to `/about`** (`/agent.md`
+  and `/status.json` are unchanged); `/` is the remote. The web server's
+  buffers moved to PSRAM: 138 KB of internal RAM free.
+
 ## 2026-11-19, after v1.0.0
 
 ### Added

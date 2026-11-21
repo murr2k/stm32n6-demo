@@ -209,10 +209,10 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
     <tr><td class="k">P1 Platform</td><td><span class="pill ok">done</span></td><td>Panel retimed from 48.8 to 59.98 Hz off the crystal. The application swaps buffers itself in the vertical blanking; Zephyr's driver had cost about 1 ms a frame in cache maintenance and swapped in the middle of the blanking. Transitions fade and settle in the display controller.</td></tr>
     <tr><td class="k">P2 Core screens</td><td><span class="pill ok">done</span></td><td>Home (live thumbnails; past eight tiles the field pans), Flight Deck, Touch Lab, Specimen.</td></tr>
     <tr><td class="k">P3 Data viz</td><td><span class="pill ok">done</span></td><td>Signal Lab with three sources (a labelled generator, the microphone, the theremin) and Explorer (2<sup>20</sup> samples x 4 channels, read in place from the flash).</td></tr>
-    <tr><td class="k">P4 Network</td><td><span class="pill warn">partly</span></td><td>Host companion, Host Link, Core Map, board discovery, clip uploads to the microSD card at 2 to 4 MB/s, the board's self-description on port 80, address settings. Not started: the web remote and firmware update over the network.</td></tr>
+    <tr><td class="k">P4 Network</td><td><span class="pill warn">partly</span></td><td>Host companion, Host Link, Core Map, board discovery, clip uploads to the microSD card at 2 to 4 MB/s, the board's self-description on port 80, address settings, the web remote. Not started: firmware update over the network.</td></tr>
     <tr><td class="k">P5 Video and audio</td><td><span class="pill ok">done</span></td><td>30 fps from flash and from the card, 0 dropped frames, picture within -8 to +13 ms of its sound, scrubbing with cross-faded sound. Three original clips rendered by the project.</td></tr>
     <tr><td class="k">P6 Polish</td><td><span class="pill ok">done</span></td><td>Attract mode, hardware transitions, a 9-hour soak passed on 2026-11-17, stand-alone boot, README, changelog and a best-practices guide for developers.</td></tr>
-    <tr><td class="k">P7 Camera and NPU</td><td><span class="pill ok">hands done</span></td><td>Camera screen at 30 fps; up to two hands tracked on the NPU with their gestures, checked with real hands by the user. Faces (N3) not started.</td></tr>
+    <tr><td class="k">P7 Camera and NPU</td><td><span class="pill ok">hands done</span></td><td>Camera screen at 30 fps; up to two hands tracked on the NPU with their gestures, checked with real hands by the user. Faces (N3) dropped by the user on 2026-11-19.</td></tr>
     <tr><td class="k">Theremin</td><td><span class="pill ok">done</span></td><td>Added 2026-11-17. Signal Lab's spectrum played with up to five fingers; touch to sound 3.8 to 4.8 ms.</td></tr>
     <tr><td class="k">Microphone monitor</td><td><span class="pill ok">done</span></td><td>Added 2026-11-17. The microphone to the headphones in 8.7 ms, through a five-band equalizer dragged on the spectrum.</td></tr>
     <tr><td class="k">Recorder</td><td><span class="pill ok">done</span></td><td>Steps V1 and V2 of the video below: the hardware H.264 encoder records the screen, with the DAC feed as its sound. The Camera screen too since 2026-11-18, when asked for (<code>--camera</code>): the display copies each finished frame for the encoder. Recordings now carry the panel's true colours: the stream says it is full range (before, players crushed the blacks).</td></tr>
@@ -299,7 +299,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
 </section>
 
 <section>
-  <span class="eyebrow">Built 2026-11-19 &middot; a formatter next, if wanted</span>
+  <span class="eyebrow">Built 2026-11-19 &middot; no formatter: a PC does that</span>
   <h2>The microSD card: at full speed, and taken out and put back</h2>
   <p>Found while looking at internal RAM: the card's bus ran at 48 MHz in Default Speed mode, which the SD specification allows only to 25 MHz, because nothing ever switched the card to High Speed (CMD6). It runs at 24 MHz now, within the specification; measured with a 48.7 MB upload, the card writes 5.4 MB/s there against 9.0 MB/s at 48 MHz (uploads 2.7 against 3.65 MB/s; playback needs about 1 MB/s either way).</p>
   <div class="two">
@@ -324,9 +324,9 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
 </section>
 
 <section>
-  <span class="eyebrow">Built 2026-11-15 to 17 &middot; faces next</span>
-  <h2>The NPU on the camera picture: hands, then faces</h2>
-  <p>The Camera screen (IMX335 at 30 fps through ST's ISP) runs recognition on the N6's Neural-ART NPU: <b>hand tracking with gestures</b> (any orientation, either hand) is built; <b>face detection with recognition of faces it has been taught</b> comes next. The figures below come from converting each model with ST Edge AI 4.0 for this chip.</p>
+  <span class="eyebrow">Built 2026-11-15 to 17 &middot; faces dropped</span>
+  <h2>The NPU on the camera picture: hands</h2>
+  <p>The Camera screen (IMX335 at 30 fps through ST's ISP) runs recognition on the N6's Neural-ART NPU: <b>hand tracking with gestures</b> (any orientation, either hand) is built. <b>Face recognition</b> was designed and then dropped by the user on 2026-11-19; its rows below are kept as the record of that design. The figures below come from converting each model with ST Edge AI 4.0 for this chip.</p>
   <div class="scroll"><table>
     <tr><th>Network</th><th>Job</th><th>Licence</th><th>Work per run</th><th>Working memory</th><th>Weights</th><th>On the NPU</th></tr>
     <tr><td class="k">Palm detector, 192x192</td><td>find hands, any rotation</td><td>Apache-2.0 (Google MediaPipe)</td><td class="num">346 M MAC</td><td class="num">1.69 MB</td><td class="num">1.1 MB</td><td>134 of 138 steps</td></tr>
@@ -348,7 +348,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
       </ul>
     </div>
     <div>
-      <h3>Faces, planned</h3>
+      <h3>Faces, designed, not built</h3>
       <ul>
         <li>Every frame: BlazeFace, then the 468-point mesh for each face (precise eyes for alignment; the mesh can be drawn).</li>
         <li>Identification when a face first appears, about once a second to confirm, and when a better view arrives. Faces are followed between frames, so names stay on them.</li>
@@ -371,7 +371,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
     <tr><th>Step</th><th>Work</th><th>Done when</th></tr>
     <tr><td>N1 <span class="pill ok">done</span></td><td>ST's NPU runtime on Zephyr; the palm detector on one test image</td><td>Correct detections against the PC's result, inference time measured, UI frame budget kept.</td></tr>
     <tr><td>N2 <span class="pill ok">done</span></td><td>Hands: both networks on the camera picture, rotation crop, tracking, gestures, overlay; two hands at once</td><td>Live on the Camera screen with frame rate and NPU times shown. Checked by the user with real hands on 2026-11-16: "tracking was excellent for each hand, both front and back".</td></tr>
-    <tr><td>N3</td><td>Faces: BlazeFace, mesh, alignment, SFace, LEARN with names, card storage, recognition</td><td>Accuracy measured on public pairs before the board; a taught face is named live, an untaught one is "unknown"; nothing personal leaves the board.</td></tr>
+    <tr><td>N3 <span class="pill bad">dropped</span></td><td>Faces: BlazeFace, mesh, alignment, SFace, LEARN with names, card storage, recognition</td><td>Accuracy measured on public pairs before the board; a taught face is named live, an untaught one is "unknown"; nothing personal leaves the board.</td></tr>
     <tr><td>N4 <span class="pill ok">done</span></td><td>Proof: 9 hours on 2026-11-17, each hour 20 minutes of camera, display and NPU (both networks every frame) and 40 of attract mode</td><td>No reset, no fault, no leak, frame times unchanged; 2 dropped frames, traced to Flight Deck's fade-in and fixed (the settle is now done by the display controller).</td></tr>
   </table></div>
   <div class="callout">
@@ -740,7 +740,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
     <tr><td class="num">tcp/5558</td><td>Clips to and from the microSD card, CRC-32 checked</td><td><code>tools/n6v.py</code></td></tr>
     <tr><td class="num">tcp/5559</td><td>The recorder: H.264 pictures and the DAC feed</td><td><code>tools/record.py</code></td></tr>
   </table></div>
-  <p class="muted">The address comes from DHCP or is fixed on the Settings screen, kept on the card; USER held at power-up forces DHCP, and the board announces a new address at once. The control and screenshot ports serve one client at a time, so host tools keep one connection. Not built: the web remote, firmware update over the network, mDNS and SNTP. The board's pages have no login and are meant for a trusted LAN.</p>
+  <p class="muted">The address comes from DHCP or is fixed on the Settings screen, kept on the card; USER held at power-up forces DHCP, and the board announces a new address at once. The control and screenshot ports serve one client at a time, so host tools keep one connection. The web remote is at <code>/</code> (the Settings QR code opens it on a phone: every screen and clip, the demo, live frame numbers). It outranks the PC's test tour: anything picked on it stops a running tour, and it can start one through the companion; while it is open the demo does not start by itself. Not built: firmware update over the network, mDNS and SNTP. The board's pages have no login and are meant for a trusted LAN.</p>
 </section>
 
 <section>
@@ -778,10 +778,10 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
     <tr><td>P1 Platform <span class="pill ok">done</span></td><td>Display path with the swap in the blanking, LVGL integration, frame pacing, telemetry, design tokens, fonts, screen manager.</td><td>Two screens swap at a measured 60 fps. <b>Met</b> at 59.98 Hz; no simulator was built, every check runs on the board.</td></tr>
     <tr><td>P2 Core screens <span class="pill ok">done</span></td><td>Home, Flight Deck, Touch Lab, Specimen.</td><td>Worst frame under 16.7 ms across a 10 minute interaction log. <b>Met</b> in every tour since.</td></tr>
     <tr><td>P3 Data viz <span class="pill ok">done</span></td><td>Signal Lab (FFT, waterfall, scope; generator, microphone, theremin) and Explorer (pyramid, pan, zoom, cursor).</td><td>A played tone lands in the right place on the axis; a full-range zoom on a million samples holds frame rate. <b>Met:</b> 734 Hz played shows at 734 Hz; Explorer's zoom tour drops nothing.</td></tr>
-    <tr><td>P4 Network <span class="pill warn">partly</span></td><td>Host companion, Host Link, Core Map, discovery, uploads, self-description; web remote and firmware update over UDP.</td><td>A phone on the LAN switches screens; a new build installs with no cable touched. <b>Not met:</b> both still to build.</td></tr>
+    <tr><td>P4 Network <span class="pill warn">partly</span></td><td>Host companion, Host Link, Core Map, discovery, uploads, self-description; web remote and firmware update over UDP.</td><td>A phone on the LAN switches screens; a new build installs with no cable touched. <b>Half met:</b> the web remote (2026-11-19) switches screens, runs the demo and plays clips, answering in 2 to 21 ms with 0 dropped frames; firmware update still to build.</td></tr>
     <tr><td>P5 Video <span class="pill ok">done</span></td><td>Clip format, decode path, A/V sync, Cinema, clips in flash and on the card.</td><td>480p30 with sound, no dropped frames, audio offset within 40 ms. <b>Met:</b> 0 dropped, 0 stalls; picture -8 to +13 ms from its sound, measured in the board's own recording.</td></tr>
     <tr><td>P6 Polish <span class="pill ok">done</span></td><td>Attract mode, transitions, soak test, stand-alone boot, README and project notes.</td><td>8 hours unattended with no reset, no leak and no frame-time drift. <b>Met:</b> 9 hours on 2026-11-17, frame times within 0.07 ms of the first hour; again in 8 hours on the recorder build on 2026-11-18 (1 dropped frame in 1110 switches).</td></tr>
-    <tr><td>P7 Camera <span class="pill ok">hands done</span></td><td>Camera screen with the NPU.</td><td>Became the NPU plan above: hands done, faces next.</td></tr>
+    <tr><td>P7 Camera <span class="pill ok">hands done</span></td><td>Camera screen with the NPU.</td><td>Became the NPU plan above: hands done; faces dropped on 2026-11-19.</td></tr>
   </table></div>
 </section>
 
@@ -815,8 +815,8 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
   <div class="scroll"><table>
     <tr><th>#</th><th>Question</th><th>Default</th></tr>
     <tr><td class="num">1</td><td><b>The video's extras.</b> A 60 s vertical Short.</td><td>No Short. The video itself: no footage, 4 min 36 s.</td></tr>
-    <tr><td class="num">2</td><td><b>Faces (N3)</b> after the video?</td><td>Yes, next after V5.</td></tr>
-    <tr><td class="num">3</td><td><b>Web remote and firmware update over the network.</b> Still wanted?</td><td>Kept in the plan, not scheduled.</td></tr>
+    <tr><td class="num">2</td><td><b>Faces (N3)</b> after the video?</td><td>At first yes; dropped on 2026-11-19, with the one-person and liveness variants.</td></tr>
+    <tr><td class="num">3</td><td><b>Web remote and firmware update over the network.</b> Still wanted?</td><td>The web remote built on 2026-11-19; firmware update kept in the plan, not scheduled.</td></tr>
   </table></div>
   <div class="scroll"><table>
     <tr><th>Asked 2026-11-14</th><th>Answer</th></tr>

@@ -425,6 +425,11 @@ void shell_note_input(void)
 	}
 }
 
+void shell_note_presence(void)
+{
+	last_input_ms = k_uptime_get_32(); /* one 32-bit store: safe from any thread */
+}
+
 static int index_of(const struct screen *s)
 {
 	for (int i = 0; i < n_screens; i++) {

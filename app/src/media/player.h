@@ -89,6 +89,10 @@ bool player_using_file(const char *name);
 
 int player_open(int clip);
 void player_close(void);
+/* The open clip's header, NULL when none is open (any thread: it may be
+ * stale by the time it is read, never out of bounds; titles are not always
+ * terminated, read at most 31 characters). */
+const struct n6v_header *player_open_header(void);
 
 /* The attract lap's clip (media/film/attract.py): this file in /SD:/clips,
  * kept out of the list like every name that starts with an underscore. Its

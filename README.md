@@ -155,11 +155,21 @@ instead of about 8. Holding the USER button while the board powers up
 ignores the stored address and uses DHCP. `ctl.py "netcfg static IP MASK GW"`
 and `ctl.py "netcfg dhcp"` do the same over the network.
 
-The board describes itself on http/80: `/` is a page, `/agent.md` the same
+On http/80 the board serves a remote for a phone at `/`: the screen on the
+panel and a clip playing, a button for every screen and clip, Previous,
+Home and Next, Run and Stop for the demo, and the frame rate, frame time
+and dropped frames, live. The Settings screen shows a QR code for it. The
+page is one file in the firmware (no fonts or scripts from elsewhere, so it
+works on a network without the internet); there is no login, so it belongs
+on a trusted network, and nothing on it deletes or reconfigures anything.
+The remote outranks the test tour (`tools/tour.py`): it shows a tour running
+and its step, anything picked on it stops the tour at once, and Start runs
+one on the PC through the companion. While the remote is open, the demo does
+not start by itself.
+The board also describes itself: `/about` is a page, `/agent.md` the same
 text as Markdown for an agent (what the board is, its screens, every network
 service and protocol, how to find and drive it, and what not to do), and
-`/status.json` its live state. The Settings screen shows a QR code for the
-page.
+`/status.json` its live state.
 
 The companion can be left running across board restarts. The board announces
 its address (a gratuitous ARP) when DHCP assigns it; without that, Windows
@@ -200,7 +210,7 @@ The firmware listens on these ports (trusted LAN only, no authentication):
 | tcp/5556 | Text commands: switch screen, start attract mode, which screen is up (`where`), frame statistics, inject touches, audio, video and clip-list status, open a clip, NPU and hand tracker (`nn`) | `tools/ctl.py`, `tools/nn.py` |
 | udp/5557 | Host telemetry in, echo out; `N6HQ` discovery query answered with `N6HA` | `host/companion.py` |
 | tcp/5558 | Clips to and from the list on the microSD card: put (with CRC-32), list, delete, free space | `tools/n6v.py upload`, `ls`, `rm`, `df` |
-| tcp/80 | The board describes itself: `/`, `/agent.md`, `/status.json` | a browser, `curl`, an agent |
+| tcp/80 | The web remote at `/` (state `/remote.json`, actions `POST /screen/N`, `/play/N`, `/demo/start`, `/demo/stop` with the header `X-N6: 1`); the board describes itself: `/about`, `/agent.md`, `/status.json` | a phone or a browser, `curl`, an agent |
 
 ```powershell
 .\.venv\Scripts\python.exe tools\ctl.py "screen 2" stats
@@ -754,7 +764,7 @@ presence 0.50 against 0.01.
 | Microphone as Signal Lab source | Working on the replacement DK (2026-11-17): MDF1 turns the PDM stream into 48 kHz, 24 bit PCM on the DAC's own clock, a circular DMA delivers it with no errors, and a tap on Signal Lab's SOURCE label puts it on the scope, spectrum and waterfall. In a recorded test with spoken prompts, a quiet room measured -96 dBFS, and claps and fingernail taps at the board rose 35 to 63 dB above it, with the firmware unchanged from the first board. On the first board the onboard microphone (U13) delivered only noise: 50 dB above its datasheet floor, unaffected by every capture setting, with no response to a tone or to tapping. Read at the pin, its bit stream is a healthy sigma-delta stream with nothing but that noise in the audio band, so the electronics of the part run and its transducer does not. Claps and taps at the board leave no trace, through the filters on either clock edge or in the raw bits. The capture chain itself is verified from the pin on: with the microphone asleep, a square wave made with the data pin's own pull resistors (`micinject`) comes out at the right frequency and shape, and a held line gives digital silence; with the microphone clocked, its output overrides the injected wave. A synthetic microphone (`micpdm`: a sine through a sigma-delta modulator, put on the data pin by DMA) shows on Signal Lab as the sine it was, distorted only by how slowly that line follows the pin's pull resistors. ST's own unmodified recorder example passed taps on that board in May and nothing in November, so the part had degraded. Findings, board circuit and sources are in [docs/microphone.md](docs/microphone.md). The generator stays the default source |
 | Host Link | Working: 340 of 340 datagrams answered in the test run, 1.4 to 2.9 ms round trip as timed by the host |
 | Home Power | Working (2026-11-19): the name looked up on the board, a request answered in 180 to 480 ms, all five chart ranges and their figures matching the monitor's own; with an address that does not resolve the tile, its dot and its place in the swipes go away and the screen greys out, and they come back with a good one. 0 dropped frames in the tour. Zephyr's DNS resolver took most of the 6.5 KB of internal RAM this cost (3.4 KB left) |
-| Web remote, firmware update over the network | Not started |
+| Web remote | Working (2026-11-19): a phone opens `http://<board>/` (the Settings QR code), switches screens, runs and stops the demo, plays clips and watches frame rate and dropped frames; an answer takes 2 to 21 ms; a minute of its polling on Explorer cost 0 frames. Firmware update over the network: not started |
 | microSD media library | Working: FAT32/exFAT, the card in High Speed mode at 48 MHz, upload over Ethernet at 3 to 4 MB/s with CRC, streamed playback with 0 stalls in the automated run. The card can be taken out and put back while the demo runs (checked by hand during playback, the attract lap and an upload: the clip closes in about 0.2 s, the card is back in about 0.6 s, 0 dropped frames), and a card taken out at any moment leaves the clips and settings on it whole. Not built: a formatter, fast seeks in files of a gigabyte or more |
 | Core Map | Working: 22 logical processors of the test PC, no dropped frame while orbiting and zooming under full load |
 | Under the Hood | Working: no dropped frame on any of the five height axes in the automated run. On a linear axis the UI thread hid everything else (seen on the panel), hence the logarithmic default. The screen measures itself: with it showing, the UI thread takes about a third more of the CPU |
