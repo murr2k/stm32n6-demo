@@ -33,13 +33,13 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 .\.venv\Scripts\python.exe tools\ctl.py power      # Home Power's feed: online, state, requests, figures; "power url http://HOST" sets the energy monitor (kept on the card, never in the repo)
 .\.venv\Scripts\python.exe tools\ctl.py "power range 7d" powert   # the panel's chart range (1h 6h 24h 7d 30d); its worst gauge, chart and tick times, us
 .\.venv\Scripts\python.exe tools\dataset.py info   # Explorer's data set: must say "source flash"; pull + flash put it there
-.\.venv\Scripts\python.exe tools\nn.py fetch; generate; testimg; flash   # NPU networks into build-nn/ (ignored), weights into the flash
+.\.venv\Scripts\python.exe tools\nn.py fetch; generate; testimg; flash   # NPU networks into build-nn/ (ignored), weights and test inputs into the flash ("flash --tests": the test inputs only)
 .\.venv\Scripts\python.exe tools\nn.py check       # both networks on the board against the original models on the PC
 .\.venv\Scripts\python.exe tools\nn.py trace 0     # time per epoch block against the converter's estimate
 .\.venv\Scripts\python.exe tools\nn.py inputs      # what the hand tracker's networks last saw, as PNGs in build-nn/test
 .\.venv\Scripts\python.exe tools\ctl.py nn "nn hands" "nn bench 20 1"   # NPU and tracker status; times (net 0 palm, 1 hand)
-.\.venv\Scripts\python.exe tools\ctl.py "screen 11" "nn hands 2"   # track the built-in thumbs-up picture: gesture=7 expected
-.\.venv\Scripts\python.exe tools\ctl.py "screen 11" "nn hands 3"   # the picture twice, one copy mirrored: hands=2 g0=7 g1=7, r0/r1 about 92/24; "nn hands 1" back to the camera
+.\.venv\Scripts\python.exe tools\ctl.py "screen 10" "nn hands 2"   # track the built-in thumbs-up picture: gesture=7 expected
+.\.venv\Scripts\python.exe tools\ctl.py "screen 10" "nn hands 3"   # the picture twice, one copy mirrored: hands=2 g0=7 g1=7, r0/r1 about 92/24; "nn hands 1" back to the camera
 .\.venv\Scripts\python.exe tools\ctl.py "nn cfg 2 500"   # at most 2 hands; with fewer tracked, look for another every 500 ms
 .\.venv\Scripts\python.exe tools\ctl.py "screen 2" "sigsrc 2" "thm 0 440 -12" thm   # theremin: a voice without touching (hz 0 lifts, "thm -1" back to touch), its state
 .\.venv\Scripts\python.exe tools\ctl.py "thmwave 3" "thmsnap 1" "thmghost 1" "thmsound 0"   # timbre 0..3, semitone snap, the attract ghost, the SOUND switch
@@ -106,15 +106,20 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   `ui/theme.h` tokens.
 - Attract lap (main.c `lap_steps`, `shell_set_program`; the user's design,
   2026-11-18): "N6: the film" to 0:43.2 (bar 18), then Home, Flight Deck,
-  Signal Lab, the recorded gestures, Explorer, Host Link, Core Map, Under
-  the Hood (2, 4, 3, 4, 8, 4, 6, 5 bars of 2.4 s), then the film's last
+  Signal Lab, the recorded gestures, Explorer, Host Link, Core Map (2, 4,
+  3, 4, 8, 4, 7 bars of 2.4 s), then the film's last
   scene with the score's coda (2 bars), then end titles (the user's
   timings: the attribution 7.2 s, the address readable over 6 s; "how it
   was made" and "Thank you for watching" held 12 s, a 1.5 s fade; then 2 s
-  of black and silence) while the coda's last chord rings out: 56 bars
-  plus 22.7 s, 157.1 s of clip time (2 min 38 s at the DAC's 47.7 kHz;
-  `LAP_MS` is `56 * BAR_MS + 22700`, the lap's end is not on a bar line),
-  then again. The titles' wording is deliberate: the demos run live on the
+  of black and silence) while the coda's last chord rings out: 52 bars
+  plus 22.7 s, 147.5 s of clip time (2 min 28 s at the DAC's 47.7 kHz;
+  `LAP_MS` is `52 * BAR_MS + 22700`, the lap's end is not on a bar line),
+  then again. Until 2026-11-20 Under the Hood followed Core Map (Core Map
+  6 bars, Under the Hood 5: 56 bars); the screen was removed to make room
+  in the image slot, and the user chose to shorten the lap by 4 bars and
+  give Core Map the fifth. The measurements of 2026-11-18 below are of
+  earlier laps (one of 52 bars without the gestures and titles, then the
+  56-bar lap). The titles' wording is deliberate: the demos run live on the
   board, but the film is not made by the board; it is code (`n6_film.py`
   draws every frame with Skia, `score.py` synthesizes every note from sines
   and filtered noise, no samples, footage or stock art), rendered on the PC
@@ -182,7 +187,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   of it Zephyr's DNS resolver: 3.4 KB left; then, the same day, the pools
   sized to their measured peaks: 718.6 KB, 121 KB left; 721.9 with the card
   watcher's 3 KB stack, 118 KB left; 702.2 (719,072 B) once the HTTP
-  server's 20.5 KB of buffers went to PSRAM with the web remote, **138 KB
+  server's 20.5 KB of buffers went to PSRAM with the web remote, 138 KB
+  left; 695.2 (711,912 B) without Under the Hood, 2026-11-20, **145 KB
   left**) (LVGL pool 192 KB,
   peak 108 KB after a tour; kernel heap 16 KB, peak 140 B, getaddrinfo its
   only user; main stack 10 KB, 5.8 KB used; network buffers 128 KB, not yet
@@ -197,14 +203,21 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   data set has to be generated because the flash holds no copy); code
   1.77 MB in a 2 MB slot of a 128 MB flash (1.997 of 2.09 MB, 95 %, since
   Home Power, 2026-11-19; 2.016 MB (2,016,084 B), 96.3 %, 76 KB left, with
-  the card watcher and the web remote, 2026-11-20: the slot is nearly full too;
-  the NPU programs, about 460 KB, could move out of it to the weights'
-  region). A new demo with buffers needs a place in this before it is written.
+  the card watcher and the web remote, 2026-11-20; then, the same day,
+  1.870 MB (1,870,116 B), 89.4 %, **217 KB left**: Under the Hood removed
+  and the NPU's test inputs (261 KB) moved to the weights' region, the
+  symbol table (about 96 KB: 27.8 KB of entries for 3,471 functions, the
+  names in rodata) and the unwind tables of the fault call trace (23 KB)
+  added; the NPU programs, about 460 KB, could still move out of the slot to
+  the weights' region). A new demo with buffers needs a place in this before it is written.
 - Flash map (128 MB at 0x7000_0000): MCUboot and the two image slots up to
   0x7041_0000, media partition 0x7042_0000 to 0x7580_0000 (84 MB, 83.7 MB
   used: full, more clips go on the card), the NPU's weights 0x7580_0000 to
   0x7700_0000 (24 MB: palm detector at 0x7580_0000, hand landmarks at
-  0x75A0_0000, written by `tools/nn.py flash`), Explorer's data set
+  0x75A0_0000, the two networks' test inputs at 0x7600_0000 and
+  0x7602_0000, all written by `tools/nn.py flash` and read in place, each
+  checked against its CRC in `nn_weights.h`; the test inputs were 261 KB of
+  the image until 2026-11-20), Explorer's data set
   0x7700_0000 to the end (16 MB, 14 MB used).
   Read-only data belongs in flash and is used in place; `tools/dataset.py`
   (pull, flash, info, erase) is the pattern for getting it there.
@@ -398,8 +411,11 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   hands): the sound 0.00 ms from the take's at four points, the panel the
   take's picture due at four points.
 - Screens implement `struct screen` (ui/shell.h) and are listed in main.c.
-  Index order matters to `tools/tour.py` (SCREENS list): home, deck, siglab,
-  explorer, touchlab, hostlink, coremap, cinema, specimen, hood, settings, camera, power. Home shows two
+  Index order matters to `tools/tour.py` (SCREENS list; nn.py and soak.py
+  take the Camera screen's index from it): home, deck, siglab, explorer,
+  touchlab, hostlink, coremap, cinema, specimen, settings, camera, power
+  (Under the Hood, between specimen and settings, removed 2026-11-20 for
+  room in the image slot). Home shows two
   rows of four tiles; a ninth and later ones go into further columns on the
   right (same tile size) and the field pans sideways. `ctl.py "hometiles 5"`
   adds placeholder tiles to try that with (`hometiles 0` removes them); each
@@ -525,8 +541,26 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   FS, SCK, SD; only TRACED0 PE3 and SWO PB5 are free), so streaming trace
   and sound exclude each other; with the ribbon on those lines the film's
   sound and the microphone monitor are clean (the user, by ear,
-  2026-11-20). Ozone and SystemView are not
-  installed.
+  2026-11-20). **SEGGER SystemView and Ozone were tried on 2026-11-20 and
+  withdrawn: a SystemView recording blanks the panel until a power
+  cycle.** Measured 2026-11-21 on a SystemView build
+  (`CONFIG_SEGGER_SYSTEMVIEW`, 16 KB RTT buffer): 3 recordings of 3 (SWD
+  4 and 20 MHz, with and without SystemView's 0.6 s attach halt) left the
+  panel black with the backlight on while the demo ran on (music, 59.9
+  fps, frames drawn into both buffers, 0 dropped); only a power cycle
+  brought the picture back (a toggle of the panel enable PQ3 and a forced
+  LTDC reload did not). Every register read in the black state matched the
+  working state: the LTDC's global and layer registers, the 28 LCD pins
+  (all AF14), PQ3 and PQ6, RCC, PWR, SYSCFG's compensation cells. Harmless
+  in the same tests: a J-Link Commander attach at 4 or 20 MHz, 2 MB of RAM
+  read over the probe while the demo ran, and the release firmware's
+  attract lap (watched twice). Cause unknown; the tools (`sysview.py`,
+  `ozone.py`, an attach-only Ozone project) stay out of the repository.
+  Ozone was not retested after the blank screens were found; its attach
+  froze the demo 0.7 s at SWD 20 MHz (it reads ~860 KB of code), and its
+  default start (download and reset) breaks booting here. A halt of a few
+  seconds also tests the host companion: a discovery answer that arrived
+  late killed it (WinError 10040 in a 64-byte read), fixed.
 - **A new `.overlay` or `.conf` file needs a pristine build (`-p`).**
   **Why:** CMake only discovers them at configure time; an incremental build
   silently ignores the new file.
@@ -617,12 +651,13 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   callback, and LVGL's animation timer runs after the display's refresh
   timer, so that time is not in `render_us`; `ctl.py stats` reports it as
   `tail_worst_us`. **Why:** Under the Hood's first frame (chart and side
-  panel at once, up to 15.8 ms) after closing a playing film (a tail of about
-  1 ms) missed a refresh on about one attract lap in three (5 drops in 16
-  switches); its side panel now waits one frame (0 in 16). The miss falls in
-  the black hold of the fade, so nobody sees it, but the counter on Deck does.
-  The tour's transition test enters every screen and makes the film to Under
-  the Hood switch six times. To see where a transition's time goes:
+  panel at once, up to 15.8 ms; the screen was removed on 2026-11-20) after
+  closing a playing film (a tail of about 1 ms) missed a refresh on about
+  one attract lap in three (5 drops in 16 switches); its side panel waiting
+  one frame fixed it (0 in 16). The miss falls in the black hold of the
+  fade, so nobody sees it, but the counter on Deck does. The tour's
+  transition test enters every screen and makes the film to Explorer (the
+  heaviest first frame left) switch six times. To see where a transition's time goes:
   `ctl.py swtrace` (each frame of the last one: wake, tail, main loop
   before LVGL, LVGL, time other threads took, margin before the swap
   deadline, the layer's alpha), `droptrace` (the same for the 8 frames up
@@ -965,7 +1000,13 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   core is not in WFI), `-r32 <PSP> 0x20` gives the stacked frame, word 6 is
   the faulting PC, `build/app/zephyr/zephyr.map` names the function. And
   keep `n6.cmd console --log` running during every test run: this one had
-  none (it was stopped for a flash) and the fault message was lost.
+  none (it was stopped for a flash) and the fault message was lost. Since
+  2026-11-20 a fault message ends with a call trace, function names and
+  offsets (`CONFIG_SYMTAB`, `CONFIG_EXTRA_EXCEPTION_INFO`; configured, not
+  yet seen on a real fault). A board that hangs without a fault message
+  and without a console line: attach the J-Trace (`connect`, `h`, `regs`)
+  and read IPSR and the PC (that is how the boot hang in the invariant on
+  `CONFIG_SYMTAB` below was found).
 - **An injected `swipe` across the Cinema slider takes several times its
   nominal duration** (it runs in the control thread, below the decoder, which
   a drag keeps busy). Pace drags from the host with `touch` commands.
@@ -1100,20 +1141,13 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   `reports/STM32N6 DK microphone noise only.md`. The second round's working
   notes stay local and are not committed (the user: no need to commit what
   can be retrieved from the sources; document the results with links).
-- **Under the Hood: logarithmic height by default, ribbons not curtains, and
-  a run of equal samples as one polygon** (hood.c). **Why:** on a linear axis
-  the UI thread (about 50 %) was a wall and every other thread a flat line
-  (the user: "not impressive"); 0.01 % to 100 % shows them all. On that axis
-  every ridge is tall, and curtains filled down to the floor overdrew the
-  view several times (10.4 ms a frame, dropped frames): a band under each
-  top edge plus a line on the floor costs 7.8 ms, worst 12.6 ms. Each
-  `raster_poly` call also costs tens of microseconds whatever its size, so
-  equal runs are merged; 8 ribbons of 30 samples. `ctl.py hoodt` gives the
-  worst sampling, stack scan, network query and side panel times (the side
-  panel is 3.3 ms, every 0.5 s). Its numbers come
-  from `k_thread_runtime_stats_get` (interrupt time is charged to the
-  interrupted thread) and `k_thread_stack_space_get`, which needs
-  `CONFIG_INIT_STACKS`.
+- **Each `raster_poly` call costs tens of microseconds whatever its size:
+  draw a run of equal samples as one polygon, and a band under a top edge
+  rather than a curtain to the floor.** **Why:** learned on Under the Hood
+  (removed 2026-11-20 for room in the image slot): curtains overdrew its
+  view several times (10.4 ms a frame, dropped frames); bands, a floor line
+  and merged runs cost 7.8 ms, worst 12.6 ms. `ctl.py stacks` needs
+  `CONFIG_INIT_STACKS` (`k_thread_stack_space_get`).
 - **Core Map draws at most 64 posts; a larger host is shown a post per core
   (SMT threads averaged) or per run of processors, and the header says so.**
   **Why:** posts overlap and overdraw each other: 64 cost 11.9 ms, 128 cost
@@ -1149,9 +1183,6 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   `camera_stop` only ask). **Why:** both talk to the sensor over I2C and wait
   for the pipe; on the UI thread each opening or closing of the screen cost
   a frame.
-- **Under the Hood resets its view on every visit; its zoom stops at 1.8.**
-  **Why:** a view left zoomed in by earlier touches made the ribbons fill the
-  screen: 18 ms frames and 7 dropped per attract visit.
 - **Face signatures, names and anything else that identifies a person stay
   in the DK's own non-volatile storage (the microSD card in its slot) and are
   never committed, pushed or sent off the board.** The user's rule,
@@ -1209,11 +1240,28 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   networks' epoch controller programs (about 460 KB) overflowed the board's
   1.5 MB slot; slot 0 grew into the gap before slot 1, slot 1 up to the
   storage partition.
+- **With `CONFIG_SYMTAB`, read-only data that an interrupt handler gets as
+  its argument goes ahead of the symbol table (`app/linker/isr_args.ld`, a
+  ROM_START snippet), and `n6.cmd build` fails a build whose interrupt
+  arguments moved (`check_isr_args` in tools/n6.py).** **Why:** Zephyr
+  generates `isr_tables.c` (literal addresses) and the symbol table from the
+  first link, but the table's section, before rodata, is filled in only in
+  the final link: rodata moved up 27.8 KB and every EXTI interrupt's
+  argument (`line_range_N` of Zephyr's GPIO interrupt driver, in rodata)
+  pointed into a table of doubles. The first such build (2026-11-20) hung
+  at boot, before the console printed a line, in the EXTI3 interrupt
+  logging "Invalid line number" without end (found over the J-Trace: IPSR
+  0x27, PC in `mpsc_pbuf_alloc` under `stm32_intc_gpio_isr`). An upstream
+  bug; device structs and RAM arguments lie before the table and are safe.
 - **Take register addresses from build/app/zephyr/zephyr.dts or the CMSIS
   header, never by arithmetic from memory.** **Why:** a `dump` of 0x580B_FC00
   (AHB5 assumed at 0x5800_0000; it is 0x5802_0000, so the NPU cache is at
   0x580D_FC00) hung the bus without a fault message, and only a power cycle
-  brought the board back.
+  brought the board back. And read only registers the header defines, one
+  `peek` each, never a block with `dump`: on 2026-11-21 a `dump` over
+  SYSCFG reached its reserved gap at 0x5600_802C, the bus refused it and
+  the control thread's fault halted the board (picture frozen, the DAC
+  repeating its last block).
 - **Nothing at fixed PSRAM addresses: buffers come from `psram_alloc`.**
   **Why:** the linker puts its own PSRAM section (the video layer's pool, the
   NPU runtime's blob copies) at 0x9000_0000, where the screenshot copy used to
@@ -1328,5 +1376,5 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   each on the Camera screen with both networks every frame (`nn hands 3`),
   no reset, fault or leak, frame times unchanged; its 2 dropped frames were
   Flight Deck's fade-in (see the settle in the fade invariant).
-- The shell holds 16 screens and 13 are used (Home Power listed only while
-  its monitor answers).
+- The shell holds 16 screens and 12 are used (Home Power listed only while
+  its monitor answers; Under the Hood removed 2026-11-20).

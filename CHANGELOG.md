@@ -27,12 +27,39 @@ behind the rules that came out of them.
   a tour on the PC through the companion (`run.cmd`; `--no-tour` refuses).
   While the remote is open on a phone the demo does not start by itself.
   `ctl.py tour` shows the tour as the board sees it.
+- **Function names in the firmware** (Zephyr's symbol table): a fault
+  prints its call trace with names on the console. The symbol table moves
+  read-only data in Zephyr's final link, which broke interrupt arguments
+  (the first such build hung at boot); `n6.cmd build` now fails any build
+  where that happens.
 
 ### Changed
 
 - **The board's description page moved from `/` to `/about`** (`/agent.md`
   and `/status.json` are unchanged); `/` is the remote. The web server's
   buffers moved to PSRAM: 138 KB of internal RAM free.
+- **The attract lap is 2 min 28 s** (was 2 min 38 s): Core Map takes one
+  more bar and the lap four fewer, now that Under the Hood is gone. The
+  lap's clip on the card is made again (`media/film/attract.py`, then
+  `tools/n6v.py upload media/out/_attract.n6v`); with the old clip the
+  screens take turns instead.
+- **The hand tracker's two test inputs are in the flash beside the
+  networks' weights, no longer in the firmware image** (261 KB of the image
+  slot). `tools/nn.py flash` writes them with the weights (`--tests`: only
+  them); until then `nn.py check` and `nn hands 2` and `3` report them
+  missing. The Camera screen is screen 10 now, Settings 9.
+
+### Removed
+
+- **The Under the Hood screen and its Home tile** (this firmware's threads
+  in 3D), and the `hoodt` control command, to make room in the image slot.
+  Its RAM, stack and thread figures are still at `ctl.py mem stacks svct`.
+
+### Fixed
+
+- **The host companion stopped when a board answered its discovery late**
+  (for example after pausing under a debugger): a Windows error on a
+  datagram longer than the read buffer.
 
 ## 2026-11-19, after v1.0.0
 

@@ -52,8 +52,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 from ctl import DEFAULT_HOST, close, send  # noqa: E402
+from tour import SCREENS  # noqa: E402
 
-CAMERA = 11
+CAMERA = SCREENS.index("camera")
 UNREACHABLE_LIMIT = 120.0
 FATAL = re.compile(r"FATAL|\*{3,}.*FAULT|Booting (Zephyr|MCUboot)|Halting system|Kernel panic")
 NOTE = re.compile(r"<err>|<wrn>")

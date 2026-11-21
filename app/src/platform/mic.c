@@ -71,7 +71,7 @@ static volatile uint32_t cap_fill, cap_left;
 
 /* ---- interrupts ---------------------------------------------------------- */
 
-static void dma_isr(const void *arg)
+static void mic_dma_isr(const void *arg)
 {
 	ARG_UNUSED(arg);
 	HAL_DMA_IRQHandler(&hdma);
@@ -209,7 +209,7 @@ static int dma_setup(void)
 	}
 	__HAL_LINKDMA(&hmdf, hdma, hdma);
 
-	IRQ_CONNECT(GPDMA1_Channel6_IRQn, 1, dma_isr, NULL, 0);
+	IRQ_CONNECT(GPDMA1_Channel6_IRQn, 1, mic_dma_isr, NULL, 0);
 	irq_enable(GPDMA1_Channel6_IRQn);
 	IRQ_CONNECT(MDF1_FLT0_IRQn, 1, mdf_isr, NULL, 0);
 	irq_enable(MDF1_FLT0_IRQn);

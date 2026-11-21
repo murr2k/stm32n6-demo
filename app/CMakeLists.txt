@@ -11,6 +11,20 @@ file(GLOB_RECURSE app_sources CONFIGURE_DEPENDS src/*.c)
 target_sources(app PRIVATE ${app_sources})
 target_include_directories(app PRIVATE src)
 
+# Zephyr's symbol table (CONFIG_SYMTAB) is generated from the first link and
+# filled in only in the final one, and its section lies before rodata: in the
+# final image everything after it moves up by the table's size (27.8 KB
+# here). The interrupt table (isr_tables.c) is generated from the same first
+# link with each handler's argument as a literal address, so an argument that
+# points into rodata points at something else in the final image: the board
+# hung at boot in the EXTI3 interrupt, whose line range (line_range_3, from
+# Zephyr's GPIO interrupt driver) was read from a table of doubles
+# (2026-11-20). Such arguments go to rom_start, ahead of the table;
+# tools/n6.py checks every build for arguments that moved.
+if(CONFIG_SYMTAB)
+  zephyr_linker_sources(ROM_START SORT_KEY zz_isr_args linker/isr_args.ld)
+endif()
+
 # The recorder (src/media/recorder.c) puts its own code in the path between
 # ST's encoder library and the Zephyr VENC driver's EWL layer, at link time,
 # so the Zephyr tree stays unmodified: the cache is cleaned as the hardware
@@ -96,10 +110,6 @@ if(CONFIG_APP_NPU AND EXISTS ${ATON}/Npu/ll_aton/ll_aton.c AND EXISTS ${NN_DIR}/
   target_link_libraries(app PRIVATE ${ATON}/Lib/GCC/ARMCortexM55/NetworkRuntime1201_CM55_GCC.a)
   target_include_directories(app PRIVATE ${nn_incs})
   target_compile_definitions(app PRIVATE APP_HAS_NPU=1 ${nn_defs})
-  # test inputs made by tools/nn.py testimg, for tools/nn.py check
-  if(EXISTS ${NN_DIR}/test/palm_in.bin AND EXISTS ${NN_DIR}/test/hand_in.bin)
-    generate_inc_file_for_target(app ${NN_DIR}/test/palm_in.bin ${ZEPHYR_BINARY_DIR}/include/generated/nn_palm_in.inc)
-    generate_inc_file_for_target(app ${NN_DIR}/test/hand_in.bin ${ZEPHYR_BINARY_DIR}/include/generated/nn_hand_in.inc)
-    target_compile_definitions(app PRIVATE APP_NN_TEST_INPUT=1)
-  endif()
+  # the test inputs (tools/nn.py testimg) are in the flash beside the weights
+  # (tools/nn.py flash), not in the image: nn_weights.h says where
 endif()

@@ -6,8 +6,8 @@ with hand tracking on the NPU, built on Zephyr 4.4.0 and LVGL 9.5. The
 audience is engineers and UX designers, so the rules are: lock to the panel
 refresh, no fake data, and show the measurements.
 
-> **Status: thirteen screens, video with sound, and camera hand tracking work on
-> hardware** (the thirteenth, Home Power, only while the board can reach the
+> **Status: twelve screens, video with sound, and camera hand tracking work on
+> hardware** (the twelfth, Home Power, only while the board can reach the
 > internet). Every screen holds the panel's 59.98 Hz with no dropped frames
 > in the automated run. A 48 s original film plays at 30 fps with stereo sound
 > from flash or from a microSD card, and clips upload to the card over
@@ -28,7 +28,7 @@ refresh, no fake data, and show the measurements.
 | | |
 |---|---|
 | ![Home](docs/img/home.png) | ![Two hands tracked on the NPU, over the live camera](docs/img/camera-hands.png) |
-| ![Signal Lab](docs/img/signal-lab.png) | ![Under the Hood: the firmware's threads in 3D](docs/img/under-the-hood.png) |
+| ![Signal Lab](docs/img/signal-lab.png) | ![Flight Deck](docs/img/flight-deck.png) |
 | ![Explorer](docs/img/explorer.png) | ![The film playing in Cinema](docs/img/film.png) |
 | ![Core Map: a PC's processors in 3D](docs/img/core-map.png) | ![A clip playing from the microSD card, with the stats panel](docs/img/cinema-card-playing.png) |
 
@@ -227,8 +227,8 @@ with injected multi-touch (three contacts, pinches, a flick, an orbit, an
 edge swipe), plays the theremin (a glide, a chord, lifts: the sound recorded
 and checked for steps, a held touch's pitch and level against its column
 and height, a finger off the spectrum, the SOUND switch), checks that 80 touch releases never change the screen, enters
-every screen through a transition (27 changes, six of them from a playing
-film into Under the Hood), plays the film from flash and from the card, opens and
+every screen through a transition (26 changes, six of them from a playing
+film into Explorer), plays the film from flash and from the card, opens and
 closes a clip three times, records what the DAC gets during a drag on the
 slider, a pause and a resume and counts the discontinuities in it, uploads a
 generated test clip to the card while
@@ -300,7 +300,6 @@ captures/               screenshots and logs pulled off the board (not committed
 | Specimen | Type scale, colour tokens, motion test | 1.9 / 3.1 ms |
 | Settings | The board's address (DHCP or fixed, entered on a keypad, applied at once, kept on the card), a QR code for the board's own description at http://<board>/, and which PC is feeding Host Link and Core Map | 1.8 / 2.0 ms |
 | Camera | The IMX335 (B-CAMS-IMX module, 5 Mpx) live at 30 fps: demosaiced and scaled to 592 x 444 by the DCMIPP, auto exposure and white balance by ST's ISP middleware, copied to the display by DMA2D (3 ms). Over it, hand tracking on the NPU, up to two hands (see [Hand tracking on the NPU](#hand-tracking-on-the-npu)): each hand's 21 points and their bones are drawn on the picture in its own colour, its gesture is read from the joint angles (fist, open hand, pointing, victory, three, four, thumbs up and down, thumb out, OK, rock on, call me, I love you in American Sign Language, the bird, or a finger count), and the side panel names each hand (left or right, and how sure the network is). Beside it the NPU's time per network, how many hands and at what rate, and what the ISP chose. The camera and the NPU run only while the screen is up | 5.0 / 8.7 ms |
-| Under the Hood | This firmware, measured live from Zephyr's own statistics: a 3D plot with one ribbon per thread (the eight busiest) showing its share of the CPU over the last 12 s on a logarithmic height axis from 0.01 % to 100 %, so a service thread at a twentieth of a per cent is as readable as the UI thread at fifty (drag to orbit, pinch to zoom, tap a ribbon, tap SCALE for linear axes), every thread with its CPU share and stack high-water mark, and the static RAM, LVGL pool, kernel heap and PSRAM in use. Interrupt time counts to the thread it interrupted | 7.8 / 12.6 ms |
 | Home Power | A household's electricity from its energy monitor over the internet (see [Home Power, over the internet](#home-power-over-the-internet)): the power now on a gauge with the last 24 hours' range, the 24-hour figures, a chart of 1 hour to 30 days with each bucket's mean and its minimum-to-maximum band, the bill so far and its forecast. Listed on Home and in the swipes only while the monitor answers | 1.1 / 1.2 ms (it redraws when figures arrive); its first frame about 10 ms |
 
 Frame time is all UI-thread work for a frame (screen logic, layout, render),
@@ -354,9 +353,10 @@ a frame there. The swap itself (one screen's hide, the next one's show)
 runs just after a frame has been presented, so its time comes out of the
 budget of the frame that builds the new screen; `ctl.py stats` reports it
 as `tail_worst_us`, and `ctl.py swtrace` shows where every frame of the
-last transition spent its time. Under the Hood's first frame after leaving
-a playing film missed a refresh that way about once in three attract laps,
-unseen in the dark but counted; its side panel now waits one frame.
+last transition spent its time. A screen's first frame after leaving a
+playing film (Under the Hood's, a screen since removed) missed a refresh
+that way about once in three attract laps, unseen in the dark but counted;
+the tour now makes the film to Explorer switch six times.
 
 Frames are swapped by the application, not by Zephyr's display driver. The
 driver cleans the data cache line by line over the whole 1.5 MB buffer
@@ -366,14 +366,14 @@ clean of the whole cache takes 25 µs, and a frame finished during the
 blanking still makes the next refresh: about 1 ms more for every frame on
 every screen.
 
-After 90 seconds without a touch the demo runs itself, in a lap of 2 min 38 s
+After 90 seconds without a touch the demo runs itself, in a lap of 2 min 28 s
 set to music. It opens with the film, *N6: the film*, and cuts at 0:43 to the
 demos, each arriving on a bar line of the film's music, which plays on under
 all of them: Home, Flight Deck, Signal Lab (a ghost flies a 1950s saucer on
 the theremin, quietly, over a break in the music), four bars of the Camera
 screen tracking two hands and naming their gestures (a recording the board
 made of itself, marked as one: the lap never turns the camera on), Explorer
-zooming, Host Link, Core Map and Under the Hood. Then the film's last scene comes back
+zooming, Host Link and Core Map. Then the film's last scene comes back
 with its musical coda, end titles follow (who made it, and how: the demos run
 live on the board; the film and its score are code, every frame drawn and
 every note synthesized by a script, no samples or stock art), and after two
@@ -712,9 +712,9 @@ locally:
 ```powershell
 .\.venv\Scripts\python.exe tools\nn.py fetch      # the two models, SHA-256 pinned
 .\.venv\Scripts\python.exe tools\nn.py generate   # convert with ST Edge AI into build-nn\ (not committed)
-.\.venv\Scripts\python.exe tools\nn.py testimg    # MediaPipe's test picture, built into the firmware as a test input
+.\.venv\Scripts\python.exe tools\nn.py testimg    # MediaPipe's test picture, the two networks' test inputs
 .\n6.cmd go --app-only                            # the build picks build-nn\ up
-.\.venv\Scripts\python.exe tools\nn.py flash      # the weights into the flash (stops the board); then n6.cmd run
+.\.venv\Scripts\python.exe tools\nn.py flash      # the weights and test inputs into the flash beside the image (stops the board); then n6.cmd run
 .\.venv\Scripts\python.exe tools\nn.py check      # both networks on the board against the original models on the PC
 ```
 
@@ -722,7 +722,7 @@ And to see what it does:
 
 ```powershell
 .\.venv\Scripts\python.exe tools\ctl.py "nn hands"            # hands tracked, gestures, presence, handedness; palms found, confirmed, lost, merged
-.\.venv\Scripts\python.exe tools\ctl.py "screen 11" "nn hands 2"   # track the built-in test picture: thumbs up expected
+.\.venv\Scripts\python.exe tools\ctl.py "screen 10" "nn hands 2"   # track the built-in test picture: thumbs up expected
 .\.venv\Scripts\python.exe tools\ctl.py "nn hands 3"          # the picture twice, one copy mirrored: two thumbs up, opposite hands
 .\.venv\Scripts\python.exe tools\ctl.py "nn cfg 1 500"        # one hand at most (2: two); look for another every 500 ms
 .\.venv\Scripts\python.exe tools\nn.py watch 20               # the tracker's counters over 20 s
@@ -767,10 +767,9 @@ presence 0.50 against 0.01.
 | Web remote | Working (2026-11-19): a phone opens `http://<board>/` (the Settings QR code), switches screens, runs and stops the demo, plays clips and watches frame rate and dropped frames; an answer takes 2 to 21 ms; a minute of its polling on Explorer cost 0 frames. Firmware update over the network: not started |
 | microSD media library | Working: FAT32/exFAT, the card in High Speed mode at 48 MHz, upload over Ethernet at 3 to 4 MB/s with CRC, streamed playback with 0 stalls in the automated run. The card can be taken out and put back while the demo runs (checked by hand during playback, the attract lap and an upload: the clip closes in about 0.2 s, the card is back in about 0.6 s, 0 dropped frames), and a card taken out at any moment leaves the clips and settings on it whole. Not built: a formatter, fast seeks in files of a gigabyte or more |
 | Core Map | Working: 22 logical processors of the test PC, no dropped frame while orbiting and zooming under full load |
-| Under the Hood | Working: no dropped frame on any of the five height axes in the automated run. On a linear axis the UI thread hid everything else (seen on the panel), hence the logarithmic default. The screen measures itself: with it showing, the UI thread takes about a third more of the CPU |
 | Cinema slider | A crash while scrubbing (picture frozen, a repeating noise) was reported once. Probable cause, found in a console log of real touches: Zephyr's input queue (16 events, drained by a thread at the lowest priority) dropped events, a lost release left the slider pressed, and the player then seeks to the same frame 60 times a second. Touch callbacks now run in the driver's context with no queue. Checked on the panel afterwards: five fingers on Touch Lab register and release cleanly with no event dropped, and the slider no longer hangs the film. Injected touches bypass the driver, which is why 2400 fuzzed actions never showed it. The slider's sound was rough as well (every UI frame restarted it at the finger); it is now short pieces of the clip cross-faded into each other while the finger moves and silence while it rests, measured free of steps and confirmed by ear on the panel. Other defects found on the way are fixed: a drag starting near a screen edge closed the film, seeks were counted as dropped frames and as stalls, Back could cost the UI a frame, the touch target was 44 px |
 | Screen transitions | Working: hardware fade and settle, no frame dropped in the automated run |
-| Attract mode | Working: starts after 90 s idle; a lap of 2 min 38 s set to the film's music (the film to 0:43, seven demos on its bar lines and four bars of recorded hand tracking, marked as recorded, the film's coda, end titles), the theremin's ghost quietly over a break; the board's own recording of it matches the clip's sound sample for sample, 0 dropped frames in two laps and in the tour. Without the clip on the card the screens take turns as before; a hand tracked on the Camera screen counts as someone using it |
+| Attract mode | Working: starts after 90 s idle; a lap of 2 min 28 s set to the film's music (the film to 0:43, six demos on its bar lines and four bars of recorded hand tracking, marked as recorded, the film's coda, end titles), the theremin's ghost quietly over a break; the board's own recording of it matches the clip's sound sample for sample, 0 dropped frames in two laps and in the tour. Without the clip on the card the screens take turns as before; a hand tracked on the Camera screen counts as someone using it |
 | Theremin | Working: pitch and level as asked (a touch at the 734 Hz, -10 dB point plays 734 Hz at -10 dB), 0 discontinuities through glides, chords and lifts, touch to sound 3.8 to 4.8 ms (11 to 21 ms with the earlier 512-frame blocks), 0 dropped frames while playing (worst 8.5 ms). A finger slid off the top keeps its level, one that comes down off the spectrum does not play, SOUND off sends the DAC nothing (peak 0), all checked by the tour. Played by hand by the user on 2026-11-17; the loudness taper, the level hold and the SOUND switch came from that |
 | Soak test | Passed, 9 hours on 2026-11-17 (`tools/soak.py`: each hour 40 minutes of attract mode and 20 on the Camera screen with both networks every frame, the board polled every second): no reset, no fault, no console warning; LVGL pool, kernel heap and PSRAM the same in the last hour as in the second (86.4 KB, 0 B, 13.8 MB); no thread's stack high-water mark moved by more than 120 B; frame time per screen within 0.07 ms of the first hour. 2 dropped frames in 1251 screen switches, both in Flight Deck's fade-in at the same point of the lap, traced and fixed (screen transitions above) |
 

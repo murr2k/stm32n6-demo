@@ -596,11 +596,6 @@ static int handle(char *line, char *out, size_t out_len)
 		return snprintf(out, out_len, "mode=%s ip=%s mask=%s gw=%s stored=%s recovery=%d store=\"%s\"\n",
 				ns.fixed ? "static" : "dhcp", ns.ip, ns.mask, ns.gw, cfg.fixed ? "static" : "dhcp",
 				netcfg_recovery(), netcfg_store_state());
-	} else if (!strcmp(cmd, "hoodt")) {
-		uint32_t t[4];
-
-		hood_timing(t, true);
-		return snprintf(out, out_len, "sample_us=%u stack_us=%u net_us=%u side_us=%u\n", t[0], t[1], t[2], t[3]);
 	} else if (!strcmp(cmd, "powert")) {
 		uint32_t t[4];
 

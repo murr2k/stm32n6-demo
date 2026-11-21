@@ -30,7 +30,6 @@ static const struct screen *const screens[] = {
 	&screen_coremap,
 	&screen_cinema,
 	&screen_specimen,
-	&screen_hood,
 	&screen_settings,
 	&screen_camera,
 	&screen_power, /* listed only while the energy monitor answers */
@@ -49,7 +48,7 @@ static const struct screen *const screens[] = {
  * Without the clip (no card), or with one of another length, the screens
  * take turns as before. */
 #define BAR_MS 2400
-#define LAP_MS (56 * BAR_MS + 22700)
+#define LAP_MS (52 * BAR_MS + 22700)
 
 static const struct shell_step lap_steps[] = {
 	{&screen_cinema, 0},              /* the film to 0:43.2 */
@@ -60,8 +59,7 @@ static const struct shell_step lap_steps[] = {
 	{&screen_explorer, 31 * BAR_MS},
 	{&screen_hostlink, 39 * BAR_MS},
 	{&screen_coremap, 43 * BAR_MS},
-	{&screen_hood, 49 * BAR_MS},
-	{&screen_cinema, 54 * BAR_MS},    /* the film's last scene, the coda, the end titles */
+	{&screen_cinema, 50 * BAR_MS},    /* the film's last scene, the coda, the end titles */
 };
 
 static bool lap_available(void)

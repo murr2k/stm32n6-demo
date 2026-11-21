@@ -45,18 +45,21 @@ BUILD_ASSERT(NN_ACT_BASE == PSRAM_NPU_BASE, "psram.h and tools/nn.py place the N
 BUILD_ASSERT(NN_NPU_RAM_BASE == GFX_FB_B && NN_NPU_RAM_END == GFX_FB_B + GFX_FB_BYTES,
 	     "the networks' working memory is not frame buffer B");
 
-#if defined(APP_NN_TEST_INPUT)
-/* build-nn/test: a MediaPipe test picture letterboxed for the palm detector, and
- * the hand cut out of it for the landmark network (tools/nn.py testimg) */
-static const uint8_t test_palm[] = {
-#include "nn_palm_in.inc"
+#if defined(NN_TEST_PALM_AT)
+/* A MediaPipe test picture letterboxed for the palm detector, and the hand cut
+ * out of it for the landmark network (tools/nn.py testimg). They are in the
+ * flash beside the weights (tools/nn.py flash), read in place: 261 KB that the
+ * image slot does not carry. Checked against their CRC on first use. */
+BUILD_ASSERT(NN_TEST_PALM_SIZE == STAI_PALM_DETECTOR_IN_1_SIZE_BYTES, "test input does not fit the network");
+BUILD_ASSERT(NN_TEST_HAND_SIZE == STAI_HAND_LANDMARK_IN_1_SIZE_BYTES, "test input does not fit the network");
+static const struct {
+	uintptr_t at;
+	uint32_t size, crc;
+} tests[NPU_NETS] = {
+	[NPU_PALM] = {NN_TEST_PALM_AT, NN_TEST_PALM_SIZE, NN_TEST_PALM_CRC},
+	[NPU_HAND] = {NN_TEST_HAND_AT, NN_TEST_HAND_SIZE, NN_TEST_HAND_CRC},
 };
-static const uint8_t test_hand[] = {
-#include "nn_hand_in.inc"
-};
-BUILD_ASSERT(sizeof(test_palm) == STAI_PALM_DETECTOR_IN_1_SIZE_BYTES, "test input does not fit the network");
-BUILD_ASSERT(sizeof(test_hand) == STAI_HAND_LANDMARK_IN_1_SIZE_BYTES, "test input does not fit the network");
-static const uint8_t *const test_input[NPU_NETS] = {test_palm, test_hand};
+static int8_t test_state[NPU_NETS]; /* 0 not checked yet, 1 in the flash, -1 missing */
 #endif
 
 struct net {
@@ -170,8 +173,16 @@ const char *npu_error(void)
 
 const uint8_t *npu_test_input(enum npu_net net)
 {
-#if defined(APP_NN_TEST_INPUT)
-	return test_input[net];
+#if defined(NN_TEST_PALM_AT)
+	if (test_state[net] == 0) {
+		bool ok = crc32_ieee((const uint8_t *)tests[net].at, tests[net].size) == tests[net].crc;
+
+		test_state[net] = ok ? 1 : -1;
+		if (!ok) {
+			LOG_WRN("%s: test input missing from the flash (tools/nn.py flash)", nets[net].name);
+		}
+	}
+	return test_state[net] > 0 ? (const uint8_t *)tests[net].at : NULL;
 #else
 	return NULL;
 #endif
@@ -282,16 +293,17 @@ static void do_job(void)
 		return;
 	}
 	if (job.kind == JOB_TEST) {
-#if defined(APP_NN_TEST_INPUT)
 		struct net *n = &nets[job.net];
+		const uint8_t *t = npu_test_input(job.net);
 
-		memcpy(n->in, test_input[job.net], n->in_size);
+		if (t == NULL) {
+			job.ret = -ENOENT;
+			return;
+		}
+		memcpy(n->in, t, n->in_size);
 		/* before the run: the network reuses its input's memory as it goes */
 		job.in_crc = crc32_ieee(n->in, n->in_size);
 		job.ret = npu_infer(job.net, &job.us);
-#else
-		job.ret = -ENOENT;
-#endif
 		return;
 	}
 	if (job.kind == JOB_TRACE) {

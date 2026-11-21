@@ -75,6 +75,50 @@ def slot0_offset(build: Path) -> int:
     return int(m.group(1), 16)
 
 
+def _symbols(elf: Path) -> list[tuple[int, int, str]] | None:
+    """(address, size, name) of the sized symbols of ELF, by address, via the Zephyr SDK's nm."""
+    roots = [os.environ.get("ZEPHYR_SDK_INSTALL_DIR", "")] + glob.glob(str(Path.home() / "zephyr-sdk-*"))
+    nm = next((p for r in roots if r for p in [Path(r) / "gnu" / "arm-zephyr-eabi" / "bin" / "arm-zephyr-eabi-nm.exe"]
+               if p.exists()), None)
+    if nm is None:
+        return None
+    out = subprocess.run([str(nm), "-S", "-n", str(elf)], capture_output=True, text=True).stdout
+    return [(int(f[0], 16), int(f[1], 16), f[3]) for f in (ln.split() for ln in out.splitlines()) if len(f) == 4]
+
+
+def check_isr_args(build: Path) -> None:
+    """Every interrupt handler and argument in isr_tables.c must still be what it was.
+
+    Zephyr generates isr_tables.c from the first link, with literal addresses,
+    and the final link can move things: CONFIG_SYMTAB fills in a section before
+    rodata only in the final link, and an argument that pointed into rodata then
+    pointed at other data (the board hung at boot in the EXTI3 interrupt,
+    2026-11-20; app/CMakeLists.txt). A build where that happens fails here.
+    """
+    z = app_dir(build) / "zephyr"
+    pre = sorted(z.glob("zephyr_pre*.elf"))
+    tables = z / "isr_tables.c"
+    if not pre or not tables.exists():
+        return
+    first, final = _symbols(pre[-1]), _symbols(z / "zephyr.elf")
+    if first is None or final is None:
+        print("[n6] warning: no Zephyr SDK nm: interrupt arguments not checked")
+        return
+    where: dict[str, set[int]] = {}
+    for addr, _, name in final:
+        where.setdefault(name, set()).add(addr)  # a static's name can occur more than once
+    bad = []
+    for arg in sorted({int(x, 16) for x in re.findall(r"\{\(const void \*\)(0x[0-9a-f]+), \(ISR\)(?:0x[0-9a-f]+)\}",
+                                                       tables.read_text())} - {0}):
+        hit = next(((addr, name) for addr, size, name in first if addr <= arg < addr + size), None)
+        if hit and hit[0] not in where.get(hit[1], {hit[0]}):
+            now = ", ".join(f"0x{x:08x}" for x in sorted(where[hit[1]]))
+            bad.append(f"0x{arg:08x} ({hit[1]}+{arg - hit[0]}, in the final image at {now})")
+    if bad:
+        sys.exit("[n6] interrupt arguments moved between the first and the final link (isr_tables.c "
+                 "is wrong; see app/CMakeLists.txt, CONFIG_SYMTAB):\n  " + "\n  ".join(bad))
+
+
 def cmd_build(a: argparse.Namespace) -> None:
     env = dict(os.environ)
     env["PATH"] = env["PATH"] + os.pathsep + str(CUBE_BIN)  # STM32_SigningTool_CLI
@@ -101,6 +145,7 @@ def cmd_build(a: argparse.Namespace) -> None:
     for ln in text.splitlines():
         if re.search(r"^\s+(FLASH|RAM|PSRAM|AXISRAM\w*|\w*_REGION):|warning:", ln):
             print(ln)
+    check_isr_args(a.build)
     print(f"[n6] build ok in {time.time() - t0:.0f} s")
 
 

@@ -60,7 +60,10 @@ BX, BY = (VW - 800 * SCALE) // 2, (VH - 480 * SCALE) // 2   # the panel picture:
 BG0 = (8, 12, 18)                          # the board's C_BG0, also the layer's background in a fade
 REFRESH_HZ = 59.977
 TAKE = ROOT / "captures" / "rec" / "video-lap-20261118"
+TAKE_TITLES_BAR = 56                       # the take's lap (56 bars, with Under the Hood): its end titles' bar;
+                                           # attract.lap() is today's lap (52 bars since 2026-11-20)
 CLIP_WAV = OUT / "n6_attract.wav"          # the lap clip's sound (attract.py): places the clip on the take's clock
+                                           # by its first sound, which every lap clip shares (the film's music)
 NAMES = ["Home", "Flight Deck", "Signal Lab", "Explorer", "Touch Lab", "Host Link", "Core Map", "Cinema",
          "Specimen", "Under the Hood", "Settings", "Camera"]
 # the shell's screen change (app/src/ui/shell.c): fade out, dark hold, fade in while settling 10 px
@@ -201,9 +204,8 @@ class Timeline:
         # the clip on the take's clock: its first sound, and the DAC's real rate (clip time is 48 kHz)
         self.speed = score.SR / take.rate
         self.clip0 = onset(take.wav) - onset(CLIP_WAV) * self.speed
-        starts = dict(attract.lap()[3])
         self.t_a = take.times[take.lap0]                       # the film's first picture
-        self.t_b = self.clip0 + starts["end titles"] * BAR * self.speed   # the coda's end
+        self.t_b = self.clip0 + TAKE_TITLES_BAR * BAR * self.speed   # the coda's end
         self.how_v = INTRO_S + self.t_b - self.t_a
         self.takeit_v = self.how_v + (HOW_BARS + 6 * DIAG_BARS) * BAR
         self.end_v = self.takeit_v + TAKEIT_BARS * BAR

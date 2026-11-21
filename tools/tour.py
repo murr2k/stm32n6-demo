@@ -71,7 +71,7 @@ def wait(host: str, secs: float) -> None:
     while (left := end - time.monotonic()) > 0:
         time.sleep(min(5.0, left))
         send(host, ["tour alive"])
-SCREENS = ["home", "deck", "siglab", "explorer", "touchlab", "hostlink", "coremap", "cinema", "specimen", "hood", "settings", "camera",
+SCREENS = ["home", "deck", "siglab", "explorer", "touchlab", "hostlink", "coremap", "cinema", "specimen", "settings", "camera",
            "power"]  # Home Power: on Home and in the swipes only while the energy monitor answers
 
 
@@ -520,18 +520,20 @@ def transition_test(host: str, film: int = 6) -> None:
     """Screen changes: the fade is done by the LTDC, so none may cost a frame.
 
     Every screen is entered at least once (the Camera screen lends and takes
-    back a frame buffer on the way), and Under the Hood also straight from a
-    playing film: the switch itself (closing the player) runs after a present,
-    outside the next frame's render time but inside its budget, and the frame
-    that builds Under the Hood is among the heaviest. Attract mode makes that
-    switch on every lap; it dropped a frame on about one in three.
+    back a frame buffer on the way), and Explorer also straight from a playing
+    film: the switch itself (closing the player) runs after a present, outside
+    the next frame's render time but inside its budget, and the frame that
+    builds Explorer is the heaviest first frame left (LVGL 10 to 13.3 ms in
+    attract laps). Until 2026-11-20 this was Under the Hood (removed), whose
+    first frame after a film dropped a frame on about one lap in three.
     """
-    cinema, hood = SCREENS.index("cinema"), SCREENS.index("hood")
+    cinema, explorer = SCREENS.index("cinema"), SCREENS.index("explorer")
     send(host, ["screen 0"])
     time.sleep(1.5)
     send(host, ["reset"])
     before = stats(host)
-    order = [1, 2, 3, 5, 6, 0, 7, 4, 1, 0, 8, 9, 10, 11, 0]
+    order = [SCREENS.index(n) for n in ("deck", "siglab", "explorer", "hostlink", "coremap", "home", "cinema",
+                                        "touchlab", "deck", "home", "specimen", "settings", "camera", "home")]
     for i in order:
         send(host, [f"screen {i}"])
         time.sleep(0.9)
@@ -540,10 +542,10 @@ def transition_test(host: str, film: int = 6) -> None:
         time.sleep(1.0)
         send(host, ["play 0"])
         time.sleep(3.0)
-        send(host, [f"screen {hood}"])
+        send(host, [f"screen {explorer}"])
         time.sleep(1.0)
     s = stats(host)
-    print(f"transitions: {len(order) + 2 * film} screen changes ({film} from a playing film into Under the Hood), "
+    print(f"transitions: {len(order) + 2 * film} screen changes ({film} from a playing film into Explorer), "
           f"frame worst {s['render_worst_us'] / 1000:.2f} ms, switch tail worst {s.get('tail_worst_us', 0) / 1000:.2f} ms, "
           f"dropped {int(s['dropped'] - before['dropped'])}")
 

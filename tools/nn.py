@@ -4,9 +4,10 @@
   nn.py fetch      download the models (pinned commit, SHA-256 checked) to build-nn/models
   nn.py generate   convert them with ST Edge AI for the N6 into build-nn/<name>/, and
                    write build-nn/nn_weights.h (where each network's weights are, and their CRC)
-  nn.py testimg    fetch MediaPipe's hand test pictures, make the palm detector's test input
-                   (build-nn/test/palm_in.bin, built into the firmware when present)
-  nn.py flash      write the weights to the NPU weight region of the flash (stops the board)
+  nn.py testimg    fetch MediaPipe's hand test pictures, make the two networks' test inputs
+                   (build-nn/test/palm_in.bin, hand_in.bin) and add their CRCs to nn_weights.h
+  nn.py flash [--tests]   write the weights and the test inputs to the NPU weight region of the
+                   flash (stops the board); the firmware reads both in place
   nn.py check      run the palm detector on the board's test input and compare its outputs
                    with the original model run on the PC (TFLite, from ST Edge AI's Python)
   nn.py inputs     save what the hand tracker's two networks last saw (build-nn/test/live_*.png)
@@ -66,6 +67,8 @@ NPU_RAM_END = 0x343C0000
 # what ST's default ratio of 5 predicts, so the converter is told 30 and keeps hot data out
 PSRAM_FREQ_RATIO = 30.0
 WEIGHTS_REGION = (0x75800000, 0x77000000)
+# the test inputs (testimg), after the hand landmarks' window: read in place by the firmware
+TESTS = {"palm": ("palm_in.bin", 0x76000000), "hand": ("hand_in.bin", 0x76020000)}
 
 NETS = {
     "palm_detector": {
@@ -85,6 +88,13 @@ NETS = {
         "args": ["--input-data-type", "uint8"],  # input placed by the converter, on-chip
     },
 }
+
+
+def camera_screen() -> str:
+    """The control command that opens the Camera screen (the NPU's memory is lent while it shows)."""
+    from tour import SCREENS
+
+    return f"screen {SCREENS.index('camera')}"
 
 
 def model_path(name: str) -> Path:
@@ -134,8 +144,9 @@ def mempool(name: str) -> dict:
 
 
 def write_header() -> None:
-    """build-nn/nn_weights.h: the firmware checks the weights against these before a first run."""
-    lines = ["/* Written by tools/nn.py generate. Where each network's weights are in the flash. */",
+    """build-nn/nn_weights.h: the firmware checks the weights (and test inputs) against these."""
+    lines = ["/* Written by tools/nn.py generate and testimg. Where each network's weights, and the",
+             " * test inputs, are in the flash. */",
              "#ifndef NN_WEIGHTS_H", "#define NN_WEIGHTS_H", "",
              f"#define NN_ACT_BASE 0x{ACT_BASE:08x}u", f"#define NN_ACT_SIZE {ACT_KB * 1024}u",
              f"#define NN_NPU_RAM_BASE 0x{NPU_RAM[0][2]:08x}u", f"#define NN_NPU_RAM_END  0x{NPU_RAM_END:08x}u", ""]
@@ -145,6 +156,11 @@ def write_header() -> None:
         lines += [f"#define NN_{u}_WEIGHTS_AT   0x{n['weights_at']:08x}u",
                   f"#define NN_{u}_WEIGHTS_SIZE {len(w)}u",
                   f"#define NN_{u}_WEIGHTS_CRC  0x{zlib.crc32(w):08x}u", ""]
+    if all((OUT / "test" / f).exists() for f, _ in TESTS.values()):  # both, or none
+        for key, (fname, at) in TESTS.items():
+            b, u = (OUT / "test" / fname).read_bytes(), key.upper()
+            lines += [f"#define NN_TEST_{u}_AT   0x{at:08x}u", f"#define NN_TEST_{u}_SIZE {len(b)}u",
+                      f"#define NN_TEST_{u}_CRC  0x{zlib.crc32(b):08x}u", ""]
     lines.append("#endif")
     (OUT / "nn_weights.h").write_text("\n".join(lines) + "\n")
 
@@ -258,16 +274,24 @@ def cmd_testimg(_: argparse.Namespace) -> None:
     hand = rotated_crop(np.asarray(letterbox(pic, 768)), *roi, 224)
     Image.fromarray(hand).save(d / "hand_in.png")
     (d / "hand_in.bin").write_bytes(hand.tobytes())
-    print(f"{d}: palm_in.bin (192 x 192) and hand_in.bin (224 x 224, the hand the PC found) from {TEST_NAMES[0]}")
+    write_header()
+    print(f"{d}: palm_in.bin (192 x 192) and hand_in.bin (224 x 224, the hand the PC found) from {TEST_NAMES[0]};"
+          " to the board with nn.py flash, and rebuild the firmware (nn_weights.h has their CRCs)")
 
-def cmd_flash(_: argparse.Namespace) -> None:
+def cmd_flash(a: argparse.Namespace) -> None:
     import n6
 
+    files = [(name, OUT / name / "weights.bin", n["weights_at"]) for name, n in NETS.items()]
+    files += [(f"test input {key}", OUT / "test" / f, at) for key, (f, at) in TESTS.items()
+              if (OUT / "test" / f).exists()]
+    if a.tests:
+        files = [x for x in files if x[0].startswith("test")]
+    if not files:
+        sys.exit("[nn] nothing to write (nn.py testimg makes the test inputs)")
     n6.power_cycle()
-    for name, n in NETS.items():
-        w = OUT / name / "weights.bin"
-        print(f"[nn] writing {name}: {w.stat().st_size / 1e6:.2f} MB at {n['weights_at']:#x}")
-        out = n6.cli([*n6.CONNECT, "-el", str(n6.LOADER), "-d", str(w.resolve()), hex(n["weights_at"])])
+    for name, path, at in files:
+        print(f"[nn] writing {name}: {path.stat().st_size / 1e6:.2f} MB at {at:#x}")
+        out = n6.cli([*n6.CONNECT, "-el", str(n6.LOADER), "-d", str(path.resolve()), hex(at)])
         if "File download complete" not in out:
             print(out)
             sys.exit("[nn] flash failed")
@@ -342,7 +366,7 @@ def cmd_check(a: argparse.Namespace) -> None:
     from ctl import send
 
     # the NPU's memory is lent while the Camera screen shows; the tracker pauses meanwhile
-    send(a.host, ["screen 11"])
+    send(a.host, [camera_screen()])
     import time
 
     time.sleep(1.5)
@@ -357,7 +381,7 @@ def cmd_check(a: argparse.Namespace) -> None:
             sys.exit("the board did not run the test")
         f = dict(kv.split("=", 1) for kv in r.split()[1:])
         if int(f["in_crc"], 16) != zlib.crc32(inp.read_bytes()):
-            sys.exit(f"the board's input is not {inp} (rebuild the firmware after nn.py testimg)")
+            sys.exit(f"the board's input is not {inp} (after nn.py testimg: nn.py flash --tests, and rebuild)")
         ref = OUT / "test" / f"{name}_ref.npz"
         run_ref(name, inp, ref)
         z = np.load(ref)
@@ -400,7 +424,7 @@ def cmd_trace(a: argparse.Namespace) -> None:
 
     import time
 
-    send(a.host, ["screen 11"])
+    send(a.host, [camera_screen()])
     time.sleep(1.5)
     send(a.host, ["nn hands 0"])
     time.sleep(0.2)
@@ -595,7 +619,7 @@ def cmd_grab(a: argparse.Namespace) -> None:
     jobs = []
     for k in range(a.n):
         if "screen=11" not in send(a.host, ["where"])[0]:  # back from attract mode
-            send(a.host, ["screen 11"])
+            send(a.host, [camera_screen()])
             time.sleep(2)
         kv = lambda r: dict(t.split("=", 1) for t in r.split()[1:])  # noqa: E731
         n0 = int(kv(send(a.host, ["nn grab 1"])[0])["n"])
@@ -608,7 +632,7 @@ def cmd_grab(a: argparse.Namespace) -> None:
                 if time.time() - t0 > a.wait:
                     sys.exit(f"no palm found in {a.wait:.0f} s")
                 if "screen=11" not in send(a.host, ["where"])[0]:
-                    send(a.host, ["screen 11"])
+                    send(a.host, [camera_screen()])
                     time.sleep(2)
                 n0 = int(kv(send(a.host, ["nn grab 1"])[0])["n"])
             elif time.time() - t0 > 3 and int(g["n"]) == n0 and not a.hand:
@@ -669,7 +693,7 @@ def cmd_watch(a: argparse.Namespace) -> None:
 
     kv = lambda r: dict(t.split("=", 1) for t in r.split()[1:])  # noqa: E731
     if "screen=11" not in send(a.host, ["where"])[0]:
-        send(a.host, ["screen 11"])
+        send(a.host, [camera_screen()])
         time.sleep(2)
     first = last = kv(send(a.host, ["nn hands"])[0])
     t0 = time.time()
@@ -698,8 +722,11 @@ def main() -> None:
     ap.add_argument("--host", default=DEFAULT_HOST)
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name, fn in (("fetch", cmd_fetch), ("generate", cmd_generate), ("testimg", cmd_testimg),
-                     ("flash", cmd_flash), ("check", cmd_check), ("inputs", cmd_inputs)):
+                     ("check", cmd_check), ("inputs", cmd_inputs)):
         sub.add_parser(name).set_defaults(fn=fn)
+    sp = sub.add_parser("flash")
+    sp.add_argument("--tests", action="store_true", help="only the test inputs, not the weights")
+    sp.set_defaults(fn=cmd_flash)
     sp = sub.add_parser("trace")
     sp.add_argument("net", type=int, nargs="?", default=0, help="0 palm detector, 1 hand landmarks")
     sp.add_argument("--all", action="store_true", help="every block, not only those over 5 ms")

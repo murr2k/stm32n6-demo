@@ -22,7 +22,6 @@
  *   sdcard [out|in|auto]       the card watcher: slot switch, mounted, gone; act as if taken out or put in (testing)
  *   play <n>                   go to Cinema and open clip n
  *   netcfg [dhcp | static IP MASK [GW]]  the board's address: show, or change now (and store)
- *   hoodt                      Under the Hood: worst sampling, stack scan, network and side panel times, us
  *   ds                         Explorer's data set: in flash or generated, address, checksum
  *   hometiles <n>              Home: n placeholder tiles after the real ones
  *   home                       Home: tiles (and those that open a screen), pan position and range

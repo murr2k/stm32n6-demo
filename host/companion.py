@@ -230,7 +230,11 @@ def main() -> None:
                 s.sendto(pkt, (ip, PORT))
             try:
                 while True:
-                    data, addr = s.recvfrom(64)
+                    # 512, not the 12 a reply needs: a discovery answer (N6HA, ~170 bytes)
+                    # that comes late lands here too, and Windows raises WinError 10040 for a
+                    # datagram longer than the buffer (a board halted 4.7 s by a debugger
+                    # stopped the companion so)
+                    data, addr = s.recvfrom(512)
                     if len(data) < 8 or data[:4] != b"N6HR":
                         continue
                     if len(data) >= 12 and struct.unpack_from("<I", data, 8)[0]:

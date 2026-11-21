@@ -64,7 +64,7 @@ HOW = ("SCRIPTED TO THE MUSIC", "Every demo runs live on this board, in real tim
        "and every note synthesized by a script. No samples, no stock art.", "Thank you for watching")
 RECORDED = "Gestures"  # not a screen: Cinema shows the clip's picture, a recording of the Camera screen
 DEMOS = [("Home", 2), ("Flight Deck", 4), ("Signal Lab", 3), (RECORDED, 4), ("Explorer", 8),
-         ("Host Link", 4), ("Core Map", 6), ("Under the Hood", 5)]
+         ("Host Link", 4), ("Core Map", 7)]
 BREAK_UNDER = "Signal Lab"  # pad and bass only: the ghost plays the theremin over it
 GESTURES = OUT / "gestures.mkv"  # camera footage (the user's hands): never committed
 CAPTION = "RECORDED ON THIS BOARD"

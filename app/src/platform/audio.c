@@ -99,7 +99,7 @@ static volatile uint8_t refill_half;     /* half the DMA has just finished playi
 
 /* ---- interrupts ---------------------------------------------------------- */
 
-static void dma_isr(const void *arg)
+static void audio_dma_isr(const void *arg)
 {
 	ARG_UNUSED(arg);
 	HAL_DMA_IRQHandler(&hdma);
@@ -367,7 +367,7 @@ static int dma_setup(void)
 	}
 	__HAL_LINKDMA(&hsai, hdmatx, hdma);
 
-	IRQ_CONNECT(GPDMA1_Channel2_IRQn, 1, dma_isr, NULL, 0);
+	IRQ_CONNECT(GPDMA1_Channel2_IRQn, 1, audio_dma_isr, NULL, 0);
 	irq_enable(GPDMA1_Channel2_IRQn);
 	IRQ_CONNECT(SAI1_A_IRQn, 1, sai_isr, NULL, 0);
 	irq_enable(SAI1_A_IRQn);
