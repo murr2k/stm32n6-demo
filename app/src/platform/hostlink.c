@@ -22,6 +22,14 @@ LOG_MODULE_REGISTER(hostlink, LOG_LEVEL_INF);
 #define HL_PORT 5557
 #define HL_HDR  24
 
+/* The profiler's trace port, in the discovery answer of a zprof build only
+ * (zprof's bridge finds the board by it); the release build's answer is unchanged. */
+#ifdef CONFIG_ZPROF
+#define HL_PROF " prof=" STRINGIFY(CONFIG_ZPROF_TCP_PORT)
+#else
+#define HL_PROF ""
+#endif
+
 static struct hl_state st;
 static uint32_t last_seq;
 
@@ -68,7 +76,7 @@ static void hostlink_thread(void *p1, void *p2, void *p3)
 			net_get_status(&ns);
 			int len = snprintf(answer, sizeof(answer),
 					   "N6HA N6DK board=STM32N6570-DK ip=%s mac=%02x:%02x:%02x:%02x:%02x:%02x "
-					   "hostlink=%d ctl=5556 shot=5555 media=5558 http=80 fw=%s %s",
+					   "hostlink=%d ctl=5556 shot=5555 media=5558 http=80" HL_PROF " fw=%s %s",
 					   ns.ip, mac->addr[0], mac->addr[1], mac->addr[2], mac->addr[3], mac->addr[4],
 					   mac->addr[5], HL_PORT, __DATE__, __TIME__);
 

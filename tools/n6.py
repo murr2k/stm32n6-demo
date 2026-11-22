@@ -125,8 +125,15 @@ def cmd_build(a: argparse.Namespace) -> None:
     cmd = [str(WEST), "build", "--sysbuild", "-b", BOARD, "-d", str(a.build), str(a.app)]
     if a.pristine:
         cmd[2:2] = ["-p", "always"]
-    if a.cmake:
-        cmd += ["--", *a.cmake]
+    cmake = list(a.cmake)
+    if a.zprof:
+        z = a.zprof.resolve()
+        if not (z / "firmware" / "zprof" / "zephyr" / "module.yml").exists():
+            sys.exit(f"[n6] no zprof at {z} (west update fetches it into zprof/)")
+        cmake[:0] = [f"-Dapp_EXTRA_CONF_FILE={(z / 'integrations' / 'stm32n6-demo' / 'zprof.conf').as_posix()}",
+                     f"-Dapp_ZEPHYR_EXTRA_MODULES={(z / 'firmware' / 'zprof').as_posix()}"]
+    if cmake:
+        cmd += ["--", *cmake]
     t0 = time.time()
     proc = subprocess.run(cmd, cwd=ROOT, env=env, capture_output=True, text=True, errors="replace")
     text = proc.stdout + proc.stderr
@@ -249,6 +256,9 @@ def main() -> None:
     def add_build(sp):
         sp.add_argument("--app", type=Path, default=ROOT / "app")
         sp.add_argument("-p", "--pristine", action="store_true")
+        sp.add_argument("--zprof", type=Path, nargs="?", const=ROOT / "zprof", default=None, metavar="DIR",
+                        help="the zprof profiler build (build dir build-zprof unless -d): its module and "
+                             "conf from DIR (default: zprof/, fetched by west update)")
         sp.add_argument("cmake", nargs="*", help="extra CMake args, e.g. -DCONFIG_FOO=y")
 
     def add_flash(sp):
@@ -271,6 +281,8 @@ def main() -> None:
     sp.add_argument("--no-power-cycle", action="store_true"); sp.set_defaults(fn=cmd_go)
 
     a = p.parse_args()
+    if getattr(a, "zprof", None) and a.build == BUILD:
+        a.build = ROOT / "build-zprof"
     a.build = a.build if a.build.is_absolute() else ROOT / a.build
     a.fn(a)
 

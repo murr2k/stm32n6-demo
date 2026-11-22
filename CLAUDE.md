@@ -16,6 +16,7 @@ not to be modified from here.
 ```powershell
 .\n6.cmd go                 # build + flash + power-cycle + start + console
 .\n6.cmd go -p              # pristine; REQUIRED after adding any .overlay/.conf file
+.\n6.cmd go -p --zprof      # the zprof profiler build (build-zprof; module and conf from zprof/, which west update fetches after `west config manifest.group-filter -- +zprof`): README "Profiling with zprof"
 .\n6.cmd go --app-only      # do not reflash MCUboot
 .\n6.cmd run --secs 20 --until "regex"
 .\shot.cmd --host 192.168.254.86 -o captures\x.png

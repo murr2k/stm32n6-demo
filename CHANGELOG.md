@@ -5,6 +5,20 @@ release says so. Each line names what a user of the demo or of its tools
 would notice; the commit log has the detail, and `CLAUDE.md` the reasons
 behind the rules that came out of them.
 
+## 2026-11-22
+
+### Added
+
+- **Profiling with zprof** (README, "Profiling with zprof"): `west update`
+  fetches [zprof](https://github.com/murr2k/zprof) once the workspace opts in
+  (`west config manifest.group-filter -- +zprof`; nobody else downloads it)
+  and `n6.cmd go -p --zprof` makes the profiler build (`build-zprof`): every
+  thread switch, interrupt and kernel-object call, each frame as a job with
+  its margin, and the frame and audio counters every 100 ms, over the board's Ethernet
+  (tcp/5560, `prof=5560` in the discovery answer) to a dashboard in the
+  browser. No probe, no halt; the release build is unchanged. With the
+  bridge streaming through a full tour: 0 dropped frames, 0 audio underruns.
+
 ## 2026-11-21
 
 ### Added

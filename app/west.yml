@@ -5,6 +5,10 @@
 # Pinned to v4.4.0, the same tag the sibling STM32N6570-DK project boots.
 # STM32N6 support on main still churns; bump deliberately, not by default.
 manifest:
+  # Optional projects, fetched only when asked for:
+  #   west config manifest.group-filter -- +zprof   (then west update)
+  group-filter: [-zprof]
+
   remotes:
     - name: zephyrproject-rtos
       url-base: https://github.com/zephyrproject-rtos
@@ -42,6 +46,18 @@ manifest:
       revision: v0.4.0
       path: st/lib/zephyr-stm32-mw-isp
       submodules: true
+
+    # zprof (Apache-2.0): runtime tracing and timing analysis over the board's
+    # Ethernet, in the browser. Optional (group zprof, off by default: see
+    # group-filter above); only the profiler build uses it
+    # (`n6.cmd go -p --zprof`, build dir build-zprof). Its Zephyr module is in
+    # firmware/zprof, where module discovery does not look (it reads only
+    # <project>/zephyr/module.yml), so the release build is unchanged.
+    - name: zprof
+      url: https://github.com/murr2k/zprof
+      revision: v0.3.0
+      path: zprof
+      groups: [zprof]
 
   self:
     path: app

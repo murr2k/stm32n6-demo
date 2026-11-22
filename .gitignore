@@ -12,6 +12,10 @@ __pycache__/
 # ST's ISP middleware (licence SLA0044: must not be put under open-source
 # terms, so it is never committed here; west fetches it)
 /st/
+# zprof, the profiler (its own repository; west fetches it)
+/zprof/
+# Sferic, which zprof's dashboard imports from source (beside zprof/)
+/lightning/
 
 # Build outputs
 /build/
