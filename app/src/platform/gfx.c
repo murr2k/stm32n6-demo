@@ -181,6 +181,9 @@ static void trace_frame(uint32_t now)
 	if (streak && left < stats.margin_min_us) {
 		stats.margin_min_us = left;
 	}
+	if (streak) {
+		ZPROF_PLOT("frame.margin_us", left);   /* what margin_min_us is the least of */
+	}
 	recent_at = (recent_at + 1) % GFX_DROP_N;
 
 	struct gfx_trace_frame *f = &recent[recent_at];
