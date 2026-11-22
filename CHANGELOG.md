@@ -37,6 +37,15 @@ behind the rules that came out of them.
   0.95 ms, 65 % of its deadline in the worst case; no underrun had happened
   yet). The ring is now in internal RAM (85 ms, 16 KB): the microphone's
   longest run is 43 us and the refill's longest wait 0.28 ms.
+- **The network no longer runs ahead of the sound.** Zephyr's Ethernet
+  receive thread and TCP work queue shared the audio refill's priority; they
+  now run just below it and the microphone, still ahead of everything else.
+  zprof's analysis of the sound's deadlines, before and after: on Home the
+  microphone's slack went from 3 to 71 %, on the Camera screen the refill's
+  from -1 to 33 % and the microphone's from -35 to 34 %.
+- **The status bar redraws only what changed.** Its clock and frame rate were
+  set every 250 ms whether they had changed or not, and every 15th frame on
+  Home took 0.8 ms more for it; now the clock redraws once a second.
 
 ## 2026-11-21
 

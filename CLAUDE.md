@@ -191,8 +191,9 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   sized to their measured peaks: 718.6 KB, 121 KB left; 721.9 with the card
   watcher's 3 KB stack, 118 KB left; 702.2 (719,072 B) once the HTTP
   server's 20.5 KB of buffers went to PSRAM with the web remote, 138 KB
-  left; 695.2 (711,912 B) without Under the Hood, 2026-11-20, **145 KB
-  left**) (LVGL pool 192 KB,
+  left; 695.2 (711,912 B) without Under the Hood, 2026-11-20, 145 KB left;
+  711.3 (728,400 B) with the microphone's ring moved in from PSRAM,
+  2026-11-22, **129 KB left**; the zprof build takes 72 KB more) (LVGL pool 192 KB,
   peak 108 KB after a tour; kernel heap 16 KB, peak 140 B, getaddrinfo its
   only user; main stack 10 KB, 5.8 KB used; network buffers 128 KB, not yet
   measured; the card's two 32 KB I/O buffers; other stacks; the NPU's thread
@@ -1093,6 +1094,19 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   stalled access. In internal RAM: its longest run 43 us, the refill's
   longest wait 278 us (network receive), none over 0.5 ms. Check on the
   Camera screen with zprof (`zprof_bridge capture`, then `sched`).
+- **The Ethernet receive thread (`stm_eth`) and the TCP work queue
+  (`tcp_work`) run at `K_PRIO_COOP(4)` (prj.conf
+  `CONFIG_ETH_STM32_HAL_RX_THREAD_PRIO=4`, `CONFIG_NET_TCP_WORKER_PRIO=4`),
+  below the audio refill (`K_PRIO_COOP(2)`) and the microphone (3), still
+  cooperative and above every preemptible thread.** **Why:** at Zephyr's
+  default, 2, they shared the audio refill's priority and were both audio
+  threads' largest interference: a network burst could run ahead of a refill.
+  zprof's response-time analysis (60 s each, 2026-11-22), before and after:
+  Home, audio 44 to 76 % slack and microphone 3 to 71 %, every execution time
+  able to grow 4 % before and 21 % after; Camera screen, audio -1 to +33 %
+  and microphone -35 to +34 %. Its what-if had predicted it. What still
+  blocks the audio refill is network receive's traffic-class thread
+  (`rx_q[0]`, cooperative at -1, below it: up to about 0.25 ms once running).
 - **The first board's onboard microphone U13 delivered noise only; the
   replacement DK's hears (2026-11-17), so do not tune the firmware against
   a silent microphone: prove the chain first.**
@@ -1316,6 +1330,11 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 
 ## Open questions / known gaps
 
+- Zephyr is pinned to v4.4.0. Before any bump read `docs/zephyr-upgrade.md`
+  (a survey of upstream on 2026-11-22, not built): no workaround above can go
+  yet, a bump breaks the overlay's `&axisram1` and two camera calls, the board
+  now enables SAI1, GPDMA1, MDF1 and DMA2D (disable them in the overlay), and
+  timings move (branch cache, LVGL 9.6), so a full tour and a soak again.
 - Stand-alone boot (BOOT1 = L) works: tried by the user on 2026-11-15, the
   demo starts by itself after a reset (console: MCUboot from flash, then the
   application, network up 6.7 s after reset). A board that does not answer

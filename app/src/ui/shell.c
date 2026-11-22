@@ -109,6 +109,16 @@ static void layout_dots(void)
 	lv_obj_set_x(dot_row, GFX_W / 2 - (k * 14 - 6) / 2);
 }
 
+/* lv_label_set_text() redraws the label even when the text has not changed: the
+ * clock and the fps, set every 250 ms, cost Home 0.8 ms in every 15th frame
+ * (zprof, 2026-11-22). */
+static void set_if_changed(lv_obj_t *l, const char *text)
+{
+	if (strcmp(lv_label_get_text(l), text) != 0) {
+		lv_label_set_text(l, text);
+	}
+}
+
 static void update_bar(uint32_t now_ms)
 {
 	static uint32_t last;
@@ -126,10 +136,10 @@ static void update_bar(uint32_t now_ms)
 	uint32_t s = now_ms / 1000;
 
 	snprintf(buf, sizeof(buf), "%02u:%02u:%02u", (s / 3600) % 100, (s / 60) % 60, s % 60);
-	lv_label_set_text(bar_clock, buf);
+	set_if_changed(bar_clock, buf);
 
 	snprintf(buf, sizeof(buf), "%2u.%u fps", gs->fps_x10 / 10, gs->fps_x10 % 10);
-	lv_label_set_text(bar_fps, buf);
+	set_if_changed(bar_fps, buf);
 
 	net_get_status(&ns);
 	const char *ip = ns.have_ip ? ns.ip : (ns.link_up ? "dhcp..." : "no link");
