@@ -577,9 +577,11 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   (several minutes, 177 MB) SystemView spent minutes processing it, not
   responding, 5.4 GB in memory: record seconds, not minutes. Its `-start`
   sometimes opens the Recorder Configuration dialog instead of recording,
-  and every launch shows a licence notice to acknowledge. The tools
-  (`sysview.py`, `segger.py`, `ozone.py`, `winshot.ps1`, `app/sysview.conf`,
-  an attach-only Ozone project) are still uncommitted.
+  and every launch shows a licence notice to acknowledge. The tools:
+  `sysview.py` (record, report, shot; `app/sysview.conf` is the build),
+  `ozone.py` with the attach-only project `tools/n6demo.jdebug`, `segger.py`
+  (shared; the probe's serial is asked for each time, never stored) and
+  `winshot.ps1`; Ozone's per-user `*.jdebug.user` is ignored (absolute paths).
   Ozone was not retested after the blank screens were found; its attach
   froze the demo 0.7 s at SWD 20 MHz (it reads ~860 KB of code), and its
   default start (download and reset) breaks booting here. A halt of a few

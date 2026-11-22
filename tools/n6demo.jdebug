@@ -1,0 +1,77 @@
+/*********************************************************************
+*
+*  Ozone project for the STM32N6570-DK demo: ATTACH ONLY.
+*
+*  Ozone's usual start ("Download & Reset Program") writes the ELF into
+*  the flash and resets the chip. On this board that breaks booting:
+*  MCUboot only starts a signed image (the ELF has no image header, and
+*  writing it can erase the header's sector), a reset leaves the NOR
+*  flash in octal DTR mode (MCUboot then fails; only a power cycle clears
+*  it), and in development boot nothing starts the program after a reset.
+*  tools/n6.py is the only way to flash and start this board (n6.cmd go,
+*  n6.cmd run). So here:
+*
+*    - the start is Ozone's own attach (CM_ATTACH). Do not replace
+*      DebugStart with a bare Exec.Connect: J-Link's connect halts the
+*      core and only Ozone's attach lets it run again (tried: the demo
+*      stood still until Stop Debugging);
+*    - reset and download do nothing but say so in the console
+*      (TargetReset, TargetDownload; not a message box, which would hold
+*      a halted core until clicked), and the registers are never set from
+*      the ELF (AfterTargetReset, AfterTargetDownload);
+*    - semihosting is off: by default Ozone puts a vector catch on SVC,
+*      which Zephyr uses for oops and panic, so a fault would halt
+*      silently instead of printing its message;
+*    - no instruction trace: the trace pins on CN10 are the audio's SAI1
+*      pins (CLAUDE.md, the J-Trace note).
+*
+*  Attaching halts the core for a moment (J-Link's connect); never have
+*  Ozone connected while an n6.cmd command uses the ST-LINK.
+*  Open: Ozone.exe tools\n6demo.jdebug (Zephyr threads: View -> Zephyr).
+*
+**********************************************************************
+*/
+
+void OnProjectLoad (void) {
+  Project.SetDevice ("STM32N657X0");
+  Project.SetHostIF ("USB", "0");
+  Project.SetTargetIF ("SWD");
+  Project.SetTIFSpeed ("20 MHz");   /* at attach Ozone reads ~860 KB of code from the target */
+  Project.AddSvdFile ("$(InstallDir)/Config/CPU/Cortex-M55F.svd");
+  Project.AddSvdFile ("$(InstallDir)/Config/Peripherals/ARMv8M.svd");
+  Project.SetOSPlugin ("ZephyrPlugin");
+  Project.ConfigSemihosting ("ModeSVC=2,ModeBKPT=2,ModeBP=1");
+  Project.SetTraceSource ("None");
+  Debug.SetConnectMode (CM_ATTACH);
+  File.Open ("$(ProjectDir)/../build/app/zephyr/zephyr.elf");
+}
+
+/* Ozone's attach leaves the core halted on this chip: let the demo run on
+   once the attach is complete. Measured with Ozone V3.52 (2026-11-20):
+   halted 23 ms after the connect, resumed after Ozone's own startup work
+   (it reads ~860 KB of code from the target): the demo froze 2.8 s at SWD
+   4 MHz, 0.7 s at 20 MHz.
+   Ozone's log calls Debug.Continue "prohibited" in this handler, yet it
+   runs once the handler returns; if a later Ozone refuses it, press
+   Resume (F5) after attaching. Use Halt or a breakpoint to stop the
+   program on purpose. */
+void OnStartupComplete (void) {
+  if (Debug.IsHalted ()) {
+    Util.Log ("n6demo: attached; the program runs on");
+    Debug.Continue ();
+  }
+}
+
+void TargetReset (void) {
+  Util.Log ("n6demo: reset refused: a reset leaves the board in the boot ROM with its flash in octal mode. Use n6.cmd run (it power-cycles the board).");
+}
+
+void TargetDownload (void) {
+  Util.Log ("n6demo: download refused: MCUboot boots only signed images. Use n6.cmd go (or n6.cmd flash, then n6.cmd run).");
+}
+
+void AfterTargetReset (void) {
+}
+
+void AfterTargetDownload (void) {
+}

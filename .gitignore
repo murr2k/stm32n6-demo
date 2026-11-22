@@ -27,6 +27,9 @@ __pycache__/
 *.map
 *.lst
 
+# Ozone's per-user session state (window layout, absolute paths)
+*.jdebug.user
+
 # Generated media (rebuilt by tools/video); sources stay in git
 /media/out/
 /media/cache/

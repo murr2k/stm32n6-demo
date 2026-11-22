@@ -18,6 +18,15 @@ behind the rules that came out of them.
   (tcp/5560, `prof=5560` in the discovery answer) to a dashboard in the
   browser. No probe, no halt; the release build is unchanged. With the
   bridge streaming through a full tour: 0 dropped frames, 0 audio underruns.
+- **SEGGER SystemView and Ozone from the command line**, for a J-Link on
+  CN10: `tools/sysview.py record` checks that the board runs the SystemView
+  build (`app/sysview.conf` says how to make it), finds the RTT block, records
+  for the time asked and writes a per-thread report (`report`, `shot` for a
+  picture of the window); `tools/ozone.py` drives Ozone through its
+  automation socket with an attach-only project (`tools/n6demo.jdebug`:
+  Ozone's usual download and reset breaks booting on this board). The
+  probe's serial number is asked for each time, never stored. SystemView's
+  attach halts the core about 0.6 s; Ozone's about 0.7 s.
 
 ## 2026-11-21
 
