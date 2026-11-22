@@ -58,7 +58,12 @@ static DMA_QListTypeDef dma_queue;
 static MDF_FilterConfigTypeDef filter;
 
 static bool ok;
-static int32_t *ring; /* MIC_KEEP samples in PSRAM */
+/* MIC_KEEP samples in internal RAM (16 KB), never PSRAM: on the Camera screen
+ * one line fill from PSRAM waited up to 0.88 ms behind the NPU, and this
+ * cooperative thread held the audio output's refill all that time (zprof,
+ * 2026-11-22). Set by mic_init(): NULL means not started. */
+static int32_t ring_mem[MIC_KEEP] __aligned(32);
+static int32_t *ring;
 static volatile uint32_t total;
 static volatile uint32_t n_blocks, n_errors, last_error;
 static volatile uint32_t rate_hz;
@@ -309,11 +314,7 @@ int mic_init(void)
 {
 	static const uint32_t pins[] = {LL_GPIO_PIN_2, LL_GPIO_PIN_8};
 
-	ring = psram_alloc(MIC_KEEP * sizeof(int32_t), 32);
-	if (ring == NULL) {
-		return -ENOMEM;
-	}
-	memset(ring, 0, MIC_KEEP * sizeof(int32_t));
+	ring = ring_mem;
 
 	/* IC7 is enabled and divided by the Zephyr clock driver for the SAI (see the overlay) */
 	LL_RCC_SetMDFClockSource(LL_RCC_MDF1_CLKSOURCE_IC7);

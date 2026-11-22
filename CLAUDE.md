@@ -240,7 +240,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   reshape / 4: 48 kHz, 24 bit, read as 32-bit words by a circular GPDMA1
   channel 6 transfer into AHBSRAM1 (buffer at +0x2000, list node at +0x3000,
   beside the audio output's). A cooperative thread copies each 128-sample
-  half (`MIC_BLOCK`) into a 16384-sample ring in PSRAM; readers use `mic_total()` and
+  half (`MIC_BLOCK`) into a 4096-sample ring in internal RAM (16 KB, 85 ms;
+  never PSRAM: see the invariant); readers use `mic_total()` and
   `mic_copy()`. `ctl.py "mictune 1 1 1 8 5 8 1 0 0 3" "micinject 1000 1"`
   injects a 1 kHz square wave at the data pin with U13 asleep (capture
   self-test; `"micinject 0 0 0" "mictune 1 1 1 4 5 16 1 0 0 3"` restores).
@@ -1079,6 +1080,19 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   its clock source is chosen with `LL_RCC_SetMDFClockSource` (a plain
   CCIPR5 write), not `HAL_RCCEx_PeriphCLKConfig`, which reprograms the IC
   divider behind the Zephyr clock driver's back.
+- **The microphone's ring is in internal RAM (`ring_mem` in mic.c, 16 KB),
+  never PSRAM. A cooperative thread that touches PSRAM while the NPU runs
+  holds the audio refill for as long as one access waits.** **Why:** on the
+  Camera screen (palm detector on every frame) one cache-line fill from PSRAM
+  waited up to 0.88 ms behind the NPU, with interrupts still served. With
+  the ring in PSRAM the microphone thread (cooperative, just below the audio
+  refill) ran up to 1.75 ms instead of 13 us, and the audio refill waited
+  behind it up to 0.95 ms, 33 times a minute over 0.5 ms (zprof, 2026-11-22;
+  0 underruns, but 65 % of its deadline in the worst case). Yielding after
+  each cache line cut those waits to 5 a minute and could not split one
+  stalled access. In internal RAM: its longest run 43 us, the refill's
+  longest wait 278 us (network receive), none over 0.5 ms. Check on the
+  Camera screen with zprof (`zprof_bridge capture`, then `sched`).
 - **The first board's onboard microphone U13 delivered noise only; the
   replacement DK's hears (2026-11-17), so do not tune the firmware against
   a silent microphone: prove the chain first.**

@@ -28,6 +28,16 @@ behind the rules that came out of them.
   probe's serial number is asked for each time, never stored. SystemView's
   attach halts the core about 0.6 s; Ozone's about 0.7 s.
 
+### Fixed
+
+- **The sound no longer waits behind the microphone on the Camera screen.**
+  zprof showed the microphone's copy thread running up to 1.75 ms there
+  instead of 13 us: its ring was in PSRAM, where one access can wait 0.9 ms
+  behind the NPU, and the audio refill could not run meanwhile (up to
+  0.95 ms, 65 % of its deadline in the worst case; no underrun had happened
+  yet). The ring is now in internal RAM (85 ms, 16 KB): the microphone's
+  longest run is 43 us and the refill's longest wait 0.28 ms.
+
 ## 2026-11-21
 
 ### Added

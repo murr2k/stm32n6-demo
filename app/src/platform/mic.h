@@ -37,8 +37,10 @@ int mic_init(void);
 bool mic_ok(void);
 void mic_get_status(struct mic_status *st);
 
-/* Samples captured so far. Samples total - MIC_KEEP .. total - 1 can be read. */
-#define MIC_KEEP 16384
+/* Samples captured so far. Samples total - MIC_KEEP .. total - 1 can be read
+ * (85 ms: Signal Lab reads at most 2048 behind, the monitor about 1060).
+ */
+#define MIC_KEEP 4096
 uint32_t mic_total(void);
 /* Copy n samples starting at sample number `from`; returns how many were
  * still (or already) there.
