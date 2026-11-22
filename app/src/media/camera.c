@@ -10,6 +10,7 @@
  */
 #include <string.h>
 
+#include <zephyr/cache.h>
 #include <zephyr/drivers/video-controls.h>
 #include <zephyr/drivers/video.h>
 #include <zephyr/video/video.h>
@@ -208,6 +209,80 @@ void camera_release_nn(void)
 	if (vb && running) {
 		give_back(vb);
 	}
+}
+
+/* the lens cap: on at every start, not stored */
+static volatile bool snap_allowed;
+
+void camera_snapshot_allow(bool on)
+{
+	snap_allowed = on;
+}
+
+bool camera_snapshot_allowed(void)
+{
+	return snap_allowed;
+}
+
+int camera_snapshot(int step, int settle, const uint16_t **pix, int *w, int *h)
+{
+	static uint16_t *snap;
+	bool started_here = !want;
+	bool fresh;
+	int ret = 0;
+
+	if (!snap_allowed) {
+		return -EACCES;
+	}
+	step = CLAMP(step, 1, 8);
+	settle = CLAMP(settle, 1, 300);
+	if (snap == NULL) {
+		snap = psram_alloc(FRAME_SIZE, 64);
+		if (snap == NULL) {
+			return -ENOMEM;
+		}
+	}
+	if (started_here) {
+		camera_start();
+	}
+	/* frames counts from the start; with the camera already running, wait for
+	 * `settle` more */
+	uint32_t f0 = running ? status.frames : 0;
+	uint32_t t0 = k_uptime_get_32();
+
+	while (!running || status.frames < f0 + (uint32_t)settle) {
+		if (k_uptime_get_32() - t0 > 3000u + (uint32_t)settle * 100u) {
+			ret = -ETIMEDOUT;
+			goto out;
+		}
+		k_msleep(20);
+	}
+	const uint16_t *f = camera_acquire(&fresh);
+
+	if (f == NULL) {
+		camera_release();
+		ret = -EAGAIN;
+		goto out;
+	}
+	/* written by the DCMIPP behind the cache; this reader never writes it */
+	sys_cache_data_invd_range((void *)f, FRAME_SIZE);
+	*w = CAM_W / step;
+	*h = CAM_H / step;
+	for (int y = 0; y < *h; y++) {
+		const uint16_t *src = f + (size_t)y * step * CAM_W;
+		uint16_t *dst = snap + (size_t)y * *w;
+
+		for (int x = 0; x < *w; x++) {
+			dst[x] = src[x * step];
+		}
+	}
+	camera_release();
+	*pix = snap;
+out:
+	if (started_here) {
+		camera_stop();
+	}
+	return ret;
 }
 
 void camera_get_status(struct camera_status *st)

@@ -30,6 +30,7 @@ not to be modified from here.
 .\.venv\Scripts\python.exe tools\acap.py --mic --secs 3 -o captures\mic.wav   # record the microphone (24 bit), print its level
 Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself (also /about, /status.json); http://192.168.254.86/ is the web remote (the Settings QR code opens it), /remote.json its state
 .\.venv\Scripts\python.exe tools\ctl.py netcfg     # the board's address; "netcfg static IP MASK GW" or "netcfg dhcp" changes it now
+.\.venv\Scripts\python.exe tools\ctl.py "carrier 4000"   # the Ethernet link as if its cable were out for 4 s (the driver's own carrier off/on): every network service must recover by itself
 .\.venv\Scripts\python.exe tools\ctl.py power      # Home Power's feed: online, state, requests, figures; "power url http://HOST" sets the energy monitor (kept on the card, never in the repo)
 .\.venv\Scripts\python.exe tools\ctl.py "power range 7d" powert   # the panel's chart range (1h 6h 24h 7d 30d); its worst gauge, chart and tick times, us
 .\.venv\Scripts\python.exe tools\dataset.py info   # Explorer's data set: must say "source flash"; pull + flash put it there
@@ -55,6 +56,7 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 .\.venv\Scripts\python.exe tools\ctl.py swtrace droptrace svct mem stacks   # frames of the last transition, before the last drop; main loop per service; heap, pool, PSRAM, stacks
 .\.venv\Scripts\python.exe tools\nn.py grab 5 --hand   # frames as the tracker saw them (captures/hands, ignored) and the PC's models on them and on variants
 .\.venv\Scripts\python.exe tools\ctl.py "nn thr 50 50"   # the palm and presence thresholds, percent
+.\.venv\Scripts\python.exe tools\camsnap.py --uncap   # a still from the board's camera (pointed at its own panel: is it black? look at the PNG, the luma figures cannot tell); captures/camsnap/ (ignored)
 .\run.cmd                   # host companion: live data for Host Link and Core Map; finds boards by broadcast (--host to name one)
 .\.venv\Scripts\python.exe host\companion.py --host 192.168.254.86 --cores 128   # TEST ONLY: synthetic load on 128 processors
 ```
@@ -261,7 +263,13 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   and runs exposure and white balance. The capture thread hands the newest
   frame to the screen, which copies it with DMA2D (`dma2d_rgb565` in
   jpegdec.c, UI thread only like the JPEG conversion), and to the NPU's
-  thread (`camera_wait_frame`, `camera_acquire_nn`).
+  thread (`camera_wait_frame`, `camera_acquire_nn`). `camsnap` on the
+  control port (`camera_snapshot`, `tools/camsnap.py`) takes one still with
+  no screen showing the camera, for checking the panel with the camera
+  pointed at it; it has a lens cap (the user's rule, 2026-11-21: in every
+  build, off after every reset, lifted only by `camsnap on`; a courtesy so
+  the camera never runs unseen by default, not a security feature: the port
+  has no login).
 - NPU (nn/npu.c, nn/hands.c): ST's runtime (`ll_aton`, compiled from the ST
   Edge AI install) and the networks `tools/nn.py` converts into `build-nn/`
   (palm detector and hand landmarks, Google MediaPipe, Apache-2.0). Working
@@ -541,21 +549,36 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   FS, SCK, SD; only TRACED0 PE3 and SWO PB5 are free), so streaming trace
   and sound exclude each other; with the ribbon on those lines the film's
   sound and the microphone monitor are clean (the user, by ear,
-  2026-11-20). **SEGGER SystemView and Ozone were tried on 2026-11-20 and
-  withdrawn: a SystemView recording blanks the panel until a power
-  cycle.** Measured 2026-11-21 on a SystemView build
-  (`CONFIG_SEGGER_SYSTEMVIEW`, 16 KB RTT buffer): 3 recordings of 3 (SWD
-  4 and 20 MHz, with and without SystemView's 0.6 s attach halt) left the
-  panel black with the backlight on while the demo ran on (music, 59.9
-  fps, frames drawn into both buffers, 0 dropped); only a power cycle
-  brought the picture back (a toggle of the panel enable PQ3 and a forced
-  LTDC reload did not). Every register read in the black state matched the
-  working state: the LTDC's global and layer registers, the 28 LCD pins
-  (all AF14), PQ3 and PQ6, RCC, PWR, SYSCFG's compensation cells. Harmless
-  in the same tests: a J-Link Commander attach at 4 or 20 MHz, 2 MB of RAM
-  read over the probe while the demo ran, and the release firmware's
-  attract lap (watched twice). Cause unknown; the tools (`sysview.py`,
-  `ozone.py`, an attach-only Ozone project) stay out of the repository.
+  2026-11-20). **Stopping a SEGGER SystemView recording blanked the panel
+  until a power cycle (found 2026-11-20); `rif_lock()` in main.c fixes it
+  (2026-11-21). Keep the lock.** **Why:** SystemView's stop (V4.10b,
+  J-Link V9.96a) writes 0 into RIFSC RISC_SECCFGR3 (0x5402_401C) over the
+  debug port, within 0.15 s of the stop (polled from the board: not at
+  launch, attach, recording, save or quit; the firmware's own
+  `SEGGER_SYSVIEW_Stop`, the board draining RTT itself and JLinkRTTLogger
+  draining it at 20 MHz never did). That register holds the secure bits of
+  JPEG, VENC, DMA2D, LTDC layer 1 and the NPU. Layer 1's reads of the frame
+  buffers turn non-secure, the AXISRAM firewalls (RISAF2 and 3) refuse
+  them and log them (IAESR 0x11: CID 1, privileged, non-secure read; IADDR
+  in frame buffer A) and they return zeros, alpha 0 in ARGB8888: the layer
+  is transparent and the panel shows the background colour (C_BG0, near
+  black) while the demo runs on. Every LTDC register reads as normal (the
+  first search compared them, and the pins, RCC and PWR, and found
+  nothing); a red BCCR shows through the enabled layer, and writing 0x4A3
+  back restores the picture at once. The lock (RISC_RCFGLOCKRx, until the
+  next reset, in every build) keeps the slaves' secure and privileged
+  attributes as Zephyr's `soc_rif_config` set them; with it a full record,
+  stop, save and quit left the register at 0x4A3 and the panel lit through
+  a lap's end (camera stills). A run-time change of those slaves'
+  attributes (a non-secure world, say) is then silently ignored: extend or
+  drop the lock with it. SystemView's attach still halts the core about
+  0.6 s (`render_worst_us` 618 ms, one late swap). On a long recording
+  (several minutes, 177 MB) SystemView spent minutes processing it, not
+  responding, 5.4 GB in memory: record seconds, not minutes. Its `-start`
+  sometimes opens the Recorder Configuration dialog instead of recording,
+  and every launch shows a licence notice to acknowledge. The tools
+  (`sysview.py`, `segger.py`, `ozone.py`, `winshot.ps1`, `app/sysview.conf`,
+  an attach-only Ozone project) are still uncommitted.
   Ozone was not retested after the blank screens were found; its attach
   froze the demo 0.7 s at SWD 20 MHz (it reads ~860 KB of code), and its
   default start (download and reset) breaks booting here. A halt of a few

@@ -10,10 +10,15 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/net/net_if.h>
 #include <zephyr/net/socket.h>
 
 #include <soc.h>
 #include <stm32n6xx_hal.h>
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+#include <SEGGER_RTT.h>
+#include <SEGGER_SYSVIEW.h>
+#endif
 
 #include "audio.h"
 #include "ctl.h"
@@ -21,6 +26,7 @@
 #include "dsp/monitor.h"
 #include "dsp/sig.h"
 #include "dsp/theremin.h"
+#include "media/camera.h"
 #include "media/player.h"
 #include "media/recorder.h"
 #include "media/sdcard.h"
@@ -35,6 +41,26 @@
 #include "tele.h"
 #include "touch.h"
 #include "ui/shell.h"
+
+/* "carrier <ms>": the Ethernet link as if its cable were out for ms, through the
+ * calls the driver makes when the PHY loses and regains the link. Dropped 100 ms
+ * after the reply, so the reply gets out first. */
+static void carrier_set(bool on)
+{
+	struct net_if *iface = net_if_get_default();
+
+	if (iface) {
+		if (on) {
+			net_if_carrier_on(iface);
+		} else {
+			net_if_carrier_off(iface);
+		}
+	}
+}
+static void carrier_off_fn(struct k_work *w) { ARG_UNUSED(w); carrier_set(false); }
+static void carrier_on_fn(struct k_work *w) { ARG_UNUSED(w); carrier_set(true); }
+static K_WORK_DELAYABLE_DEFINE(carrier_off_w, carrier_off_fn);
+static K_WORK_DELAYABLE_DEFINE(carrier_on_w, carrier_on_fn);
 
 /* "mem": the thread with the least unused stack, idle left out (its margin is
  * small by design and never changes); "stacks": every thread's */
@@ -287,6 +313,25 @@ static void swipe(int x1, int y1, int x2, int y2, int ms)
 	touch_inject(0, x2, y2, false);
 }
 
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+static volatile bool sv_drain;
+static volatile uint32_t sv_drained;
+
+/* "sysview 2": empty SystemView's RTT buffer as a probe would, every millisecond */
+static void sv_drain_thread(void *p1, void *p2, void *p3)
+{
+	static uint8_t sink[4096];
+
+	for (;;) {
+		k_msleep(1);
+		if (sv_drain) {
+			sv_drained += SEGGER_RTT_ReadUpBufferNoLock(SEGGER_SYSVIEW_GetChannelID(), sink, sizeof(sink));
+		}
+	}
+}
+K_THREAD_DEFINE(sv_drain_tid, 1024, sv_drain_thread, NULL, NULL, NULL, 10, 0, 0);
+#endif
+
 static int handle(char *line, char *out, size_t out_len)
 {
 	int a[5] = {0};
@@ -333,6 +378,35 @@ static int handle(char *line, char *out, size_t out_len)
 		uint32_t addr = strtoul(strchr(line, ' ') + 1, NULL, 0) & ~3u;
 
 		return snprintf(out, out_len, "%08x: %08x\n", (unsigned int)addr, (unsigned int)*(volatile uint32_t *)addr);
+#ifdef CONFIG_SEGGER_SYSTEMVIEW
+	} else if (!strcmp(cmd, "sysview")) {
+		/* the recorder without a host session: separates what the firmware's
+		 * recorder does from what SystemView's probe session does. 1: the
+		 * buffer fills and later events are dropped; 2: a thread here empties
+		 * it as the probe would, so every event is written */
+		if (n >= 2 && a[0]) {
+			sv_drain = a[0] == 2;
+			SEGGER_SYSVIEW_Start();
+		} else if (n >= 2) {
+			SEGGER_SYSVIEW_Stop();
+			sv_drain = false;
+		}
+		return snprintf(out, out_len, "started=%d drain=%d drained=%u\n", SEGGER_SYSVIEW_IsStarted(),
+				sv_drain, sv_drained);
+	} else if (!strcmp(cmd, "poke") && n >= 2) {
+		/* the SystemView build only: write one 32-bit word, "poke 0x5800102C 0xFF0000"
+		 * (n counts only up to the first "0x": %d stops at the x) */
+		char *p = strchr(line, ' ') + 1;
+		uint32_t addr = strtoul(p, &p, 0) & ~3u;
+		char *v = p;
+		uint32_t val = strtoul(v, &p, 0);
+
+		if (p == v) {
+			return snprintf(out, out_len, "err poke <addr> <value>\n");
+		}
+		*(volatile uint32_t *)addr = val;
+		return snprintf(out, out_len, "%08x: %08x\n", (unsigned int)addr, (unsigned int)*(volatile uint32_t *)addr);
+#endif
 	} else if (!strcmp(cmd, "dump") && n >= 2) {
 		/* up to 64 words in hex, no separators: "dump 0x90200000 64" */
 		char *p = strchr(line, ' ') + 1;
@@ -346,6 +420,27 @@ static int handle(char *line, char *out, size_t out_len)
 		return len + snprintf(out + len, out_len - len, "\n");
 	} else if (!strcmp(cmd, "nn")) {
 		return npu_ctl(line, out, out_len);
+	} else if (!strcmp(cmd, "camsnap")) {
+		const uint16_t *pix;
+		int w, h;
+		char mode[8] = "";
+
+		if (n < 2 && sscanf(line, "%*s %7s", mode) == 1) {
+			if (!strcmp(mode, "on") || !strcmp(mode, "off")) {
+				camera_snapshot_allow(mode[1] == 'n');
+				return snprintf(out, out_len, "cap=%d\n", !camera_snapshot_allowed());
+			}
+			return snprintf(out, out_len, "err camsnap [on | off | step [frames]]\n");
+		}
+		int r = camera_snapshot(n >= 2 ? a[0] : 2, n >= 3 ? a[1] : 45, &pix, &w, &h);
+
+		if (r == -EACCES) {
+			return snprintf(out, out_len, "err camsnap capped (\"camsnap on\" lifts it until a reset)\n");
+		}
+		if (r != 0) {
+			return snprintf(out, out_len, "err camsnap %d\n", r);
+		}
+		return snprintf(out, out_len, "addr=0x%08x w=%d h=%d\n", (unsigned int)(uintptr_t)pix, w, h);
 	} else if (!strcmp(cmd, "mic")) {
 		struct mic_status m;
 
@@ -563,6 +658,12 @@ static int handle(char *line, char *out, size_t out_len)
 				h->n_frames, h->title);
 	} else if (!strcmp(cmd, "play") && n >= 2) {
 		post(CTL_PLAY, a[0]);
+	} else if (!strcmp(cmd, "carrier") && n >= 2) {
+		int ms = CLAMP(a[0], 100, 30000);
+
+		k_work_schedule(&carrier_off_w, K_MSEC(100));
+		k_work_schedule(&carrier_on_w, K_MSEC(100 + ms));
+		return snprintf(out, out_len, "carrier off in 100 ms, for %d ms\n", ms);
 	} else if (!strcmp(cmd, "netcfg")) {
 		/* "netcfg", "netcfg dhcp", "netcfg static IP MASK [GW]" */
 		struct netcfg cfg;

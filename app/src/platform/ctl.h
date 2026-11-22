@@ -22,6 +22,8 @@
  *   sdcard [out|in|auto]       the card watcher: slot switch, mounted, gone; act as if taken out or put in (testing)
  *   play <n>                   go to Cinema and open clip n
  *   netcfg [dhcp | static IP MASK [GW]]  the board's address: show, or change now (and store)
+ *   carrier <ms>               the Ethernet link as if its cable were out for ms (100 to 30000),
+ *                              from 100 ms after the reply (testing: every network service's recovery)
  *   ds                         Explorer's data set: in flash or generated, address, checksum
  *   hometiles <n>              Home: n placeholder tiles after the real ones
  *   home                       Home: tiles (and those that open a screen), pan position and range
@@ -56,6 +58,15 @@
  *   dump <addr> <words>        up to 64 words in hex (tools/acap.py reads the
  *                              recording with it)
  *   saiclk, peek <addr>        bring-up register readouts
+ *   camsnap [step [frames]]    a still from the camera (pointed at the panel: does it show a
+ *                              picture?), every step-th pixel (2), after frames for the exposure
+ *                              (45); addr= w= h= of RGB565 in PSRAM, read with dump (tools/camsnap.py).
+ *                              Refused while the lens cap is on, as after every reset
+ *   camsnap on|off             lift the lens cap (until "off" or a reset) or put it back; cap=
+ *   sysview [0|1|2]            the SystemView build only: SystemView's recorder on or off from
+ *                              the board itself, with no host reading it (2: a thread empties the
+ *                              buffer as the probe would); without a number, its state
+ *   poke <addr> <value>        the SystemView build only: write one word
  *   reset                      clear the worst-case counters
  *   tour [begin | step NAME | alive | end WHY]   the PC's regression test (tools/tour.py) says what
  *                              it does; "tour" alone: its state. Stopped from the web remote, the

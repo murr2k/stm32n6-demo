@@ -5,6 +5,34 @@ release says so. Each line names what a user of the demo or of its tools
 would notice; the commit log has the detail, and `CLAUDE.md` the reasons
 behind the rules that came out of them.
 
+## 2026-11-21
+
+### Added
+
+- **`tools/camsnap.py`: a still from the board's own camera** (`camsnap` on
+  the control port), for checking the panel with the camera pointed at it:
+  the board starts the camera without opening the Camera screen, keeps
+  every second pixel and stops it again; the PNG goes to `captures/camsnap/`.
+  **A lens cap:** after every reset the board refuses stills until
+  `ctl.py "camsnap on"` (until `camsnap off` or the next reset), and
+  `camsnap.py --uncap` lifts it for one still. A courtesy, so the camera
+  never runs unseen by default; the port has no login.
+- **`ctl.py "carrier <ms>"`: the Ethernet link as if its cable were out**
+  for that long (100 ms to 30 s), through the driver's own carrier off and
+  on, for checking that every network service recovers by itself.
+
+### Fixed
+
+- **SEGGER SystemView no longer blanks the panel.** Stopping a SystemView
+  recording over a J-Link wrote 0 into a RIF security register (RISC
+  SECCFGR3) through the debug port; the display layer's reads of the frame
+  buffers then turned non-secure, the memory firewalls refused them and the
+  panel showed the background colour until a power cycle, while the demo
+  ran on. The firmware now locks the security attributes Zephyr gives the
+  display, video encoder, JPEG codec, DMA2D, NPU and the others at boot until
+  the next reset; with the lock a full record, stop, save and quit left the
+  picture on. SystemView's attach still halts the core about 0.6 s.
+
 ## 2026-11-20
 
 ### Added

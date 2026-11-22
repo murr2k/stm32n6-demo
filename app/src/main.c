@@ -6,6 +6,9 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include <soc.h>
+#include <stm32n6xx_hal.h>
+
 #include "dsp/sig.h"
 #include "platform/audio.h"
 #include "platform/ctl.h"
@@ -82,8 +85,36 @@ static const struct shell_program lap = {
 	.clock_ms = cinema_lap_ms,
 };
 
+/* Lock the secure and privileged attributes that Zephyr gave the bus slaves
+ * at boot (soc_rif_config in its N6 SoC code) until the next reset. Why:
+ * SEGGER SystemView's stop of a J-Link recording (V4.10b, J-Link V9.96a)
+ * writes 0 into RIFSC RISC_SECCFGR3 from the debug port, measured
+ * 2026-11-21 within 0.15 s of the stop. That makes LTDC layer 1 non-secure;
+ * its reads of the frame buffers are then refused by the AXISRAM firewalls
+ * (RISAF2/3 log them) and come back as zeros, alpha 0: the panel shows the
+ * near-black background until a power cycle, while everything else runs on.
+ * The same register holds JPEG, VENC, DMA2D and the NPU. Nothing in the app
+ * changes these slaves afterwards (sdcard.c sets SDMMC2's own, not locked). */
+static void rif_lock(void)
+{
+	static const uint32_t slaves[] = {
+		RIF_RISC_PERIPH_INDEX_ADC12, RIF_RISC_PERIPH_INDEX_DCMIPP, RIF_RISC_PERIPH_INDEX_DMA2D,
+		RIF_RISC_PERIPH_INDEX_ETH1, RIF_RISC_PERIPH_INDEX_JPEG, RIF_RISC_PERIPH_INDEX_LTDCL1,
+#ifdef NPU_PRESENT
+		RIF_RISC_PERIPH_INDEX_NPU,
+#endif
+		RIF_RISC_PERIPH_INDEX_VENC,
+	};
+
+	for (size_t i = 0; i < ARRAY_SIZE(slaves); i++) {
+		HAL_RIF_RISC_SlaveConfigLock(slaves[i]);
+	}
+}
+
 int main(void)
 {
+	rif_lock();
+
 	int ret = gfx_init();
 
 	if (ret != 0) {

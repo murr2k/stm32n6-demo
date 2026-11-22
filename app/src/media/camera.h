@@ -49,4 +49,20 @@ int camera_wait_frame(k_timeout_t timeout);
 const uint16_t *camera_acquire_nn(uint32_t *seq);
 void camera_release_nn(void);
 
+/* A still for the host ("camsnap", tools/camsnap.py), for a camera pointed at
+ * the board's own panel: the camera started if no screen has it, `settle`
+ * frames for the ISP's exposure, the newest frame taken down by `step` (every
+ * step-th pixel of every step-th line, RGB565) into a PSRAM buffer allocated
+ * on first use (514 KB), the camera stopped again if it was started here.
+ * Blocks the caller about settle / 30 s. Returns 0 and the picture, or <0.
+ *
+ * A lens cap, not a security feature: stills are refused (-EACCES) until
+ * camera_snapshot_allow(true), and the cap is back on after every reset (not
+ * stored), so the camera never runs unseen unless someone asked for it since
+ * the board started.
+ */
+int camera_snapshot(int step, int settle, const uint16_t **pix, int *w, int *h);
+void camera_snapshot_allow(bool on);
+bool camera_snapshot_allowed(void);
+
 #endif
