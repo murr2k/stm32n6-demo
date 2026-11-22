@@ -21,6 +21,7 @@
 
 #include "gfx.h"
 #include "media/jpegdec.h" /* dma2d_copy32 */
+#include "prof.h"
 #include "psram.h"
 
 LOG_MODULE_REGISTER(gfx, LOG_LEVEL_INF);
@@ -292,7 +293,10 @@ static void flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *px_map)
 		bool swap = px_map != front;
 
 		trace_frame(now);
+		/* zprof's frame job: from the last hand-over (or idle slot) to this one */
+		ZPROF_MARK_STOP("frame", 1);
 		present(px_map);
+		ZPROF_MARK_START("frame");
 		if (lend_state == ENTERING && front == FB_A) {
 			/* the panel scans A, LVGL draws into A: B is free */
 			lend_state = SINGLE;
@@ -538,7 +542,9 @@ void gfx_run_frame(void)
 		 */
 		uint32_t spent = gfx_now_us() - t0;
 
+		ZPROF_MARK_STOP("frame", 0); /* a slot with nothing to hand over: no frame */
 		k_sleep(K_USEC(spent < stats.period_us ? MIN(stats.period_us - spent, 4000) : 500));
+		ZPROF_MARK_START("frame");
 	}
 	t_frame_start = gfx_now_us();
 }
