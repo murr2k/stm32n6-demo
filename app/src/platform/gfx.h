@@ -59,6 +59,11 @@ void gfx_run_frame(void);
 
 const struct gfx_stats *gfx_stats(void);
 void gfx_stats_reset_worst(void);
+
+/* The next `frames` frames may drop because the caller does something costly on
+ * purpose (a test command): their drops are counted as always, but they do not
+ * trigger zprof's flight recorder (ZPROF_TRIGGER). UI thread only. */
+void gfx_expect_drop(int frames);
 lv_display_t *gfx_display(void);
 
 /* Copy the frame currently on the panel into a stable buffer at the next frame

@@ -10,6 +10,7 @@
 
 #include "platform/gfx.h"
 #include "platform/net.h"
+#include "platform/prof.h"
 #include "platform/touch.h"
 #include "shell.h"
 #include "theme.h"
@@ -24,7 +25,8 @@ static int n_screens;
 static int current = -1;
 
 static lv_obj_t *roots[MAX_SCREENS];
-static lv_obj_t *bar_obj, *bar_title, *bar_clock, *bar_ip, *bar_fps, *bar_dot;
+static lv_obj_t *bar_obj, *bar_title, *bar_clock, *bar_ip, *bar_fps, *bar_dot, *bar_fault;
+static int bar_faults; /* the faults the alarm shows (zprof's handler ended a thread) */
 static lv_obj_t *dot_row, *dots[MAX_SCREENS];
 static uint32_t dots_listed; /* the screens that had a dot at the last layout */
 static lv_obj_t *hud, *hud_text, *hud_graph;
@@ -50,6 +52,12 @@ static void build_bar(lv_obj_t *scr)
 
 	bar_title = ui_label(bar, &font_textm_16, C_TEXT, "");
 	lv_obj_align(bar_title, LV_ALIGN_LEFT_MID, UI_PAD + 34, 0);
+
+	/* the fault alarm: a thread zprof's handler ended; in place of the page dots
+	 * while it shows (past the longest title, short of the address) */
+	bar_fault = ui_label(bar, &font_textm_16, C_BAD, "");
+	lv_obj_align(bar_fault, LV_ALIGN_LEFT_MID, 176, 0);
+	lv_obj_add_flag(bar_fault, LV_OBJ_FLAG_HIDDEN);
 
 	bar_clock = ui_label(bar, &font_mono_14, C_TEXT, "00:00:00");
 	lv_obj_align(bar_clock, LV_ALIGN_RIGHT_MID, -UI_PAD, 0);
@@ -140,6 +148,20 @@ static void update_bar(uint32_t now_ms)
 
 	snprintf(buf, sizeof(buf), "%2u.%u fps", gs->fps_x10 / 10, gs->fps_x10 % 10);
 	set_if_changed(bar_fps, buf);
+
+	struct prof_fault_info fi;
+	int nf = prof_faults(&fi, 1);
+
+	if (nf != bar_faults) {
+		char alarm[40];
+
+		bar_faults = nf;
+		snprintf(alarm, sizeof(alarm), "%s crashed%s", fi.thread[0] ? fi.thread : "an interrupt",
+			 nf > 1 ? "  +more" : "");
+		lv_label_set_text(bar_fault, alarm);
+		lv_obj_remove_flag(bar_fault, LV_OBJ_FLAG_HIDDEN);
+		lv_obj_add_flag(dot_row, LV_OBJ_FLAG_HIDDEN);
+	}
 
 	net_get_status(&ns);
 	const char *ip = ns.have_ip ? ns.ip : (ns.link_up ? "dhcp..." : "no link");

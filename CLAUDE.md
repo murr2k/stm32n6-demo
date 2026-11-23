@@ -1252,6 +1252,26 @@ cd zprof\host\bridge; ..\..\.venv\Scripts\python -m zprof_bridge recorder arm --
   test images and screenshots of faces stay in `captures/` (ignored); the
   ignore patterns in .gitignore cover signature files copied to the PC by
   mistake. Check `git status` for them before every commit.
+- **Network captures stay in `captures/` (ignored); the release build leaves
+  zprof's Ethernet capture out.** zprof's bus records (`--proto eth`) and their
+  pcapng exports and summaries name every host the board talks to: this PC,
+  phones, the switch, and the energy monitor (whose address never goes into
+  the repository). Examples in docs use documentation addresses or zprof's
+  `--anonymize` output. The user's rule, 2026-11-22 ("important, especially
+  for users who work inside secure perimeters"). zprof's default keeps
+  `CONFIG_ZPROF_BUS_ETH_RX` and `_STM32_TX` off; turn them on only in a build of
+  your own (`n6.cmd build -- -Dapp_EXTRA_CONF_FILE=...`) on this LAN. I2C and
+  disk records are in the release build (`app/zprof.conf` opts in; off until a
+  client asks), their timing only: the I2C data bytes
+  (`CONFIG_ZPROF_BUS_I2C_DATA`) stay out too. Every zprof feature beyond the
+  scheduler trace is opt-in in zprof; `app/zprof.conf` says which the demo takes.
+- **zprof's fault handler ends a faulting thread and the demo runs on** (a
+  thread that is not main, idle or an interrupt; the demo's choice in
+  `app/zprof.conf`, zprof's default changes nothing): sound, the card or the
+  network may stop while the screens move. The status bar then names the
+  thread in red, Settings lists the last four, `/status.json` and the web
+  remote say so; collect the fault (`zprof_bridge fault`) before restarting,
+  which wipes it. `ctl.py "crash 1|2|3"` makes a test thread fault.
 - **The NPU's networks run only between `gfx_borrow_begin()` and
   `gfx_borrow_end()`: their working memory and inputs are frame buffer B.**
   **Why:** with all working memory in PSRAM the palm detector took 938 ms and

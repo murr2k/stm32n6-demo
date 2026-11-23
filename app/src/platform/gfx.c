@@ -92,6 +92,15 @@ static uint32_t tick_cb(void)
 }
 
 
+/* Frames whose drops the caller causes on purpose (gfx_expect_drop): counted,
+ * but they do not trigger zprof's flight recorder. UI thread only. */
+static int expect_drop;
+
+void gfx_expect_drop(int frames)
+{
+	expect_drop = frames;
+}
+
 static void account_frame(uint32_t render_us, uint32_t now)
 {
 	uint32_t period = now - t_last_present;
@@ -111,7 +120,9 @@ static void account_frame(uint32_t render_us, uint32_t now)
 		if (period > stats.period_us + stats.period_us / 2) {
 			stats.dropped += (period + stats.period_us / 2) / stats.period_us - 1;
 			/* zprof's flight recorder, when armed, keeps what led up to it */
-			ZPROF_TRIGGER(1);
+			if (expect_drop == 0) {
+				ZPROF_TRIGGER(1);
+			}
 			last_drop.frame = stats.frames;
 			last_drop.seq = trace.seq;
 			last_drop.screen = on_screen;
@@ -121,6 +132,9 @@ static void account_frame(uint32_t render_us, uint32_t now)
 		}
 	} else {
 		stats.period_us_ring[stats.head] = 0;
+	}
+	if (expect_drop > 0) {
+		expect_drop--;
 	}
 	if (render_us > stats.worst_render_us) {
 		stats.worst_render_us = render_us;

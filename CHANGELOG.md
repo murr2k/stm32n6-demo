@@ -12,7 +12,20 @@ behind the rules that came out of them.
 - **A missed frame triggers zprof's flight recorder** (README, "Profiling
   with zprof"): armed with `zprof_bridge recorder arm`, the board records
   while nobody is connected, and the first missed frame keeps what led up to
-  it (about 0.4 s of Home) for the next `recorder status` to collect.
+  it (about 0.4 s of Home) for the next `recorder status` to collect. Home's
+  placeholder tiles (a test command) drop frames on purpose and no longer
+  trigger it.
+- **A thread that faults no longer halts the board** (zprof's fault capture):
+  the thread ends and the demo runs on; the status bar names it in red,
+  Settings lists the last four, `/status.json` has a `faults` member and the
+  web remote a red banner. `zprof_bridge fault` shows the fault with its source
+  line and call trace. A fault in the UI thread or an interrupt still halts.
+  `ctl.py "crash 1|2|3"` makes a throwaway thread fault, for testing.
+- **zprof counts the M55's PMU and records the buses**: per-thread
+  instructions per cycle, cache refills and stalls (`--pmu-threads`), Helium
+  share (`--pmu helium`); I2C messages and card transfers (`--proto i2c,disk`).
+  Ethernet capture stays out of this build (it would show every host on the
+  network to anyone reaching zprof's port).
 
 - **Profiling with zprof, in every build** (README, "Profiling with zprof"):
   `west update` fetches [zprof](https://github.com/murr2k/zprof) and the

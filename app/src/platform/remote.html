@@ -76,6 +76,7 @@ footer{margin:24px 0 0;padding-bottom:calc(24px + env(safe-area-inset-bottom,0px
 footer a{color:var(--fg2)}
 .banner{display:none;margin-top:16px;padding:12px 14px;border:1px solid var(--bad);border-radius:8px;color:var(--fg);background:rgba(255,82,82,.08)}
 .off .banner{display:block}
+.banner.fault{display:block}.banner.fault[hidden]{display:none}
 .off main{opacity:.4;pointer-events:none}
 @media (max-width:370px){.stats{grid-template-columns:repeat(2,minmax(0,1fr))}.now h2{font-size:26px}}
 @media (prefers-reduced-motion:reduce){.bar i{transition:none}.scr.wait{animation:none;border-color:var(--az)}}
@@ -86,6 +87,7 @@ footer a{color:var(--fg2)}
 <div class="live" id="live"><span class="dot"></span><span id="fps">connecting</span></div></div></header>
 <div class="wrap">
 <div class="banner" role="status">The board is not answering. Trying again every few seconds.</div>
+<div class="banner fault" id="fault" role="alert" hidden></div>
 <main>
 <div class="cap">On the panel</div>
 <section class="card now">
@@ -257,6 +259,17 @@ function render() {
   set("s-frame", (s.frame_avg_us / 1000).toFixed(1) + " ms");
   set("s-drop", String(s.dropped));
   set("s-up", uptime(s.uptime_s));
+
+  // threads the board's fault handler ended while the rest ran on
+  const f = s.faults, fb = $("fault");
+  if (f && f.count > 0) {
+    const l = f.last[0];
+    fb.textContent = `${l.thread} crashed (${l.reason}) ${uptime(l.uptime_s)} after boot` +
+      (f.count > 1 ? `, and ${f.count - 1} more since boot` : "") + ": part of the demo may have stopped.";
+    fb.hidden = false;
+  } else {
+    fb.hidden = true;
+  }
 }
 
 function mark() {

@@ -26,6 +26,8 @@
  *                              from 100 ms after the reply (testing: every network service's recovery)
  *   ds                         Explorer's data set: in flash or generated, address, checksum
  *   hometiles <n>              Home: n placeholder tiles after the real ones
+ *   crash <1|2|3>              a throwaway thread faults on purpose (1 divide by zero, 2 undefined
+ *                              instruction, 3 k_oops): zprof's fault capture ends it, the demo runs on
  *   home                       Home: tiles (and those that open a screen), pan position and range
  *   power                      Home Power's feed: online, state, requests, the last figures
  *   power url [http://HOST[:PORT] | none]  the energy monitor's address: show, or set (kept on the card)

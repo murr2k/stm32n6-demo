@@ -41,6 +41,7 @@
 #include "media/player.h"
 #include "net.h"
 #include "netcfg.h"
+#include "prof.h"
 #include "psram.h"
 #include "ui/shell.h"
 
@@ -219,6 +220,24 @@ static int agent_md(char *b, int cap)
 	return MIN(n, cap - 1);
 }
 
+/* Threads zprof's fault handler ended while the rest ran on (prof.h):
+ * ,"faults":{"count":N,"last":[{"thread","reason","uptime_s"}]}, the newest first. */
+static void sb_faults(struct sb *s)
+{
+	struct prof_fault_info fi[4];
+	int nf = prof_faults(fi, ARRAY_SIZE(fi));
+
+	sb_printf(s, ",\"faults\":{\"count\":%d,\"last\":[", nf);
+	for (int i = 0; i < MIN(nf, (int)ARRAY_SIZE(fi)); i++) {
+		sb_printf(s, "%s{\"thread\":", i ? "," : "");
+		sb_jstr(s, fi[i].thread[0] ? fi[i].thread : "(interrupt)", sizeof(fi[i].thread));
+		sb_printf(s, ",\"reason\":");
+		sb_jstr(s, prof_fault_reason(fi[i].reason), 32);
+		sb_printf(s, ",\"uptime_s\":%u}", fi[i].uptime_ms / 1000u);
+	}
+	sb_printf(s, "]}");
+}
+
 static int status_json(char *b, int cap)
 {
 	struct net_status ns;
@@ -232,11 +251,18 @@ static int status_json(char *b, int cap)
 		     "{\"board\":\"STM32N6570-DK\",\"ip\":\"%s\",\"mode\":\"%s\",\"mask\":\"%s\",\"gateway\":\"%s\","
 		     "\"uptime_s\":%u,\"screen\":{\"index\":%d,\"title\":\"%s\"},\"attract\":%s,"
 		     "\"fps\":%u.%u,\"frame_avg_us\":%u,\"frames_dropped\":%u,\"psram_kb\":%u,"
-		     "\"host_link\":{\"online\":%s,\"host\":\"%s\",\"processors\":%u},\"remotes\":%d,\"screens\":[",
+		     "\"host_link\":{\"online\":%s,\"host\":\"%s\",\"processors\":%u},\"remotes\":%d",
 		     ns.ip, ns.fixed ? "fixed" : "dhcp", ns.mask, ns.gw, k_uptime_get_32() / 1000, cur,
 		     cur >= 0 && shell_screen(cur) ? shell_screen(cur)->title : "", shell_in_attract() ? "true" : "false",
 		     g->fps_x10 / 10, g->fps_x10 % 10, g->avg_render_us, g->dropped, (unsigned int)(psram_used() / 1024),
 		     hostlink_online() ? "true" : "false", h->host_ip, h->n_host_cores, remotes_open());
+	if (n < cap) {
+		struct sb s = {b, cap, n};
+
+		sb_faults(&s);
+		n = sb_len(&s);
+	}
+	n += snprintf(b + n, n < cap ? cap - n : 0, ",\"screens\":[");
 	for (int i = 0; i < shell_count() && n < cap; i++) {
 		n += snprintf(b + n, cap - n, "%s\"%s\"", i ? "," : "", shell_screen(i)->title);
 	}
@@ -284,6 +310,7 @@ static int remote_json(char *b, int cap)
 	sb_printf(&s, ",\"secs\":%u,\"last\":", (unsigned int)t.secs);
 	sb_jstr(&s, t.last, sizeof(t.last) - 1);
 	sb_printf(&s, ",\"pc\":%s}", hostlink_online() ? "true" : "false");
+	sb_faults(&s);
 
 	sb_printf(&s, ",\"screens\":[");
 	for (int i = 0, k = 0; i < shell_count(); i++) {

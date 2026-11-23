@@ -127,6 +127,58 @@ static void post(enum ctl_cmd cmd, int arg)
 	ctl_post(cmd, arg);
 }
 
+/* ---- crash: a fault on purpose, for zprof's fault capture ----------------- */
+
+#define CRASH_STACK 2048
+
+static struct k_thread crash_thread;
+static k_thread_stack_t *crash_stack;
+static bool crash_started;
+
+static void crash_entry(void *p1, void *p2, void *p3)
+{
+	ARG_UNUSED(p2);
+	ARG_UNUSED(p3);
+	volatile int zero = 0;
+	volatile int x;
+
+	switch ((int)(uintptr_t)p1) {
+	case 1:
+		x = 100 / zero;   /* UsageFault, divide by zero (Zephyr sets CCR.DIV_0_TRP) */
+		ARG_UNUSED(x);
+		break;
+	case 2:
+		__asm__ volatile("udf #0");   /* UsageFault, undefined instruction */
+		break;
+	default:
+		k_oops();
+	}
+}
+
+/* A throwaway thread (stack in PSRAM, priority 10) that faults: zprof's handler
+ * keeps the fault and the kernel ends the thread; the demo runs on. Only bus-free
+ * faults: a read of a reserved address can hang the bus (CLAUDE.md). */
+static int crash_test(int kind, char *out, size_t out_len)
+{
+	if (kind < 1 || kind > 3) {
+		return snprintf(out, out_len, "err crash 1 (divide by zero), 2 (undefined), 3 (k_oops)\n");
+	}
+	if (crash_started && k_thread_join(&crash_thread, K_MSEC(100)) != 0) {
+		return snprintf(out, out_len, "err the last crash thread has not ended\n");
+	}
+	if (crash_stack == NULL) {
+		crash_stack = psram_alloc(K_THREAD_STACK_LEN(CRASH_STACK), 64);
+		if (crash_stack == NULL) {
+			return snprintf(out, out_len, "err no PSRAM for its stack\n");
+		}
+	}
+	k_thread_create(&crash_thread, crash_stack, CRASH_STACK, crash_entry, (void *)(uintptr_t)kind,
+			NULL, NULL, 10, 0, K_NO_WAIT);
+	k_thread_name_set(&crash_thread, "crash_test");
+	crash_started = true;
+	return snprintf(out, out_len, "crash %d started\n", kind);
+}
+
 /* ---- the PC's regression test (ctl.h) ----------------------------------- */
 
 #define TOUR_SILENT_MS 30000
@@ -707,6 +759,8 @@ static int handle(char *line, char *out, size_t out_len)
 		return ds_info(out, out_len);
 	} else if (!strcmp(cmd, "hometiles") && n >= 2) {
 		post(CTL_HOME_TILES, a[0]);
+	} else if (!strcmp(cmd, "crash") && n >= 2) {
+		return crash_test(a[0], out, out_len);
 	} else if (!strcmp(cmd, "home")) {
 		int tiles, real, scroll, max;
 

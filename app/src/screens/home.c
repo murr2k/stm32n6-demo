@@ -245,6 +245,8 @@ static void service(uint32_t now_ms)
 
 void home_test_tiles(int n)
 {
+	/* a test: the rebuild and the full redraw after it drop a frame or two */
+	gfx_expect_drop(4);
 	test_tiles = CLAMP(n, 0, MAX_TILES);
 	build();
 }

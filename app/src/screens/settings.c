@@ -15,6 +15,7 @@
 #include "platform/hostlink.h"
 #include "platform/net.h"
 #include "platform/netcfg.h"
+#include "platform/prof.h"
 #include "screens.h"
 #include "ui/theme.h"
 
@@ -28,7 +29,8 @@
 #define RIGHT_X 480
 
 static lv_obj_t *l_now, *b_dhcp, *b_static, *field[3], *field_l[3], *l_result;
-static lv_obj_t *qr, *l_url, *l_host, *l_store;
+static lv_obj_t *qr, *l_url, *l_host, *l_store, *l_faults;
+static int shown_faults = -1;
 static struct netcfg edit;
 static int sel;                 /* the field the keypad types into */
 static char shown_ip[16] = "-";
@@ -226,6 +228,10 @@ static void create(lv_obj_t *root)
 	     "Host Link and Core Map show the load of a PC running the companion (run.cmd). It finds this "
 	     "board by itself: it broadcasts a query on udp/5557 and the board answers.");
 
+	/* threads zprof's fault handler ended while the rest ran on */
+	lv_obj_set_pos(ui_caption(root, "FAULTS"), RIGHT_X, 330);
+	l_faults = text(root, RIGHT_X, 346, 300, &font_mono_12, C_TEXT2, "none since boot");
+
 	netcfg_get(&edit);
 	refresh();
 }
@@ -248,6 +254,26 @@ static void tick(uint32_t now_ms)
 		 mac->addr[2], mac->addr[3], mac->addr[4], mac->addr[5]);
 	if (strcmp(lv_label_get_text(l_now), buf)) {
 		lv_label_set_text(l_now, buf);
+	}
+
+	struct prof_fault_info fi[4];
+	int nf = prof_faults(fi, ARRAY_SIZE(fi));
+
+	if (nf != shown_faults) {
+		char list[4 * 52 + 32];
+		int at = 0;
+
+		shown_faults = nf;
+		for (int i = 0; i < MIN(nf, (int)ARRAY_SIZE(fi)); i++) {
+			at += snprintf(&list[at], sizeof(list) - at, "%s%7u s  %-12.12s %s", i ? "\n" : "",
+				       fi[i].uptime_ms / 1000u, fi[i].thread[0] ? fi[i].thread : "(interrupt)",
+				       prof_fault_reason(fi[i].reason));
+		}
+		if (nf > (int)ARRAY_SIZE(fi)) {
+			snprintf(&list[at], sizeof(list) - at, "\n%d since boot, the last 4 above", nf);
+		}
+		lv_label_set_text(l_faults, nf ? list : "none since boot");
+		lv_obj_set_style_text_color(l_faults, ui_c(nf ? C_BAD : C_TEXT2), 0);
 	}
 	if (strcmp(shown_ip, ns.have_ip ? ns.ip : "-")) {
 		strncpy(shown_ip, ns.have_ip ? ns.ip : "-", sizeof(shown_ip) - 1);
