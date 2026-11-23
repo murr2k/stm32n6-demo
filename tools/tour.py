@@ -28,6 +28,7 @@ import gzip
 import json
 import math
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -825,7 +826,31 @@ def run(a: argparse.Namespace) -> None:
     ds = dict(re.findall(r"(\w+)=(\S+)", send(a.host, ["ds"])[0]))
     print(f"memory: PSRAM in use {media(a.host)['psram_kb'] / 1000:.1f} of 28 MB; Explorer's data set from "
           f"{ds['source']}" + ("" if ds["source"] == "flash" else " (14 MB of PSRAM: tools/dataset.py puts it in the flash)"))
+    trace_port(a.host)
     send(a.host, ["screen 0"])
+
+
+def trace_port(host: str) -> None:
+    """zprof, the tracer, is in every build: the board's discovery answer lists its trace
+    port (prof=5560). Asked of the answer, not of the port: a bridge streaming during the
+    tour holds the port's one session."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(1.0)
+    try:
+        for _ in range(3):
+            s.sendto(b"N6HQ", (host, 5557))
+            try:
+                data, _ = s.recvfrom(512)
+            except (socket.timeout, ConnectionResetError):
+                continue
+            if data[:4] == b"N6HA":
+                m = re.search(rb"\bprof=(\d+)", data)
+                print(f"zprof: trace port {m.group(1).decode()} listed" if m else
+                      "zprof: NOT in this build (no prof= in the discovery answer)")
+                return
+    finally:
+        s.close()
+    print("zprof: NOT checked (the board did not answer discovery)")
 
 
 if __name__ == "__main__":

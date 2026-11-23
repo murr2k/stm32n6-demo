@@ -77,8 +77,10 @@ python -m venv .venv
 ```
 
 The project root is the west workspace (manifest in `app/west.yml`, pinned to
-Zephyr `v4.4.0`). `zephyr/`, `modules/` and `bootloader/` are fetched, not
-committed.
+Zephyr `v4.4.0`). `zephyr/`, `modules/`, `bootloader/` and `zprof/` (the
+tracer, part of the build: "Profiling with zprof" below) are fetched, not
+committed. A workspace set up before zprof was part of the build may still
+filter it out: `west config -d manifest.group-filter`, then `west update`.
 
 ## Build, flash, run
 
@@ -211,7 +213,7 @@ The firmware listens on these ports (trusted LAN only, no authentication):
 | udp/5557 | Host telemetry in, echo out; `N6HQ` discovery query answered with `N6HA` | `host/companion.py` |
 | tcp/5558 | Clips to and from the list on the microSD card: put (with CRC-32), list, delete, free space | `tools/n6v.py upload`, `ls`, `rm`, `df` |
 | tcp/80 | The web remote at `/` (state `/remote.json`, actions `POST /screen/N`, `/play/N`, `/demo/start`, `/demo/stop` with the header `X-N6: 1`); the board describes itself: `/about`, `/agent.md`, `/status.json` | a phone or a browser, `curl`, an agent |
-| tcp/5560 | The zprof build only: the trace stream, one client (below) | zprof's bridge |
+| tcp/5560 | zprof's trace stream, one client (below) | zprof's bridge |
 
 ```powershell
 .\.venv\Scripts\python.exe tools\ctl.py "screen 2" stats
@@ -258,34 +260,40 @@ board's sixteen TCP slots and find it unreachable for a while.
 [zprof](https://github.com/murr2k/zprof) traces the demo over its Ethernet
 port while it runs and shows it in the browser: every thread switch and
 interrupt, kernel objects, each frame and audio refill, and the demo's own
-counters every 100 ms. No debug probe, and the core never halts. It is a
-separate build (`build-zprof`); the release build does not contain it, and
-`west update` fetches zprof only once asked to:
+counters every 100 ms. No debug probe, and the core never halts. It is part
+of every build: `west update` fetches it into `zprof/` (ignored here) at the
+tag `app/west.yml` pins, and `app/CMakeLists.txt` builds its module with the
+demo's settings (`app/zprof.conf`). So any board running the demo can be
+traced; on the PC:
 
 ```powershell
-.\.venv\Scripts\west.exe config manifest.group-filter -- +zprof
-.\.venv\Scripts\west.exe update zprof            # zprof into zprof/ (ignored), at the tag app/west.yml pins
-.\n6.cmd go -p --zprof                           # build-zprof: build, flash, start
 cd zprof; python -m venv .venv; .venv\Scripts\pip install -r host\bridge\requirements.txt
 cd host\bridge
-..\..\.venv\Scripts\python -m zprof_bridge serve --host <board> --elf ..\..\..\build-zprof\app\zephyr\zephyr.elf `
+..\..\.venv\Scripts\python -m zprof_bridge serve --host <board> --elf ..\..\..\build\app\zephyr\zephyr.elf `
     --irq-header ..\..\..\modules\hal\stm32\stm32cube\stm32n6xx\soc\stm32n657xx.h `
     --deadlines ..\..\integrations\stm32n6-demo\deadlines.json
 ```
+
+The ELF must be the one of the build on the board (the bridge checks a build
+id). `n6.cmd build --no-zprof` leaves zprof out (build dir `build-nozprof`):
+for the SystemView build, and to measure what zprof costs;
+`--zprof DIR` builds it from another checkout.
 
 The dashboard (zprof's README: Sferic checked out beside zprof as
 `lightning/`, also ignored here, then `npm ci` and `run.cmd` in zprof) is
 then at http://127.0.0.1:8781/#target, with the Schedulability (`#sched`)
 and Timing (`#ltiming`) views beside it.
 
-The zprof build adds tcp/5560, `prof=5560` in the discovery answer, about
-8 KB of code and 72 KB of internal RAM (its ring), and 4 MB of PSRAM taken at
-the first capture-then-upload. With the bridge streaming through a full
-`tour.py`: 0 dropped frames, 0 audio underruns. The demo's side is
-`app/src/platform/prof.c` (the capture buffer, and `gfx_stats()` and the audio
-counters as heartbeat gauges) and the marks in `gfx.c` (each frame as a job,
-each frame's margin as a plot); `prof.h` makes them empty in the release
-build.
+What it costs: tcp/5560 (one client) and `prof=5560` in the discovery answer,
+about 8 KB of code, 72 KB of internal RAM (its 64 KB ring and its sender's
+stack), and 4 MB of PSRAM taken at the first capture-then-upload. With nobody
+connected its hooks return at once; Home's frames take about 0.2 ms more than
+without zprof (Zephyr's tracing hooks), about 0.3 ms more while a bridge
+streams. Full `tour.py` either way: 0 dropped frames, 0 audio underruns. The
+demo's side is `app/src/platform/prof.c` (the capture buffer, and
+`gfx_stats()` and the audio counters as heartbeat gauges) and the marks in
+`gfx.c` (each frame as a job, each frame's margin as a plot); `prof.h` makes
+them empty in a build without zprof.
 
 ## Layout
 

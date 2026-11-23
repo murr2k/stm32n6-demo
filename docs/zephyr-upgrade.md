@@ -35,7 +35,7 @@ breaks and a full re-measurement.
 - **LVGL 9.6:** `CONFIG_LV_COLOR_DEPTH_32` no longer selects the colour format (`CONFIG_LV_COLOR_FORMAT_*` does). Other API changes are not checked.
 - **The board now enables SAI1 (A and B), GPDMA1, MDF1/pdm0 and DMA2D**, which the demo drives through the HAL with its own interrupt handlers. Nothing binds today, because `CONFIG_DMA`, `I2S` and `AUDIO_DMIC` are off, but they should be `status = "disabled"` in the overlay before anything turns them on. The board's `wm8904@1a` would merge with the demo's node and bring a mic bias and input PGA setting (effect not checked).
 - **Timing moves:** the M55 branch cache is on by default (`STM32N6_BRANCH_CACHE`), with LVGL 9.6 and the Ethernet driver's restructuring (MDIO now `snps,dwmac-mdio`). That means a full tour and a soak again.
-- **Tracing (zprof):** the sleep hooks became `k_thread_sleep_ticks_enter/exit` (in ticks), object tracking moved to object cores, and the hook list is in `tracing_hooks.h`. zprof could plug in through `CONFIG_TRACING_FORMAT_HEADER` instead of `TRACING_CUSTOM`. There is also a new ITM backend; SWO (PB5) is free on this board.
+- **Tracing (zprof, part of every build since 2026-11-22, so this is the release build's tracing):** the sleep hooks became `k_thread_sleep_ticks_enter/exit` (in ticks), object tracking moved to object cores, and the hook list is in `tracing_hooks.h`. zprof could plug in through `CONFIG_TRACING_FORMAT_HEADER` instead of `TRACING_CUSTOM`. There is also a new ITM backend; SWO (PB5) is free on this board.
 
 ## For zprof's next phase (PMU, faults)
 

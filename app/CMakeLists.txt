@@ -4,6 +4,39 @@ cmake_minimum_required(VERSION 3.20.0)
 # The camera module in the CSI connector: ST B-CAMS-IMX (MB1854, IMX335).
 set(SHIELD st_b_cams_imx_mb1854)
 
+# zprof (https://github.com/murr2k/zprof), the tracer, is part of the build: its Zephyr
+# module and the demo's settings for it (zprof.conf). West fetches it into zprof/; its
+# module sits in firmware/zprof, where module discovery does not look, so it is added
+# here. -DZPROF=OFF (n6.cmd --no-zprof) builds without it: the SystemView build, and the
+# observer A/B. -DZPROF_DIR=... (n6.cmd --zprof DIR) takes another checkout.
+set(zprof_default_dir ${CMAKE_CURRENT_LIST_DIR}/../zprof)
+option(ZPROF "zprof, the tracer: its module from ZPROF_DIR and zprof.conf" ON)
+set(ZPROF_DIR ${zprof_default_dir} CACHE PATH "zprof checkout (west update fetches it)")
+# Under sysbuild, -Dapp_ZPROF and -Dapp_ZPROF_DIR reach this image only in its
+# sysbuild cache, which Zephyr's zephyr_get() reads only after find_package: read
+# them here. Not given means the default, so a build's choice never sticks.
+if(SYSBUILD AND EXISTS "${SYSBUILD_CACHE}")
+  get_filename_component(zprof_img "${SYSBUILD_CACHE}" NAME)
+  string(REGEX REPLACE "_sysbuild_cache\\.txt$" "" zprof_img "${zprof_img}")
+  file(STRINGS "${SYSBUILD_CACHE}" zprof_sb REGEX "^${zprof_img}_ZPROF(_DIR)?:" ENCODING UTF-8)
+  set(ZPROF ON)
+  set(ZPROF_DIR ${zprof_default_dir})
+  foreach(zprof_line ${zprof_sb})
+    if(zprof_line MATCHES "^${zprof_img}_ZPROF:[^=]*=(.*)$")
+      set(ZPROF ${CMAKE_MATCH_1})
+    elseif(zprof_line MATCHES "^${zprof_img}_ZPROF_DIR:[^=]*=(.*)$")
+      set(ZPROF_DIR ${CMAKE_MATCH_1})
+    endif()
+  endforeach()
+endif()
+if(ZPROF)
+  if(NOT EXISTS ${ZPROF_DIR}/firmware/zprof/zephyr/module.yml)
+    message(FATAL_ERROR "no zprof at ${ZPROF_DIR}: run west update (or build with -DZPROF=OFF)")
+  endif()
+  list(APPEND ZEPHYR_EXTRA_MODULES ${ZPROF_DIR}/firmware/zprof)
+  list(APPEND EXTRA_CONF_FILE ${CMAKE_CURRENT_LIST_DIR}/zprof.conf)
+endif()
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(n6_demo)
 

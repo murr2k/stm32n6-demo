@@ -188,6 +188,11 @@ static int agent_md(char *b, int cap)
 	P("- **tcp/5558, microSD media library.** Lines `list`, `df`, `del NAME`, `put NAME BYTES CRC32HEX` "
 	  "followed by the data in 8 KB pieces, each acknowledged by one byte. Clips are .n6v files (Motion JPEG and "
 	  "48 kHz PCM).\n");
+#ifdef CONFIG_ZPROF
+	P("- **tcp/5560, zprof trace.** One client: thread switches, interrupts, kernel-object calls, frame "
+	  "marks and the demo's counters, for zprof's bridge (https://github.com/murr2k/zprof), which names them "
+	  "from the build's ELF. Listed as `prof=5560` in the discovery answer.\n");
+#endif
 	P("- **tcp/80, HTTP.** `/` is a remote for a phone (the QR code on the Settings screen opens it), "
 	  "`/about` this text as a page, `/agent.md` this text, `/status.json` live state, `/remote.json` what the "
 	  "remote shows (the screen up, the listed screens, the clips, the attract lap's position, the PC's test "

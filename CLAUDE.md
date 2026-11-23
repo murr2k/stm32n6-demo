@@ -16,7 +16,7 @@ not to be modified from here.
 ```powershell
 .\n6.cmd go                 # build + flash + power-cycle + start + console
 .\n6.cmd go -p              # pristine; REQUIRED after adding any .overlay/.conf file
-.\n6.cmd go -p --zprof      # the zprof profiler build (build-zprof; module and conf from zprof/, which west update fetches after `west config manifest.group-filter -- +zprof`): README "Profiling with zprof"
+.\n6.cmd build --no-zprof   # without zprof, the tracer that every build includes (build-nozprof): the observer A/B; --zprof DIR builds it from another checkout (README "Profiling with zprof")
 .\n6.cmd go --app-only      # do not reflash MCUboot
 .\n6.cmd run --secs 20 --until "regex"
 .\shot.cmd --host 192.168.254.86 -o captures\x.png
@@ -193,7 +193,9 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   server's 20.5 KB of buffers went to PSRAM with the web remote, 138 KB
   left; 695.2 (711,912 B) without Under the Hood, 2026-11-20, 145 KB left;
   711.3 (728,400 B) with the microphone's ring moved in from PSRAM,
-  2026-11-22, **129 KB left**; the zprof build takes 72 KB more) (LVGL pool 192 KB,
+  2026-11-22, 129 KB left; 781.7 (800,464 B) with zprof in every build (its
+  64 KB ring and 3 KB sender stack), the same day, **58 KB left**, until its
+  ring moves to the unused DTCM) (LVGL pool 192 KB,
   peak 108 KB after a tour; kernel heap 16 KB, peak 140 B, getaddrinfo its
   only user; main stack 10 KB, 5.8 KB used; network buffers 128 KB, not yet
   measured; the card's two 32 KB I/O buffers; other stacks; the NPU's thread
@@ -1326,6 +1328,23 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   so (Signal Lab, Explorer). **Why:** the audience will look for fake data.
 - **Keep `.cmd` wrappers plain ASCII.** **Why:** non-ASCII characters in a
   batch file produce parser garbage when invoked from PowerShell.
+- **zprof, the tracer, is part of every build (`app/CMakeLists.txt` adds its
+  module from `zprof/`, which west fetches at the pinned tag, with
+  `app/zprof.conf`); a SystemView build is made with `--no-zprof`.** **Why:**
+  the user's decision, 2026-11-22: any board running the demo can be traced,
+  and there is one firmware to test. Zephyr takes one tracing format per
+  build (`TRACING_CUSTOM` and `SEGGER_SYSTEMVIEW` are one Kconfig choice).
+  Its cost, measured against `--no-zprof`: 72 KB of internal RAM (the 64 KB
+  ring, until it moves to the unused DTCM), about 8 KB of code, Home's frame
+  about 0.2 ms longer with nobody connected (the hooks return after one load;
+  the rest is Zephyr's hook sites) and about 0.3 ms while a bridge streams.
+  The tour checks `prof=5560` in the discovery answer. A zprof tag must be
+  public before the demo pins it, or `west update` fails for everyone.
+  Under sysbuild `-Dapp_ZPROF=OFF` (and `-Dapp_ZPROF_DIR`) reach the app only
+  in its sysbuild cache file, so `app/CMakeLists.txt` reads them from there
+  before `find_package`. **Why:** a plain `option(ZPROF)` never saw them: the
+  first `--no-zprof` build still had zprof, and the SystemView build got
+  SystemView only because its Kconfig fragment won the choice.
 - **Commits carry no Claude attribution.**
 
 ## Open questions / known gaps

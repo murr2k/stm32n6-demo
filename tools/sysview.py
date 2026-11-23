@@ -73,7 +73,8 @@ def check_board(host: str) -> None:
         raise SystemExit(f"the board at {host} does not answer the host link's discovery")
     if not segger.elf_has_build(elf, stamp):
         raise SystemExit(f"the board runs build {stamp!r}, not build-sysview's: "
-                         "n6.cmd -d build-sysview go --app-only (n6.cmd go --app-only puts the release back)")
+                         "n6.cmd -d build-sysview go --app-only --no-zprof -- '-Dapp_EXTRA_CONF_FILE=sysview.conf' "
+                         "(n6.cmd go --app-only puts the release back)")
 
 
 def sysview_pid() -> int | None:

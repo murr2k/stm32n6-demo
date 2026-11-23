@@ -9,15 +9,18 @@ behind the rules that came out of them.
 
 ### Added
 
-- **Profiling with zprof** (README, "Profiling with zprof"): `west update`
-  fetches [zprof](https://github.com/murr2k/zprof) once the workspace opts in
-  (`west config manifest.group-filter -- +zprof`; nobody else downloads it)
-  and `n6.cmd go -p --zprof` makes the profiler build (`build-zprof`): every
-  thread switch, interrupt and kernel-object call, each frame as a job with
-  its margin, and the frame and audio counters every 100 ms, over the board's Ethernet
+- **Profiling with zprof, in every build** (README, "Profiling with zprof"):
+  `west update` fetches [zprof](https://github.com/murr2k/zprof) and the
+  build includes its module (`app/zprof.conf`): every thread switch,
+  interrupt and kernel-object call, each frame as a job with its margin, and
+  the frame and audio counters every 100 ms, over the board's Ethernet
   (tcp/5560, `prof=5560` in the discovery answer) to a dashboard in the
-  browser. No probe, no halt; the release build is unchanged. With the
-  bridge streaming through a full tour: 0 dropped frames, 0 audio underruns.
+  browser. No probe, no halt. It costs 72 KB of internal RAM, about 8 KB of
+  code, and Home's frames about 0.2 ms with nobody connected (0.3 ms while a
+  bridge streams); a full tour either way: 0 dropped frames, 0 audio
+  underruns. `n6.cmd build --no-zprof` builds without it (the SystemView
+  build needs that); a workspace set up before may still filter it out
+  (`west config -d manifest.group-filter`).
 - **SEGGER SystemView and Ozone from the command line**, for a J-Link on
   CN10: `tools/sysview.py record` checks that the board runs the SystemView
   build (`app/sysview.conf` says how to make it), finds the RTT block, records

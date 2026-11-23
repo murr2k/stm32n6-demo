@@ -126,12 +126,17 @@ def cmd_build(a: argparse.Namespace) -> None:
     if a.pristine:
         cmd[2:2] = ["-p", "always"]
     cmake = list(a.cmake)
-    if a.zprof:
-        z = a.zprof.resolve()
+    # zprof is in every build (app/CMakeLists.txt, from zprof/); --zprof DIR takes another
+    # checkout of it (working on zprof itself), --no-zprof leaves it out. Both are passed
+    # every time: they are CMake cache variables, and one build's choice must not stick
+    # to the build directory.
+    if a.no_zprof:
+        cmake[:0] = ["-Dapp_ZPROF=OFF"]
+    else:
+        z = (a.zprof or ROOT / "zprof").resolve()
         if not (z / "firmware" / "zprof" / "zephyr" / "module.yml").exists():
-            sys.exit(f"[n6] no zprof at {z} (west update fetches it into zprof/)")
-        cmake[:0] = [f"-Dapp_EXTRA_CONF_FILE={(z / 'integrations' / 'stm32n6-demo' / 'zprof.conf').as_posix()}",
-                     f"-Dapp_ZEPHYR_EXTRA_MODULES={(z / 'firmware' / 'zprof').as_posix()}"]
+            sys.exit(f"[n6] no zprof at {z}: west update fetches it into zprof/ (or build with --no-zprof)")
+        cmake[:0] = ["-Dapp_ZPROF=ON", f"-Dapp_ZPROF_DIR={z.as_posix()}"]
     if cmake:
         cmd += ["--", *cmake]
     t0 = time.time()
@@ -256,9 +261,12 @@ def main() -> None:
     def add_build(sp):
         sp.add_argument("--app", type=Path, default=ROOT / "app")
         sp.add_argument("-p", "--pristine", action="store_true")
-        sp.add_argument("--zprof", type=Path, nargs="?", const=ROOT / "zprof", default=None, metavar="DIR",
-                        help="the zprof profiler build (build dir build-zprof unless -d): its module and "
-                             "conf from DIR (default: zprof/, fetched by west update)")
+        sp.add_argument("--zprof", type=Path, default=None, metavar="DIR",
+                        help="build zprof, the tracer (in every build), from this checkout instead of "
+                             "zprof/ (which west update fetches)")
+        sp.add_argument("--no-zprof", action="store_true",
+                        help="leave zprof out (build dir build-nozprof unless -d): the observer A/B, and the "
+                             "SystemView build (both are Zephyr tracing formats)")
         sp.add_argument("cmake", nargs="*", help="extra CMake args, e.g. -DCONFIG_FOO=y")
 
     def add_flash(sp):
@@ -281,8 +289,8 @@ def main() -> None:
     sp.add_argument("--no-power-cycle", action="store_true"); sp.set_defaults(fn=cmd_go)
 
     a = p.parse_args()
-    if getattr(a, "zprof", None) and a.build == BUILD:
-        a.build = ROOT / "build-zprof"
+    if getattr(a, "no_zprof", False) and a.build == BUILD:
+        a.build = ROOT / "build-nozprof"
     a.build = a.build if a.build.is_absolute() else ROOT / a.build
     a.fn(a)
 
