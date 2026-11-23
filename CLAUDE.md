@@ -194,15 +194,19 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   left; 695.2 (711,912 B) without Under the Hood, 2026-11-20, 145 KB left;
   711.3 (728,400 B) with the microphone's ring moved in from PSRAM,
   2026-11-22, 129 KB left; 781.7 (800,464 B) with zprof in every build (its
-  64 KB ring and 3 KB sender stack), the same day, **58 KB left**, until its
-  ring moves to the unused DTCM) (LVGL pool 192 KB,
+  64 KB ring and 3 KB sender stack), the same day, 58 KB left; 717.7
+  (734,885 B) once zprof's ring moved to the DTCM, the same day, **122 KB
+  left**) (LVGL pool 192 KB,
   peak 108 KB after a tour; kernel heap 16 KB, peak 140 B, getaddrinfo its
   only user; main stack 10 KB, 5.8 KB used; network buffers 128 KB, not yet
   measured; the card's two 32 KB I/O buffers; other stacks; the NPU's thread
   8 KB). Before growing a pool or adding a thread, read `ctl.py mem stacks`
   after a tour; new threads may put their stacks in PSRAM as homepower.c
-  does. Still unused: the M55's own TCMs (DTCM 128 KB at 0x3000_0000, ITCM
-  64 KB at 0x1000_0000), not in Zephyr's N6 device tree. All screens' LVGL objects are
+  does. The M55's own TCMs are not in Zephyr v4.4.0's N6 device tree; the
+  overlay declares the DTCM (128 KB at 0x3000_0000, `zephyr,dtcm`: enabled at
+  reset, ECC on, CPU only), where zprof's 64 KB ring lives, 64 KB of it still
+  free for CPU-only data (`__dtcm_bss_section`); the ITCM (64 KB at
+  0x1000_0000) is still unused. All screens' LVGL objects are
   built at boot and kept; PSRAM 13.4 of 28 MB and never freed: the player
   7.0 MB (4 MB read-ahead window, three 576 KB decode buffers, 1 MB index),
   Cinema 2.4 MB, camera 2.1 MB, screenshot 1.5 MB (14 MB more when Explorer's
@@ -1334,8 +1338,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
   the user's decision, 2026-11-22: any board running the demo can be traced,
   and there is one firmware to test. Zephyr takes one tracing format per
   build (`TRACING_CUSTOM` and `SEGGER_SYSTEMVIEW` are one Kconfig choice).
-  Its cost, measured against `--no-zprof`: 72 KB of internal RAM (the 64 KB
-  ring, until it moves to the unused DTCM), about 8 KB of code, Home's frame
+  Its cost, measured against `--no-zprof`: 7 KB of internal RAM (its 64 KB
+  ring is in the DTCM, `ZPROF_RING_DTCM`, zprof v0.4.1), about 10 KB of code, Home's frame
   about 0.2 ms longer with nobody connected (the hooks return after one load;
   the rest is Zephyr's hook sites) and about 0.3 ms while a bridge streams.
   The tour checks `prof=5560` in the discovery answer. A zprof tag must be

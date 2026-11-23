@@ -15,7 +15,8 @@ behind the rules that came out of them.
   interrupt and kernel-object call, each frame as a job with its margin, and
   the frame and audio counters every 100 ms, over the board's Ethernet
   (tcp/5560, `prof=5560` in the discovery answer) to a dashboard in the
-  browser. No probe, no halt. It costs 72 KB of internal RAM, about 8 KB of
+  browser. No probe, no halt. It costs 7 KB of internal RAM (its 64 KB ring
+  sits in the M55's DTCM, which the overlay now declares), about 10 KB of
   code, and Home's frames about 0.2 ms with nobody connected (0.3 ms while a
   bridge streams); a full tour either way: 0 dropped frames, 0 audio
   underruns. `n6.cmd build --no-zprof` builds without it (the SystemView

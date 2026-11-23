@@ -60,6 +60,26 @@
 };
 
 /*
+ * The Cortex-M55's data TCM: 128 KB at 0x3000_0000 (the secure alias),
+ * single-cycle, uncached, reachable by the core only. Zephyr v4.4.0's N6
+ * devicetree has no node for it. Chosen as zephyr,dtcm, Zephyr links
+ * .dtcm_bss, .dtcm_noinit and .dtcm_data into it and zeroes .dtcm_bss at boot
+ * (which gives the ECC its first writes); zprof puts its event ring there
+ * (ZPROF_RING_DTCM). Nothing a DMA or another bus master must read goes here.
+ */
+/ {
+	chosen {
+		zephyr,dtcm = &dtcm;
+	};
+
+	dtcm: memory@30000000 {
+		compatible = "zephyr,memory-region", "arm,dtcm";
+		reg = <0x30000000 DT_SIZE_K(128)>;
+		zephyr,memory-region = "DTCM";
+	};
+};
+
+/*
  * Panel refresh. Stock settings give a 20 MHz pixel clock from the HSI-fed
  * PLL4 and 820 x 500 total: 48.8 Hz. Feed the LTDC 25 MHz from the
  * crystal-fed PLL1 (2400 MHz / 96) and stretch the front porches to

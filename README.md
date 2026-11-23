@@ -285,8 +285,9 @@ then at http://127.0.0.1:8781/#target, with the Schedulability (`#sched`)
 and Timing (`#ltiming`) views beside it.
 
 What it costs: tcp/5560 (one client) and `prof=5560` in the discovery answer,
-about 8 KB of code, 72 KB of internal RAM (its 64 KB ring and its sender's
-stack), and 4 MB of PSRAM taken at the first capture-then-upload. With nobody
+about 10 KB of code, 7 KB of internal RAM (its 64 KB ring is in the M55's
+DTCM, which the overlay declares), and 4 MB of PSRAM taken at the first
+capture-then-upload. With nobody
 connected its hooks return at once; Home's frames take about 0.2 ms more than
 without zprof (Zephyr's tracing hooks), about 0.3 ms more while a bridge
 streams. Full `tour.py` either way: 0 dropped frames, 0 audio underruns. The
