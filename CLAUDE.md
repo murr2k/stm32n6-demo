@@ -58,6 +58,7 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 .\.venv\Scripts\python.exe tools\nn.py grab 5 --hand   # frames as the tracker saw them (captures/hands, ignored) and the PC's models on them and on variants
 .\.venv\Scripts\python.exe tools\ctl.py "nn thr 50 50"   # the palm and presence thresholds, percent
 .\.venv\Scripts\python.exe tools\camsnap.py --uncap   # a still from the board's camera (pointed at its own panel: is it black? look at the PNG, the luma figures cannot tell); captures/camsnap/ (ignored)
+cd zprof\host\bridge; ..\..\.venv\Scripts\python -m zprof_bridge recorder arm --host 192.168.254.86   # zprof's flight recorder: the next missed frame (gfx.c ZPROF_TRIGGER) freezes the last ~0.4 s; "recorder status -o x.zpr --elf ..." collects it (any client gets it first)
 .\run.cmd                   # host companion: live data for Host Link and Core Map; finds boards by broadcast (--host to name one)
 .\.venv\Scripts\python.exe host\companion.py --host 192.168.254.86 --cores 128   # TEST ONLY: synthetic load on 128 processors
 ```

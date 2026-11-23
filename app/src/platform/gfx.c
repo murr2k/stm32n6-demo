@@ -110,6 +110,8 @@ static void account_frame(uint32_t render_us, uint32_t now)
 		}
 		if (period > stats.period_us + stats.period_us / 2) {
 			stats.dropped += (period + stats.period_us / 2) / stats.period_us - 1;
+			/* zprof's flight recorder, when armed, keeps what led up to it */
+			ZPROF_TRIGGER(1);
 			last_drop.frame = stats.frames;
 			last_drop.seq = trace.seq;
 			last_drop.screen = on_screen;

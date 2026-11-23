@@ -296,6 +296,14 @@ demo's side is `app/src/platform/prof.c` (the capture buffer, and
 `gfx.c` (each frame as a job, each frame's margin as a plot); `prof.h` makes
 them empty in a build without zprof.
 
+A missed frame also calls `ZPROF_TRIGGER(1)` (`gfx.c`), for zprof's flight
+recorder: armed (`zprof_bridge recorder arm --host <board>`), the board keeps
+recording into the ring while nobody is connected, and the first missed frame
+freezes it 20 ms later. The next `zprof_bridge recorder status -o x.zpr --elf
+...` saves what led up to it (0.4 s of Home in the 64 KB ring) for `summary`
+and the other commands. It is how a drop that comes once an hour is caught
+with nobody watching. It is off after a reset, and a reset loses what it held.
+
 ## Layout
 
 ```

@@ -9,6 +9,11 @@ behind the rules that came out of them.
 
 ### Added
 
+- **A missed frame triggers zprof's flight recorder** (README, "Profiling
+  with zprof"): armed with `zprof_bridge recorder arm`, the board records
+  while nobody is connected, and the first missed frame keeps what led up to
+  it (about 0.4 s of Home) for the next `recorder status` to collect.
+
 - **Profiling with zprof, in every build** (README, "Profiling with zprof"):
   `west update` fetches [zprof](https://github.com/murr2k/zprof) and the
   build includes its module (`app/zprof.conf`): every thread switch,
