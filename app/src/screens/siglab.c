@@ -1053,8 +1053,10 @@ static void service(uint32_t now_ms)
 	 * Run on every screen it cost each of them 0.8 ms a frame (2.9 ms worst,
 	 * measured with svct on 2026-11-17). Skipped, it loses nothing: when it
 	 * runs again it takes at most the last 50 ms of the generator and the
-	 * latest of the microphone or the theremin, as after any stall. */
-	if (visible || shell_screen(shell_current()) == &screen_home) {
+	 * latest of the microphone or the theremin, as after any stall (2 to 3 ms
+	 * then): not in the frame that builds this screen or Home, which leaves
+	 * the pictures out (shell_entering()). */
+	if ((visible || shell_screen(shell_current()) == &screen_home) && !shell_entering()) {
 		sig_service(now_ms);
 	}
 	theremin_service(); /* measures the DAC's rate: cheap, and wanted anywhere */

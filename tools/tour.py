@@ -517,38 +517,84 @@ def card_playback(host: str, m: dict[str, int], index: int) -> None:
               f"dropped {int(g1['dropped'] - g0['dropped'])}, still on {where(host)[0]}")
 
 
-def transition_test(host: str, film: int = 6) -> None:
+def entry_frames(host: str) -> list[dict[str, int]] | None:
+    """The frame that built the screen after the last switch and the one after it,
+    which draws what the first one left out (shell_entering() in ui/shell.h), from
+    ctl swtrace (gfx.h): time left before its deadline, LVGL, the switch tail, the
+    main loop, other threads, us; None if the trace has no such frames. Time left
+    is None when no deadline applied ("u": the slot before presented nothing, as
+    under a film's 30 fps, so the frame could not drop and its figure means
+    nothing)."""
+    d = dict(re.findall(r"(\w+)=(\S+)", send(host, ["swtrace"])[0]))
+    out = []
+    try:
+        at = int(d["at_switch"])
+        for raw in d["f"].split(",")[at:at + 2]:
+            _, tail, pre, lv, away, left, _ = (int(x) for x in raw.rstrip("u").split("/"))
+            out.append({"left": None if raw.endswith("u") else left, "lv": lv, "tail": tail, "pre": pre,
+                        "away": away})
+    except (KeyError, IndexError, ValueError):
+        return None
+    return out or None
+
+
+def margins(host: str, label: str, line: str | None = None) -> None:
+    """The board's frame margins since the last "margins reset" (ctl.margin_report),
+    from its reply now or one read earlier."""
+    m = ctl.margins(line or send(host, ["margins"])[0])
+    if m:
+        for line in ctl.margin_report(m, lambda i: SCREENS[i] if 0 <= i < len(SCREENS) else str(i)):
+            print(f"  {label} {line}")
+
+
+def transition_test(host: str, film: int = 6, homes: int = 3) -> None:
     """Screen changes: the fade is done by the LTDC, so none may cost a frame.
 
     Every screen is entered at least once (the Camera screen lends and takes
-    back a frame buffer on the way), and Explorer also straight from a playing
-    film: the switch itself (closing the player) runs after a present, outside
-    the next frame's render time but inside its budget, and the frame that
-    builds Explorer is the heaviest first frame left (LVGL 10 to 13.3 ms in
-    attract laps). Until 2026-11-20 this was Under the Hood (removed), whose
-    first frame after a film dropped a frame on about one lap in three.
+    back a frame buffer on the way), and the two tightest first frames of the
+    attract lap straight from a playing film: the switch itself (closing the
+    player) runs after a present, outside the next frame's render time but
+    inside its budget. Explorer opens at the view its tour left it at, which an
+    attract lap moves on by one of six stops: its frame at one of them dropped
+    in the hunt of 2026-11-23 (once in 3.7 h, again in 4.5 h; every sixth lap
+    came within about 2 ms), so it is entered at each (ctl exview). Home's
+    first frame after the film was within 2.5 ms on every lap of that hunt.
+    Until 2026-11-20 Under the Hood (removed) held this place: its first frame
+    after a film dropped a frame on about one lap in three.
     """
     cinema, explorer = SCREENS.index("cinema"), SCREENS.index("explorer")
     send(host, ["screen 0"])
     time.sleep(1.5)
-    send(host, ["reset"])
+    send(host, ["reset", "margins reset"])
     before = stats(host)
     order = [SCREENS.index(n) for n in ("deck", "siglab", "explorer", "hostlink", "coremap", "home", "cinema",
                                         "touchlab", "deck", "home", "specimen", "settings", "camera", "home")]
     for i in order:
         send(host, [f"screen {i}"])
         time.sleep(0.9)
-    for _ in range(film):
+    entries: list[tuple[str, list[dict[str, int]] | None]] = []
+    for k in [i % 6 for i in range(film)] + [-1] * homes:
         send(host, [f"screen {cinema}"])
         time.sleep(1.0)
+        if k >= 0:
+            send(host, [f"exview {k}"])   # Explorer is hidden: its next opening view
         send(host, ["play 0"])
         time.sleep(3.0)
-        send(host, [f"screen {explorer}"])
+        send(host, [f"screen {explorer if k >= 0 else 0}"])
         time.sleep(1.0)
+        entries.append((f"stop {k}" if k >= 0 else "home", entry_frames(host)))
     s = stats(host)
-    print(f"transitions: {len(order) + 2 * film} screen changes ({film} from a playing film into Explorer), "
-          f"frame worst {s['render_worst_us'] / 1000:.2f} ms, switch tail worst {s.get('tail_worst_us', 0) / 1000:.2f} ms, "
-          f"dropped {int(s['dropped'] - before['dropped'])}")
+    print(f"transitions: {len(order) + 2 * (film + homes)} screen changes ({film} from a playing film into "
+          f"Explorer, {homes} into Home), frame worst {s['render_worst_us'] / 1000:.2f} ms, switch tail worst "
+          f"{s.get('tail_worst_us', 0) / 1000:.2f} ms, dropped {int(s['dropped'] - before['dropped'])}")
+
+    def fmt(f: dict[str, int]) -> str:
+        left = "no deadline" if f["left"] is None else f"{f['left'] / 1000:.2f} ms"
+        return f"{left} (LVGL {f['lv'] / 1000:.1f}, loop {f['pre'] / 1000:.1f}, tail {f['tail'] / 1000:.1f})"
+
+    print("  after the film, time left by the first frame / the next: " +
+          ", ".join(f"{n} {' / '.join(fmt(f) for f in fs) if fs else '?'}" for n, fs in entries))
+    margins(host, "transitions:")
 
 
 def remote_test(host: str) -> None:
@@ -603,15 +649,17 @@ def attract_test(host: str, secs: float) -> None:
     """
     send(host, ["screen 0"])
     time.sleep(1.5)
-    send(host, ["reset"])
+    send(host, ["reset", "margins reset"])
     before, a0 = stats(host), kv(host, "audio")
     send(host, ["attract"])
     wait(host, secs)
     s, a1 = stats(host), kv(host, "audio")
+    m = send(host, ["margins"])[0]  # before the switch below
     send(host, ["screen 0"])  # counts as input: ends attract mode
     print(f"attract mode: {secs:.0f} s, frame worst {s['render_worst_us'] / 1000:.2f} ms, "
           f"dropped {int(s['dropped'] - before['dropped'])}, "
           f"audio underruns {int(a1.get('errors', 0) - a0.get('errors', 0))}")
+    margins(host, "attract:", m)
 
 
 def home_pan_test(host: str) -> None:

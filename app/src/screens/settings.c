@@ -29,12 +29,13 @@
 #define RIGHT_X 480
 
 static lv_obj_t *l_now, *b_dhcp, *b_static, *field[3], *field_l[3], *l_result;
-static lv_obj_t *qr, *l_url, *l_host, *l_store, *l_faults;
+static lv_obj_t *right, *qr, *l_url, *l_host, *l_store, *l_faults;
 static int shown_faults = -1;
 static bool shown_alarm;
 static struct netcfg edit;
 static int sel;                 /* the field the keypad types into */
-static char shown_ip[16] = "-";
+static char shown_ip[16] = "-"; /* in the QR code */
+static uint32_t shown_ms;       /* show() */
 
 static char *field_text(int i)
 {
@@ -210,28 +211,30 @@ static void create(lv_obj_t *root)
 	text(root, 300, KEYS_Y + 150, 160, &font_text_14, C_TEXT3,
 	     "Hold the USER button while powering up to force DHCP.");
 
-	/* right: where to read about the board */
-	lv_obj_set_pos(ui_caption(root, "FOR PEOPLE AND AGENTS"), RIGHT_X, 8);
-	qr = lv_qrcode_create(root);
+	/* right: where to read about the board, the data host, faults. One
+	 * container: the frame that builds the screen leaves it out (hold_content()) */
+	right = ui_box(root, RIGHT_X, 0, GFX_W - RIGHT_X, UI_CONTENT_H);
+	lv_obj_set_pos(ui_caption(right, "FOR PEOPLE AND AGENTS"), 0, 8);
+	qr = lv_qrcode_create(right);
 	lv_qrcode_set_size(qr, 132);
 	lv_qrcode_set_dark_color(qr, ui_c(C_BG0));
 	lv_qrcode_set_light_color(qr, ui_c(C_TEXT));
 	lv_qrcode_set_quiet_zone(qr, true);
-	lv_obj_set_pos(qr, RIGHT_X, 30);
-	l_url = text(root, RIGHT_X + 146, 34, 0, &font_mono_12, C_AZURE, "-");
-	text(root, RIGHT_X + 150, 76, 154, &font_text_14, C_TEXT2,
+	lv_obj_set_pos(qr, 0, 30);
+	l_url = text(right, 146, 34, 0, &font_mono_12, C_AZURE, "-");
+	text(right, 150, 76, 154, &font_text_14, C_TEXT2,
 	     "A remote for a phone: the screens, the demo, the clips. Linked from it: what this board is, "
 	     "for a person or an agent.");
 
-	lv_obj_set_pos(ui_caption(root, "DATA HOST"), RIGHT_X, 186);
-	l_host = text(root, RIGHT_X, 202, 300, &font_text_14, C_TEXT, "-");
-	text(root, RIGHT_X, 250, 300, &font_text_14, C_TEXT3,
+	lv_obj_set_pos(ui_caption(right, "DATA HOST"), 0, 186);
+	l_host = text(right, 0, 202, 300, &font_text_14, C_TEXT, "-");
+	text(right, 0, 250, 300, &font_text_14, C_TEXT3,
 	     "Host Link and Core Map show the load of a PC running the companion (run.cmd). It finds this "
 	     "board by itself: it broadcasts a query on udp/5557 and the board answers.");
 
 	/* threads zprof's fault handler ended while the rest ran on */
-	lv_obj_set_pos(ui_caption(root, "FAULTS"), RIGHT_X, 330);
-	l_faults = text(root, RIGHT_X, 346, 300, &font_mono_12, C_TEXT2, "none since boot");
+	lv_obj_set_pos(ui_caption(right, "FAULTS"), 0, 330);
+	l_faults = text(right, 0, 346, 300, &font_mono_12, C_TEXT2, "none since boot");
 
 	netcfg_get(&edit);
 	refresh();
@@ -240,14 +243,27 @@ static void create(lv_obj_t *root)
 static void tick(uint32_t now_ms)
 {
 	static uint32_t t0;
+	static char want_ip[16] = "-";
 	struct net_status ns;
 	char buf[96];
 
+	/* The QR code takes 5 to 6 ms to make (Reed-Solomon and the search for the
+	 * best mask), the first visit after boot or an address change: not in the
+	 * two frames that build the screen (the first visit after boot missed
+	 * its first frame by 4 ms), from the fade-in on, where a frame of this
+	 * screen is under 1 ms. */
+	if (strcmp(shown_ip, want_ip) && (int32_t)(now_ms - shown_ms) >= 60) {
+		strncpy(shown_ip, want_ip, sizeof(shown_ip) - 1);
+		snprintf(buf, sizeof(buf), "http://%s/", shown_ip);
+		lv_qrcode_update(qr, buf, strlen(buf));
+		lv_label_set_text(l_url, buf);
+	}
 	if (now_ms - t0 < 500) {
 		return;
 	}
 	t0 = now_ms;
 	net_get_status(&ns);
+	strncpy(want_ip, ns.have_ip ? ns.ip : "-", sizeof(want_ip) - 1);
 	struct net_linkaddr *mac = net_if_get_link_addr(net_if_get_default());
 
 	snprintf(buf, sizeof(buf), "%s  %s%s  MAC %02x:%02x:%02x:%02x:%02x:%02x", ns.have_ip ? ns.ip : "no address",
@@ -277,12 +293,6 @@ static void tick(uint32_t now_ms)
 		shown_alarm = nf > prof_faults_acked; /* acknowledged: listed, no longer red */
 		lv_obj_set_style_text_color(l_faults, ui_c(shown_alarm ? C_BAD : C_TEXT2), 0);
 	}
-	if (strcmp(shown_ip, ns.have_ip ? ns.ip : "-")) {
-		strncpy(shown_ip, ns.have_ip ? ns.ip : "-", sizeof(shown_ip) - 1);
-		snprintf(buf, sizeof(buf), "http://%s/", shown_ip);
-		lv_qrcode_update(qr, buf, strlen(buf));
-		lv_label_set_text(l_url, buf);
-	}
 	const struct hl_state *h = hostlink_state();
 
 	if (hostlink_online()) {
@@ -299,6 +309,24 @@ static void tick(uint32_t now_ms)
 	if (strcmp(lv_label_get_text(l_store), buf)) {
 		lv_label_set_text(l_store, buf);
 	}
+}
+
+static void show(void)
+{
+	shown_ms = k_uptime_get_32();
+}
+
+/* The whole screen in one frame took LVGL 13 to 13.6 ms, 2.8 to 3.3 ms to
+ * spare with a switch (2026-11-23): the right column comes a frame later,
+ * both frames dark (shell_entering()). */
+static void hold_content(void)
+{
+	lv_obj_add_flag(right, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void show_content(void)
+{
+	lv_obj_remove_flag(right, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void mini(const struct raster *r)
@@ -322,6 +350,9 @@ const struct screen screen_settings = {
 	.blurb = "Address, and how to connect",
 	.create = create,
 	.tick = tick,
+	.show = show,
+	.hold_content = hold_content,
+	.show_content = show_content,
 	.mini = mini,
 	.attract_skip = true, /* nothing moves; and taps must not change the address */
 };

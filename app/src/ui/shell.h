@@ -22,6 +22,11 @@ struct screen {
 	void (*tick)(uint32_t now_ms);
 	void (*show)(void);
 	void (*hide)(void);
+	/* Optional, a pair: hide LVGL objects that are costly to draw before a frame
+	 * that draws the whole screen, the first after show() among them; show them
+	 * again at the start of the next frame, before the tick (shell_entering()). */
+	void (*hold_content)(void);
+	void (*show_content)(void);
 	/* Once per frame slot whether visible or not: keep live data flowing. */
 	void (*service)(uint32_t now_ms);
 	/* Draw a live thumbnail into r->box for the Home tile. */
@@ -104,6 +109,26 @@ uint32_t shell_program_length_ms(void);
  * full-screen view covers them.
  */
 void shell_set_cover(bool covered);
+
+/* True while the frame that builds the current screen after a switch is being
+ * made: from the switch until that frame is handed over. It is the costliest
+ * frame there is: it draws the whole screen, and its budget also holds the
+ * switch (the old screen's hide() and the new one's show(), run after the
+ * frame before it was presented). So it draws the layout only and the next
+ * frame the content; both are dark (the fade-in waits FADE_HOLD_MS):
+ * - every raster widget (raster.h) is left out of it by the shell and drawn
+ *   in the next frame, with no code in the screen;
+ * - work that only feeds such pictures waits while this is true (Signal
+ *   Lab's analysis);
+ * - LVGL objects that are costly to draw (a QR code, paragraphs of text) the
+ *   screen hides in hold_content() and shows again in show_content(); hiding
+ *   or showing one costs tens of microseconds, so hide a container, not many
+ *   objects (Home's 16 blurbs and numbers cost about 1 ms each way, and
+ *   drawn in the next frame with the thumbnails they made it miss).
+ * The same holds for a frame in which the display redraws everything for its
+ * own reasons (frame buffer B back from the NPU, gfx_on_full_redraw()), at any
+ * frame after leaving the Camera screen. */
+bool shell_entering(void);
 
 /* True while a touch that began at a screen edge is being tracked as a
  * navigation swipe. Screens that read raw touches must ignore it.

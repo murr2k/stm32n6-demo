@@ -775,6 +775,36 @@ static int handle(char *line, char *out, size_t out_len)
 		return ds_info(out, out_len);
 	} else if (!strcmp(cmd, "hometiles") && n >= 2) {
 		post(CTL_HOME_TILES, a[0]);
+	} else if (!strcmp(cmd, "exview") && n >= 2) {
+		post(CTL_EXPLORER_VIEW, a[0]);
+	} else if (!strcmp(cmd, "margins")) {
+		/* "margins [reset]": every frame on a deadline by the time it left (gfx.h),
+		 * near misses, and each screen's tightest first frame and the tightest of the
+		 * frames after it under the fade (screen:least_us:times:next_least_us or -) */
+		const struct gfx_margins *m = gfx_margins();
+		char sub[8] = "";
+		int k;
+		bool any = false;
+
+		if (sscanf(line, "%*s %7s", sub) == 1 && !strcmp(sub, "reset")) {
+			gfx_margins_reset();
+		}
+		k = snprintf(out, out_len, "frames=%u near=%u floor_us=%u bin_us=%u hist=", m->frames, m->near,
+			     gfx_near_floor_us(), GFX_MARGIN_BIN_US);
+		for (int i = 0; i < GFX_MARGIN_BINS; i++) {
+			k += snprintf(out + k, out_len - k, "%s%u", i ? "," : "", m->hist[i]);
+		}
+		k += snprintf(out + k, out_len - k, " first=");
+		for (int s = 0; s < GFX_SCREENS && k < (int)out_len - 32; s++) {
+			if (m->first_n[s]) {
+				k += snprintf(out + k, out_len - k, "%s%d:%d:%u:", any ? "," : "", s,
+					      (int)m->first_min_us[s], m->first_n[s]);
+				k += m->next_n[s] ? snprintf(out + k, out_len - k, "%d", (int)m->next_min_us[s])
+						  : snprintf(out + k, out_len - k, "-");
+				any = true;
+			}
+		}
+		return k + snprintf(out + k, out_len - k, "%s\n", any ? "" : "-");
 #ifdef CONFIG_APP_CRASH_TEST
 	} else if (!strcmp(cmd, "crash") && n >= 2) {
 		return crash_test(a[0], out, out_len);

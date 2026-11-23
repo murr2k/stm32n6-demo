@@ -51,7 +51,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-from ctl import DEFAULT_HOST, close, send  # noqa: E402
+from ctl import DEFAULT_HOST, close, margin_report, send  # noqa: E402
+from ctl import margins as parse_margins  # noqa: E402
 from tour import SCREENS  # noqa: E402
 
 CAMERA = SCREENS.index("camera")
@@ -191,7 +192,8 @@ def main() -> int:
 
     if a.sound is not None:
         send(a.host, [f"thmsound {a.sound}"])
-    send(a.host, ["reset"])  # the worst-case figures from before the run (a boot's first frames) do not count
+    # the worst-case figures and the frame margins from before the run (a boot's first frames) do not count
+    send(a.host, ["reset", "margins reset"])
 
     sec_f = open(out / "seconds.csv", "w", newline="")
     sec = csv.writer(sec_f)
@@ -376,8 +378,12 @@ def main() -> int:
         sec_f.close()
         min_f.close()
         stacks_f.close()
+        try:
+            mg = parse_margins(send(a.host, ["margins"])[0])
+        except OSError:
+            mg = None
         summary = summarize(a, el_of(t0), fatal, switches, drops, render, worst, mem_rows, first_stacks,
-                            last_stacks, con, name)
+                            last_stacks, con, name, mg)
         (out / "summary.txt").write_text(summary, encoding="utf-8")
         print(summary, flush=True)
     return 1 if fatal and fatal != "stopped by hand" else 0
@@ -388,7 +394,7 @@ def el_of(t0: float) -> float:
 
 
 def summarize(a, elapsed, fatal, switches, drops, render, worst, mem_rows, first_stacks, last_stacks, con,
-              name) -> str:
+              name, mg=None) -> str:
     L = [f"Soak test, {datetime.now():%Y-%m-%d %H:%M}: {elapsed / 3600:.2f} h of {a.hours:g} h planned",
          f"Result: {'STOPPED: ' + fatal if fatal else 'ran to the end, no reset, no fault, the board answered throughout'}",
          f"Console: {con.notes} warning or error lines" + (f"; fatal: {con.fatal}" if con.fatal else ""), ""]
@@ -399,6 +405,10 @@ def summarize(a, elapsed, fatal, switches, drops, render, worst, mem_rows, first
     if len(drops) > 60:
         L.append(f"  ... and {len(drops) - 60} more (events.log)")
     L.append("")
+    if mg:
+        # the slack before the deadline, not only the misses: a near miss is the next drop
+        L += margin_report(mg, name)
+        L.append("")
 
     by_pair: dict[tuple[int, int], list[int]] = defaultdict(list)
     for _, f, t, tail in switches:

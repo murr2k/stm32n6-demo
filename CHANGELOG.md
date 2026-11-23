@@ -16,6 +16,24 @@ behind the rules that came out of them.
   (Settings keeps the list); `tour.py` checks fault capture, the alarm and its
   acknowledgement; `ctl.py "crash 4"` faults the UI thread for testing, and
   `CONFIG_APP_CRASH_TEST=n` leaves the crash command out.
+- **Frame margins, not only dropped frames**: `ctl.py margins` counts how much
+  time every frame left before its deadline, the near misses (under 20 % of
+  the refresh) and each screen's tightest first frame after a switch and the
+  frames after it while it fades in. `tour.py` reports them for its
+  transitions and its attract lap and enters Explorer from a playing film at
+  each of the six views it can open at (`ctl.py "exview N"`), and Home after
+  the film three times; `soak.py`'s summary reports them for the whole run.
+
+### Fixed
+
+- **No more dropped frames entering a screen**: the frame that builds a
+  screen draws its layout only, and its live pictures, Settings' QR code
+  column and Signal Lab's catching up follow a frame later, both frames still
+  dark under the fade. Explorer's first frame had dropped about once in four
+  hours of attract laps, Home's after the film once in five entries, and
+  Settings' on its first visit after boot; Deck, Signal Lab and Settings had
+  come within 3.3 ms. The same applies when the display redraws everything
+  after the Camera screen gives its frame buffer back.
 
 ## 2026-11-22
 

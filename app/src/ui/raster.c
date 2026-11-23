@@ -11,6 +11,53 @@
 
 #include "raster.h"
 
+/* raster_hold(): the areas of the widgets left out, to draw in the next frame.
+ * Areas, not objects: one may be deleted before then (Home's test tiles). */
+#define HELD_MAX 24
+static bool holding;
+static lv_area_t held[HELD_MAX], held_rest; /* the union of any beyond HELD_MAX */
+static int n_held;
+static bool rest;
+
+static void keep(const lv_area_t *a)
+{
+	for (int i = 0; i < n_held; i++) {
+		if (lv_area_is_equal(&held[i], a)) {
+			return; /* drawn in more than one area of the frame */
+		}
+	}
+	if (n_held < HELD_MAX) {
+		held[n_held++] = *a;
+	} else if (rest) {
+		lv_area_join(&held_rest, &held_rest, a);
+	} else {
+		held_rest = *a;
+		rest = true;
+	}
+}
+
+void raster_hold(void)
+{
+	holding = true;
+	n_held = 0;
+	rest = false;
+}
+
+void raster_release(void)
+{
+	lv_display_t *d = lv_display_get_default();
+
+	holding = false;
+	for (int i = 0; i < n_held; i++) {
+		lv_inv_area(d, &held[i]);
+	}
+	if (rest) {
+		lv_inv_area(d, &held_rest);
+	}
+	n_held = 0;
+	rest = false;
+}
+
 bool raster_begin(struct raster *r, lv_event_t *e)
 {
 	lv_layer_t *layer = lv_event_get_layer(e);
@@ -23,6 +70,10 @@ bool raster_begin(struct raster *r, lv_event_t *e)
 		return false;
 	}
 	lv_obj_get_coords(obj, &r->box);
+	if (holding) {
+		keep(&r->box);
+		return false;
+	}
 	if (!lv_area_intersect(&tmp, &r->box, &layer->_clip_area) ||
 	    !lv_area_intersect(&r->clip, &tmp, &layer->buf_area)) {
 		return false;

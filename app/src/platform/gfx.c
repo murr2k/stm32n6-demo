@@ -38,6 +38,7 @@ BUILD_ASSERT((uintptr_t)FB_B + GFX_FB_BYTES == 0x343C0000);
 static const struct device *const panel = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
 static lv_display_t *disp;
 static struct gfx_stats stats;
+static struct gfx_margins margins; /* gfx.h; written by the UI thread in trace_frame() */
 
 static const uint8_t *front;      /* buffer the LTDC is scanning out */
 static uint32_t t_frame_start;     /* end of the previous frame slot */
@@ -199,6 +200,29 @@ static void trace_frame(uint32_t now)
 	}
 	if (streak) {
 		ZPROF_PLOT("frame.margin_us", left);   /* what margin_min_us is the least of */
+		margins.frames++;
+		margins.hist[left < 0 ? 0 : MIN(1 + left / GFX_MARGIN_BIN_US, GFX_MARGIN_BINS - 1)]++;
+		if (left < (int32_t)gfx_near_floor_us()) {
+			margins.near++;
+		}
+		/* the first frame after the switch builds the new screen (gfx_trace_switch()
+		 * set at_switch to the entry this frame is about to fill); the ones after it,
+		 * while the screen fades in, draw what it left out */
+		int to = trace.to;
+		bool first = trace.n == trace.at_switch;
+
+		if (trace.n < GFX_TRACE_N && trace.n >= trace.at_switch && (first || fade_alpha < 255) &&
+		    to >= 0 && to < GFX_SCREENS) {
+			int32_t *least = first ? &margins.first_min_us[to] : &margins.next_min_us[to];
+			uint16_t *times = first ? &margins.first_n[to] : &margins.next_n[to];
+
+			if (*times == 0 || left < *least) {
+				*least = left;
+			}
+			if (*times < UINT16_MAX) {
+				(*times)++;
+			}
+		}
 	}
 	recent_at = (recent_at + 1) % GFX_DROP_N;
 
@@ -440,6 +464,21 @@ static void service_snapshot(void)
 	}
 }
 
+static void (*full_redraw_cb)(void);
+
+void gfx_on_full_redraw(void (*cb)(void))
+{
+	full_redraw_cb = cb;
+}
+
+static void full_redraw(lv_obj_t *scr)
+{
+	lv_obj_invalidate(scr);
+	if (full_redraw_cb) {
+		full_redraw_cb();
+	}
+}
+
 /* Called at the start of every frame, before LVGL runs: moves the lending
  * state machine on. */
 static void lend_step(void)
@@ -451,7 +490,7 @@ static void lend_step(void)
 		if (lend_want) {
 			/* draw everything into A; the flush shows A, then B is free */
 			lv_display_set_buffers(disp, FB_A, NULL, GFX_FB_BYTES, LV_DISPLAY_RENDER_MODE_DIRECT);
-			lv_obj_invalidate(scr);
+			full_redraw(scr);
 			lend_state = ENTERING;
 		}
 		break;
@@ -470,7 +509,7 @@ static void lend_step(void)
 			/* B holds whatever the NPU left: draw all of it, show it, and LVGL
 			 * then copies it to A as it does for every frame */
 			lv_display_set_buffers(disp, FB_B, FB_A, GFX_FB_BYTES, LV_DISPLAY_RENDER_MODE_DIRECT);
-			lv_obj_invalidate(scr);
+			full_redraw(scr);
 			lend_state = DOUBLE;
 		}
 		break;
@@ -610,6 +649,21 @@ void gfx_stats_reset_worst(void)
 	stats.worst_tail_us = 0;
 	stats.margin_min_us = INT32_MAX;
 	stats.reader_wait_worst_us = 0;
+}
+
+const struct gfx_margins *gfx_margins(void)
+{
+	return &margins;
+}
+
+void gfx_margins_reset(void)
+{
+	margins = (struct gfx_margins){0};
+}
+
+uint32_t gfx_near_floor_us(void)
+{
+	return stats.period_us * GFX_NEAR_PCT / 100;
 }
 
 void gfx_trace_begin(int from, int to)

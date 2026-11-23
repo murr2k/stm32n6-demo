@@ -31,8 +31,16 @@ struct raster {
 #define RQ      4
 #define RQ_ONE  (1 << RQ)
 
-/* Returns false when nothing of the widget is inside the redraw area. */
+/* Returns false when nothing of the widget is inside the redraw area, or while
+ * raster widgets are held. */
 bool raster_begin(struct raster *r, lv_event_t *e);
+
+/* The shell, for the frame that builds a screen after a switch (shell_entering()
+ * in shell.h): from raster_hold() every raster widget is left out (raster_begin()
+ * returns false and keeps its area), and raster_release() invalidates those
+ * areas, so the next frame draws them. UI thread only. */
+void raster_hold(void);
+void raster_release(void);
 
 void raster_fill(const struct raster *r, int x1, int y1, int x2, int y2, uint32_t rgb);
 void raster_fill_a(const struct raster *r, int x1, int y1, int x2, int y2, uint32_t rgb, uint8_t a);

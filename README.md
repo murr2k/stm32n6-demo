@@ -418,9 +418,14 @@ runs just after a frame has been presented, so its time comes out of the
 budget of the frame that builds the new screen; `ctl.py stats` reports it
 as `tail_worst_us`, and `ctl.py swtrace` shows where every frame of the
 last transition spent its time. A screen's first frame after leaving a
-playing film (Under the Hood's, a screen since removed) missed a refresh
-that way about once in three attract laps, unseen in the dark but counted;
-the tour now makes the film to Explorer switch six times.
+playing film missed a refresh that way, unseen in the dark but counted:
+Under the Hood's (a screen since removed) about once in three attract laps,
+Explorer's about once in four hours of them, Home's once in five entries.
+So the frame that builds a screen now draws its layout only, and the live
+pictures follow in the next frame, still dark (the fade-in waits 34 ms);
+`ctl.py margins` reports how close each screen's first frames come to the
+deadline, and the tour enters Explorer from a playing film at each of the
+six views it can open at.
 
 Frames are swapped by the application, not by Zephyr's display driver. The
 driver cleans the data cache line by line over the whole 1.5 MB buffer

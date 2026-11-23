@@ -16,6 +16,7 @@
 #include "theme.h"
 
 #define MAX_SCREENS 16
+BUILD_ASSERT(MAX_SCREENS <= GFX_SCREENS, "gfx.c keeps each screen's first-frame margin");
 #define HUD_W       212
 #define HUD_H       86
 #define HUD_BARS    96
@@ -347,7 +348,7 @@ static void home_cb(lv_event_t *e)
 
 #define FADE_OUT_MS       110
 #define FADE_IN_MS        200
-#define FADE_HOLD_MS      34
+#define FADE_HOLD_MS      34      /* from the switch: the new screen's first two frames stay dark */
 #define ATTRACT_IDLE_MS   90000
 #define ATTRACT_DWELL_MS  12000
 #define ATTRACT_MAX_MS    75000   /* upper bound on a "busy" stay */
@@ -360,14 +361,18 @@ static uint32_t last_input_ms, attract_next_ms, attract_enter_ms, seen_reports;
 static const struct shell_program *program;
 static bool prog_run;
 static uint32_t prog_silent_ms;   /* since when the program's clock has not run */
+static bool entering;             /* shell_entering(), until the next shell_tick() sees the frame shown */
+static uint32_t entering_frames;  /* frames presented when the switch was made */
 
 #define PROG_WAIT_MS 5000         /* no soundtrack after this long: the screens take turns */
 
 static void switch_to(int index);
+static void layout_only(void);
 
 /* The fade is done by the display controller (layer alpha), so it costs no
- * render time; the frame that swaps the screens and the new screen's first
- * full render both happen while the display is dark.
+ * render time; the frame that swaps the screens, the new screen's first full
+ * render and the frame after it (its costly content, shell_entering()) all
+ * happen while the display is dark.
  */
 static void fade_exec(void *var, int32_t v)
 {
@@ -637,12 +642,31 @@ static void switch_to(int index)
 			screens[current]->attract_start();
 		}
 	}
+	layout_only();
 	gfx_trace_switch(current, gfx_now_us() - t0);
+}
+
+/* The next frame draws the whole screen: the layout only, the content in the
+ * frame after it (shell_entering()). After a switch, and when the display
+ * redraws everything for its own reasons (gfx_on_full_redraw()). */
+static void layout_only(void)
+{
+	entering = true;
+	entering_frames = gfx_stats()->frames;
+	raster_hold(); /* every raster widget waits for the next frame */
+	if (current >= 0 && screens[current]->hold_content) {
+		screens[current]->hold_content();
+	}
 }
 
 int shell_current(void)
 {
 	return current;
+}
+
+bool shell_entering(void)
+{
+	return entering && gfx_stats()->frames == entering_frames;
 }
 
 void shell_set_cover(bool on)
@@ -685,6 +709,7 @@ void shell_init(const struct screen *const *list, int count)
 	n_screens = MIN(count, MAX_SCREENS);
 
 	ui_theme_init();
+	gfx_on_full_redraw(layout_only);
 	for (int i = 0; i < n_screens; i++) {
 		roots[i] = ui_box(scr, 0, UI_CONTENT_Y, GFX_W, UI_CONTENT_H);
 		lv_obj_add_flag(roots[i], LV_OBJ_FLAG_HIDDEN);
@@ -755,7 +780,13 @@ void shell_tick(void)
 {
 	uint32_t now = k_uptime_get_32();
 	uint32_t t0 = gfx_now_us(), t1;
+	/* the frame that built the current screen has been shown: its content now */
+	bool content_due = entering && !shell_entering();
 
+	if (content_due) {
+		entering = false;
+		raster_release();
+	}
 	if (touch_user_button_pressed()) {
 		shell_toggle_hud();
 	}
@@ -773,9 +804,14 @@ void shell_tick(void)
 			cost_add(&cost_svc[i], t1 - t0);
 		}
 	}
-	if (current >= 0 && screens[current]->tick) {
+	if (current >= 0 && (screens[current]->tick || content_due)) {
 		t0 = t1;
-		screens[current]->tick(now);
+		if (content_due && screens[current]->show_content) {
+			screens[current]->show_content();
+		}
+		if (screens[current]->tick) {
+			screens[current]->tick(now);
+		}
 		cost_add(&cost_tick[current], gfx_now_us() - t0);
 	}
 }

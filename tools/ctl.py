@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import socket
 import sys
 import time
@@ -74,6 +75,59 @@ def send(host: str, commands: list[str], port: int = 5556, timeout: float = 5.0)
                 close(host, port)
                 raise
     return replies
+
+
+def margins(line: str) -> dict | None:
+    """The board's "margins" reply (ctl.h) as numbers: frames on a deadline, near
+    misses and their line (floor_us), the bins of time left at the hand-over (bin 0
+    counts the misses), and per screen its first frame's least time left, how often
+    it was entered and the least left by the frames after the first one while it
+    faded in (None if none had a deadline). None if the reply is not one."""
+    kv = dict(re.findall(r"(\w+)=(\S+)", line))
+    if "hist" not in kv:
+        return None
+    first = {}
+    for item in ([] if kv.get("first", "-") == "-" else kv["first"].split(",")):
+        s, us, n, nxt = item.split(":")
+        first[int(s)] = (int(us), int(n), None if nxt == "-" else int(nxt))
+    return {"frames": int(kv["frames"]), "near": int(kv["near"]), "floor_us": int(kv["floor_us"]),
+            "bin_us": int(kv["bin_us"]), "hist": [int(x) for x in kv["hist"].split(",")], "first": first}
+
+
+def margin_report(m: dict, name=str) -> list[str]:
+    """Report lines: how little time the tightest 0.1 %, 1 % and half of the frames
+    left, the misses and near misses, and each screen's tightest first frame (the
+    frame that builds it after a switch) and the tightest of the frames after it
+    under the fade (they draw what the first one leaves out), tightest first."""
+    h, n, b = m["hist"], m["frames"], m["bin_us"]
+    if n == 0:
+        return ["margins: no frame on a deadline"]
+
+    def under(p: float) -> str:
+        need, cum = n * p / 100, 0
+        for k, c in enumerate(h):
+            cum += c
+            if cum >= need:
+                return "a miss" if k == 0 else (f"{k * b / 1000:.1f} ms" if k < len(h) - 1 else
+                                               f"{(k - 1) * b / 1000:.0f}+ ms")
+        return "?"
+
+    floor = m["floor_us"]
+    out = [f"margins: {n} frames on a deadline, {h[0]} missed, {m['near']} near misses (under "
+           f"{floor / 1000:.1f} ms left); time left: the tightest 0.1 % under {under(0.1)}, 1 % under "
+           f"{under(1)}, half under {under(50)}"]
+    def ms(us: int) -> str:
+        return f"{us / 1000:.2f} ms{' MISSED' if us < 0 else ' NEAR' if us < floor else ''}"
+
+    def least(v: tuple) -> int:
+        return v[0] if v[2] is None else min(v[0], v[2])
+
+    firsts = sorted(m["first"].items(), key=lambda kv: least(kv[1]))
+    if firsts:
+        out.append("entering a screen, least time left by its first frame / the next ones under the fade: " +
+                   ", ".join(f"{name(s)} {ms(us)} / {'-' if nxt is None else ms(nxt)} ({k}x)"
+                             for s, (us, k, nxt) in firsts))
+    return out
 
 
 def main() -> None:

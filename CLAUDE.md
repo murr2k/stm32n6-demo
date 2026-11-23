@@ -55,6 +55,7 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 .\.venv\Scripts\python.exe tools\nn.py watch 20    # tracker counters over 20 s: searches, palms found, confirmed, lost, time tracked
 .\.venv\Scripts\python.exe tools\soak.py --hours 9 --sound 0   # unattended soak: attract and camera phases, polled every second, captures/soak/<start>/summary.txt
 .\.venv\Scripts\python.exe tools\ctl.py swtrace droptrace svct mem stacks   # frames of the last transition, before the last drop; main loop per service; heap, pool, PSRAM, stacks
+.\.venv\Scripts\python.exe tools\ctl.py margins "margins reset" "exview 4"   # time left by every frame on a deadline and each screen's tightest first frame and the ones after it under the fade; zero them; Explorer's next opening view (tour stop 0 to 5)
 .\.venv\Scripts\python.exe tools\nn.py grab 5 --hand   # frames as the tracker saw them (captures/hands, ignored) and the PC's models on them and on variants
 .\.venv\Scripts\python.exe tools\ctl.py "nn thr 50 50"   # the palm and presence thresholds, percent
 .\.venv\Scripts\python.exe tools\camsnap.py --uncap   # a still from the board's camera (pointed at its own panel: is it black? look at the PNG, the luma figures cannot tell); captures/camsnap/ (ignored)
@@ -681,32 +682,71 @@ cd zprof\host\bridge; ..\..\.venv\Scripts\python -m zprof_bridge recorder arm --
   early" missed. `ctl.py stats` reports `late_swaps` (frames on a deadline
   handed over after line 0: each one a dropped frame with the driver's swap)
   and `margin_min_us`.
-- **A screen switch is work done after a present, inside the budget of the
-  frame that builds the new screen: keep `show()`/`hide()` short and a
-  screen's first frame well under 15 ms.** `switch_to` (the old screen's
-  `hide()`, the new one's `show()`) runs in the fade-out's animation
-  callback, and LVGL's animation timer runs after the display's refresh
-  timer, so that time is not in `render_us`; `ctl.py stats` reports it as
-  `tail_worst_us`. **Why:** Under the Hood's first frame (chart and side
-  panel at once, up to 15.8 ms; the screen was removed on 2026-11-20) after
-  closing a playing film (a tail of about 1 ms) missed a refresh on about
-  one attract lap in three (5 drops in 16 switches); its side panel waiting
-  one frame fixed it (0 in 16). The miss falls in the black hold of the
-  fade, so nobody sees it, but the counter on Deck does. The tour's
-  transition test enters every screen and makes the film to Explorer (the
-  heaviest first frame left) switch six times. To see where a transition's time goes:
+- **The frame that builds a screen draws its layout only; its content comes
+  a frame later (`shell_entering()` in ui/shell.h). Keep `show()`/`hide()`
+  short.** A switch is work done after a present, inside the budget of that
+  frame: `switch_to` (the old screen's `hide()`, the new one's `show()`)
+  runs in the fade-out's animation callback, after the display's refresh
+  timer, so it is not in `render_us` (`ctl.py stats`: `tail_worst_us`), and
+  the frame then draws the whole screen. The fade-in waits `FADE_HOLD_MS`
+  (34 ms), so that frame and the next are dark. The shell leaves every
+  raster widget out of it with no code in the screen (`raster_hold()`:
+  `raster_begin()` keeps the widget's area and returns false;
+  `raster_release()` invalidates those areas at the next frame's start);
+  work that only feeds such pictures waits while `shell_entering()` is true
+  (Signal Lab's analysis catching up, 2 to 3 ms); a screen hides costly
+  LVGL objects in `hold_content()` and shows them in `show_content()`
+  (Settings: its right column, with the QR code). The same holds when the
+  display redraws everything for its own reasons: frame buffer B back from
+  the NPU, at any frame after leaving the Camera screen
+  (`gfx_on_full_redraw()`; Home's redraw then left 1.5 to 3.1 ms, now 5).
+  Hide one container, not many objects: hiding and showing Home's 16 blurbs
+  and numbers cost about 1 ms each way, and drawn with the thumbnails they
+  made the next frame miss. Something costly a screen does once waits until
+  after those two frames (Settings' QR code, 6 ms to make, on the first
+  visit after boot). **Why:** Under the Hood's first frame (chart and side
+  panel at once, up to 15.8 ms; removed 2026-11-20) after closing a playing
+  film (a tail of about 1 ms) missed a refresh on about one attract lap in
+  three; its side panel waiting a frame fixed it. On 2026-11-23 the hunts
+  and `margins` found the same in more screens: Explorer's first frame
+  (LVGL 13.2 to 14.5 ms at its tour's first two views, the whole set)
+  dropped once in 3.7 h and once in 4.5 h of laps; Home's after the film
+  had -0.17 to 1.6 ms left (a drop in one of five), Settings' 2.8 to 3.3
+  (LVGL 13 to 13.6 ms; the first visit after boot missed by 4 ms, the QR
+  code made in it), Deck's and Signal Lab's 3.1 to 4.4. With the rule, two
+  runs of the transition test (first frame / the next, ms left): Explorer
+  9.3 to 10.8 / 6.4 to 9.7, Home after the film 4.9 to 6.1 / 6.6 to 7.8,
+  Signal Lab 10.4 to 11.3 / 6.9 to 7.1, Settings 7.9 / 9.8 to 10.1, Deck
+  4.6 to 5.1 / 6.6 to 8.2 (the tightest now: its layout alone is LVGL 11 ms,
+  the cards, an arc and large numerals); 0 dropped, 0 and 1 near misses
+  (7 near misses and a drop before). The miss falls in the black hold of
+  the fade, so nobody sees it, but the counter on Deck does. The tour's
+  transition test enters every screen, then goes from a playing film to
+  Explorer six times, once at each of the six views its zoom tour leaves it
+  at (`ctl.py "exview N"`: an attract lap moves the view on by one stop),
+  and to Home three times; it prints each one's first frame and the next.
+  `ctl.py margins` counts the time left by every frame on a deadline (bins
+  of 0.5 ms, near misses: under 20 % of the refresh, 3.3 ms) and each
+  screen's tightest first frame and tightest of the frames after it under
+  the fade, since boot or `margins reset`; the tour reports them for its
+  transitions and its attract lap, `soak.py` for the run. A near miss is
+  the next drop: watch those, not only the drop count. Only about half of
+  the first frames after a film have a deadline: under the film's 30 fps
+  the slot before the switch presented nothing, the trace marks the frame
+  "u", it cannot drop, and `margins` leaves it out.
+  To see where a transition's time goes:
   `ctl.py swtrace` (each frame of the last one: wake, tail, main loop
   before LVGL, LVGL, time other threads took, margin before the swap
   deadline, the layer's alpha), `droptrace` (the same for the 8 frames up
   to the last dropped one; alpha 0 = the panel was dark), `svct` (the main
   loop per service and tick, worst and mean). Measured 2026-11-17 in attract
-  laps under the soak's load: the tightest frames are first frames in the
-  dark, Explorer's after Signal Lab the tightest (switch 1.5 to 2.1 ms, main
-  loop 1.8 to 2.2, LVGL 10 to 13.3 ms: it can still miss now and then,
-  unseen). Signal Lab's analysis (about 1.2 ms a frame) runs in its
-  `service` only while Signal Lab or Home (its thumbnail) shows; on every
-  screen it had cost each of them 0.8 ms mean, 2.9 ms worst (5 to 9 us
-  since, 2026-11-17).
+  laps under the soak's load, before the rule: the tightest frames are first
+  frames in the dark, Explorer's after Signal Lab the tightest (switch 1.5
+  to 2.1 ms, main loop 1.8 to 2.2, LVGL 10 to 13.3 ms). Signal Lab's
+  analysis (about 1.2 ms a frame) runs in its `service` only while Signal
+  Lab or Home (its thumbnail) shows, and not in the frame that builds
+  either; on every screen it had cost each of them 0.8 ms mean, 2.9 ms
+  worst (5 to 9 us since, 2026-11-17).
 - **A screenshot (`shot.py`, tcp/5555) costs the UI one frame.** **Why:** the
   1.5 MB copy to PSRAM takes about 18 ms. Never grab inside a window whose
   dropped-frame count is being measured (tour.py reads the stats first).
@@ -1226,10 +1266,12 @@ cd zprof\host\bridge; ..\..\.venv\Scripts\python -m zprof_bridge recorder arm --
   asynchronously; a fixed address equal to the old lease was added and then
   deleted by the lease's late removal, and the board answered nothing (not
   even ARP) until power-off. Different addresses and fixed to DHCP worked.
-  Never reboot the board from firmware to apply a setting: a software reset
-  leaves the flash in octal mode and MCUboot fails (see the power-cycle
-  invariant). The setting is kept in `/SD:/n6demo.cfg`; USER held at power-up
-  forces DHCP.
+  Never reboot the board from firmware to apply a setting: in development
+  boot (BOOT1 = H) any reset leaves the chip waiting in the boot ROM until
+  `n6.cmd run` starts it (this said until 2026-11-23 that a software reset
+  leaves the flash in octal mode and MCUboot fails; measured that day, it
+  does not: see Stand-alone boot below). The setting is kept in
+  `/SD:/n6demo.cfg`; USER held at power-up forces DHCP.
 - **Home does not pan by itself in attract mode.** **Why:** while the field
   moves, every visible tile redraws its live thumbnail each frame; with ten
   screens that reached 15.7 ms and dropped a frame. Dragging by hand
@@ -1393,6 +1435,27 @@ cd zprof\host\bridge; ..\..\.venv\Scripts\python -m zprof_bridge recorder arm --
   and sits in the boot ROM (hot-plug: Rev B, PC 0x1800_xxxx, R3 = 0xCAFEDEAD)
   was reset or power-cycled in development boot (BOOT1 = H), where nothing
   starts it again but `n6.cmd run`: that is not a firmware halt.
+  Warm resets, measured 2026-11-23 in development boot (the remote half of a
+  fault record kept through a reset; `captures/boot-tests-20261123`, ignored):
+  after `ctl.py "crash 4"` a system reset (`STM32_Programmer_CLI -c port=swd
+  mode=HOTPLUG -rst`, SYSRESETREQ, what a firmware reboot does) and an NRST
+  pulse (`-hardRst`) each left zprof's fault record in the DTCM byte for
+  byte (CRC good) while the chip waited in the ROM, and `n6.cmd run
+  --no-power-cycle` (MCUboot from RAM, no power cycle) then booted the app
+  from the NOR both times: the app does not leave the flash in a mode a
+  warm reset keeps. A system reset sets SFTRSTF and PINRSTF in RCC_RSR
+  (0x5602_8034; the chip drives the reset out on NRST, and the NOR's RESET#
+  is on NRST), NRST only PINRSTF, a power cycle BORRSTF, PINRSTF and
+  PORRSTF. The flags stay set until RMVF (write 0x10000; STM32_Programmer_CLI
+  reports a failed verify, as the bit reads 0, but the write lands): the
+  development-boot ROM and MCUboot leave them, and the app reads them
+  (`peek`). zprof keeps its record in the DTCM's zeroed section, so the app's
+  start clears it: a record kept through a reset needs a no-init section,
+  written at a cold start (POR or BOR set: the DTCM's ECC) and read after a
+  warm one, then RMVF. Not yet tried: flash boot after a software reset (the
+  ROM loading MCUboot and leaving the DTCM and the flags alone); the
+  external loader's octal mode after a pin reset (the power-cycle invariant)
+  was not retested.
 - Touch, navigation, motion and colour were checked on the panel by the user on 2026-11-14 (all good). The repository is public: keep host names, serial numbers and personal paths out of committed files.
 - Audio out works and is underrun-free in the automated checks; the sample
   clock is PLL2 (HSI-based), measured 47.6 to 47.7 kHz. Video is slaved to it.

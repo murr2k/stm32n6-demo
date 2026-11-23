@@ -361,17 +361,17 @@ static void gestures(uint32_t now_ms)
 }
 
 /* Untouched for a while: walk through the zoom levels so the pyramid shows. */
+static const struct tour_stop {
+	double centre; /* fraction of the dataset */
+	double spc;
+	uint16_t move_ms, hold_ms;
+} stops[] = {
+	{0.50, SPC_MAX, 1200, 2200}, {0.37, 260.0, 1800, 2200}, {0.37, 26.0, 1800, 2000},
+	{0.372, 2.0, 1800, 2200},    {0.372, 0.12, 1600, 2600}, {0.62, 40.0, 2200, 2200},
+};
+
 static void tour(uint32_t now_ms)
 {
-	static const struct tour_stop {
-		double centre; /* fraction of the dataset */
-		double spc;
-		uint16_t move_ms, hold_ms;
-	} stops[] = {
-		{0.50, SPC_MAX, 1200, 2200}, {0.37, 260.0, 1800, 2200}, {0.37, 26.0, 1800, 2000},
-		{0.372, 2.0, 1800, 2200},    {0.372, 0.12, 1600, 2600}, {0.62, 40.0, 2200, 2200},
-	};
-
 	if (now_ms - g_touch_ms < 7000 || a_on || (int32_t)(now_ms - tour_next) < 0) {
 		return;
 	}
@@ -462,6 +462,21 @@ static void show(void)
 {
 	g_touch_ms = k_uptime_get_32() - 5000;
 	g_prev_n = 0;
+}
+
+void explorer_test_view(int stop)
+{
+	int n = (int)ARRAY_SIZE(stops);
+	const struct tour_stop *s = &stops[((stop % n) + n) % n];
+
+	a_on = false;
+	v_spc = s->spc;
+	v_t0 = s->centre * DS_N - s->spc * PW / 2;
+	clamp_view();
+	cursor_x = -1;
+	tour_step = (((stop % n) + n) % n + 1) % n;
+	lv_obj_invalidate(plot);
+	lv_obj_invalidate(overview);
 }
 
 static void mini(const struct raster *r)

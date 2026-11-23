@@ -129,6 +129,36 @@ void gfx_trace_switch(int to, uint32_t switch_us);
 const struct gfx_trace *gfx_trace(void);
 const struct gfx_drop *gfx_last_drop(void);
 
+/*
+ * Frame margins: the time left at each hand-over (left_us above) of every frame
+ * on a deadline, in bins, and the least left by each screen's first frame after
+ * a switch into it (the frame that builds it; the switch runs in its tail) and
+ * by the frames after that one while the screen fades in (they draw what the
+ * first one left out, shell_entering()). Since boot or gfx_margins_reset()
+ * (ctl "margins"). A near miss left less than
+ * GFX_NEAR_PCT % of the refresh (misses included): a reporting line, the
+ * headroom that frames' jitter has needed (2.7 ms on one screen's first frame
+ * in the 2026-11-23 hunt), not a rule the UI applies.
+ */
+#define GFX_MARGIN_BIN_US 500
+#define GFX_MARGIN_BINS   34 /* [0] missed; [k] (k - 1) to k half-milliseconds left; [33] 16 ms or more */
+#define GFX_NEAR_PCT      20
+#define GFX_SCREENS       16 /* the shell's MAX_SCREENS */
+
+struct gfx_margins {
+	uint32_t frames;                   /* on a deadline */
+	uint32_t near;                     /* near misses, misses included */
+	uint32_t hist[GFX_MARGIN_BINS];
+	int32_t first_min_us[GFX_SCREENS]; /* valid where first_n > 0 */
+	uint16_t first_n[GFX_SCREENS];
+	int32_t next_min_us[GFX_SCREENS];  /* the frames after it, under the fade; valid where next_n > 0 */
+	uint16_t next_n[GFX_SCREENS];
+};
+
+const struct gfx_margins *gfx_margins(void);
+void gfx_margins_reset(void);
+uint32_t gfx_near_floor_us(void);
+
 /* Time of the most recent buffer swap, gfx_now_us() timebase. */
 uint32_t gfx_last_present_us(void);
 
@@ -151,6 +181,11 @@ uint32_t gfx_now_us(void);
 #define GFX_FB_B 0x34249000u
 
 void gfx_lend_back_buffer(bool lend);
+/* Called on the UI thread, before LVGL runs, when this frame will draw the
+ * whole screen for the display's own reasons (lending B begins, or B comes
+ * back with whatever the NPU left in it, at any frame after the switch): the
+ * shell holds back the costly content as for a screen's first frame. */
+void gfx_on_full_redraw(void (*cb)(void));
 bool gfx_borrow_begin(void);
 void gfx_borrow_end(void);
 bool gfx_back_buffer_lent(void);

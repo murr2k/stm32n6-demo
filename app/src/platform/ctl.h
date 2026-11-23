@@ -9,6 +9,13 @@
  *                              before the swap deadline at a hand-over, since the reset)
  *   swtrace                    the frames of the last screen transition: where each one's time went (gfx.h)
  *   droptrace                  the same for the frames up to the last dropped one
+ *   margins [reset]            time left at the hand-over of every frame on a deadline, since boot or
+ *                              "margins reset" (gfx.h): frames, near misses (less than floor_us left,
+ *                              misses included), bins of bin_us (the first counts misses), and
+ *                              each screen's first frame after a switch and the frames after it
+ *                              under the fade, first=screen:least_us:times:next_least_us (- if none)
+ *   exview <0..5>              Explorer opens next at its tour's stop n, as an attract lap leaves it
+ *                              (the six views it opens at in turn; tools/tour.py enters each)
  *   rec                        the recorder (tcp/5559, media/recorder.h): recording, pictures, missed,
  *                              errors, encode time, bytes, the last IDR and P picture sizes
  *   svct                       the main loop before LVGL: telemetry, bar, each screen's service and
@@ -98,6 +105,7 @@ enum ctl_cmd {
 	CTL_HOME_TILES,
 	CTL_INPUT,      /* counts as a touch: ends attract mode */
 	CTL_CRASH,      /* "crash 4": the UI thread faults (a test: the board halts) */
+	CTL_EXPLORER_VIEW, /* "exview n": the view Explorer opens at next (a test) */
 };
 
 /* UI thread: fetch the next pending UI command, if any. */
