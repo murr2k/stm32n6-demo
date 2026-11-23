@@ -161,6 +161,11 @@ int main(void)
 		case CTL_HOME_TILES:
 			home_test_tiles(arg);
 			break;
+		case CTL_CRASH:
+			/* a fault on the UI thread, on purpose (ctl.c "crash 4"): essential,
+			 * so zprof's handler halts the board; n6.cmd fault reads the record */
+			__asm__ volatile("udf #1");
+			break;
 		case CTL_INPUT:
 			shell_note_input();
 			break;

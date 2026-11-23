@@ -5,6 +5,18 @@ release says so. Each line names what a user of the demo or of its tools
 would notice; the commit log has the detail, and `CLAUDE.md` the reasons
 behind the rules that came out of them.
 
+## 2026-11-23
+
+### Added
+
+- **`n6.cmd fault` reads a halted board's fault over the ST-LINK**: a fault in
+  the UI thread or an interrupt still halts the board, and its record (the
+  faulting line, the call trace) is now readable without a debugger session,
+  before a power cycle wipes it. `ctl.py "faults ack"` clears the fault alarm
+  (Settings keeps the list); `tour.py` checks fault capture, the alarm and its
+  acknowledgement; `ctl.py "crash 4"` faults the UI thread for testing, and
+  `CONFIG_APP_CRASH_TEST=n` leaves the crash command out.
+
 ## 2026-11-22
 
 ### Added

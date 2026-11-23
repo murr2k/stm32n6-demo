@@ -227,7 +227,7 @@ static void sb_faults(struct sb *s)
 	struct prof_fault_info fi[4];
 	int nf = prof_faults(fi, ARRAY_SIZE(fi));
 
-	sb_printf(s, ",\"faults\":{\"count\":%d,\"last\":[", nf);
+	sb_printf(s, ",\"faults\":{\"count\":%d,\"acknowledged\":%d,\"last\":[", nf, prof_faults_acked);
 	for (int i = 0; i < MIN(nf, (int)ARRAY_SIZE(fi)); i++) {
 		sb_printf(s, "%s{\"thread\":", i ? "," : "");
 		sb_jstr(s, fi[i].thread[0] ? fi[i].thread : "(interrupt)", sizeof(fi[i].thread));

@@ -262,7 +262,7 @@ function render() {
 
   // threads the board's fault handler ended while the rest ran on
   const f = s.faults, fb = $("fault");
-  if (f && f.count > 0) {
+  if (f && f.count > (f.acknowledged || 0)) {
     const l = f.last[0];
     fb.textContent = `${l.thread} crashed (${l.reason}) ${uptime(l.uptime_s)} after boot` +
       (f.count > 1 ? `, and ${f.count - 1} more since boot` : "") + ": part of the demo may have stopped.";

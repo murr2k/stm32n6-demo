@@ -151,16 +151,22 @@ static void update_bar(uint32_t now_ms)
 
 	struct prof_fault_info fi;
 	int nf = prof_faults(&fi, 1);
+	int alarm_n = nf - prof_faults_acked; /* not yet acknowledged ("faults ack") */
 
-	if (nf != bar_faults) {
+	if (alarm_n != bar_faults) {
 		char alarm[40];
 
-		bar_faults = nf;
-		snprintf(alarm, sizeof(alarm), "%s crashed%s", fi.thread[0] ? fi.thread : "an interrupt",
-			 nf > 1 ? "  +more" : "");
-		lv_label_set_text(bar_fault, alarm);
-		lv_obj_remove_flag(bar_fault, LV_OBJ_FLAG_HIDDEN);
-		lv_obj_add_flag(dot_row, LV_OBJ_FLAG_HIDDEN);
+		bar_faults = alarm_n;
+		if (alarm_n > 0) {
+			snprintf(alarm, sizeof(alarm), "%s crashed%s", fi.thread[0] ? fi.thread : "an interrupt",
+				 alarm_n > 1 ? "  +more" : "");
+			lv_label_set_text(bar_fault, alarm);
+			lv_obj_remove_flag(bar_fault, LV_OBJ_FLAG_HIDDEN);
+			lv_obj_add_flag(dot_row, LV_OBJ_FLAG_HIDDEN);
+		} else {
+			lv_obj_add_flag(bar_fault, LV_OBJ_FLAG_HIDDEN);
+			lv_obj_remove_flag(dot_row, LV_OBJ_FLAG_HIDDEN);
+		}
 	}
 
 	net_get_status(&ns);

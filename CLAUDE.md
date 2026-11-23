@@ -58,6 +58,8 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 .\.venv\Scripts\python.exe tools\nn.py grab 5 --hand   # frames as the tracker saw them (captures/hands, ignored) and the PC's models on them and on variants
 .\.venv\Scripts\python.exe tools\ctl.py "nn thr 50 50"   # the palm and presence thresholds, percent
 .\.venv\Scripts\python.exe tools\camsnap.py --uncap   # a still from the board's camera (pointed at its own panel: is it black? look at the PNG, the luma figures cannot tell); captures/camsnap/ (ignored)
+.\.venv\Scripts\python.exe tools\ctl.py "crash 1" faults "faults ack"   # a test thread faults (the demo runs on), the fault count, clear the alarm; "crash 4" faults the UI thread: the board halts
+.\n6.cmd fault              # a halted board's fault record over the ST-LINK, named from the ELF (before any power cycle, which wipes it)
 cd zprof\host\bridge; ..\..\.venv\Scripts\python -m zprof_bridge recorder arm --host 192.168.254.86   # zprof's flight recorder: the next missed frame (gfx.c ZPROF_TRIGGER) freezes the last ~0.4 s; "recorder status -o x.zpr --elf ..." collects it (any client gets it first)
 .\run.cmd                   # host companion: live data for Host Link and Core Map; finds boards by broadcast (--host to name one)
 .\.venv\Scripts\python.exe host\companion.py --host 192.168.254.86 --cores 128   # TEST ONLY: synthetic load on 128 processors
@@ -1271,7 +1273,13 @@ cd zprof\host\bridge; ..\..\.venv\Scripts\python -m zprof_bridge recorder arm --
   network may stop while the screens move. The status bar then names the
   thread in red, Settings lists the last four, `/status.json` and the web
   remote say so; collect the fault (`zprof_bridge fault`) before restarting,
-  which wipes it. `ctl.py "crash 1|2|3"` makes a test thread fault.
+  which wipes it; `ctl.py "faults ack"` clears the alarm (Settings still lists
+  it). A fault in the UI thread or an interrupt halts the board: read its record
+  with `n6.cmd fault` (the ST-LINK reads the spinning core's DTCM) before
+  anything power-cycles it. `ctl.py "crash 1|2|3"` makes a test thread fault,
+  `"crash 4"` the UI thread (a halt; `n6.cmd run` brings the board back);
+  `CONFIG_APP_CRASH_TEST=n` leaves the command out. `tour.py`'s fault step
+  checks the capture, the alarm and its acknowledgement.
 - **The NPU's networks run only between `gfx_borrow_begin()` and
   `gfx_borrow_end()`: their working memory and inputs are frame buffer B.**
   **Why:** with all working memory in PSRAM the palm detector took 938 ms and

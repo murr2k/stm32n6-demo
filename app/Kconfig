@@ -33,4 +33,12 @@ config APP_NPU
 	select USE_STM32_HAL_CACHEAXI
 	select DYNAMIC_INTERRUPTS
 
+# ctl.py "crash N": a fault on purpose, to test zprof's fault capture and the
+# demo's fault alarms (tour.py does). Like the control port's other test
+# commands it has no login: anyone on the LAN could stop part of the demo, or
+# with "crash 4" the whole board. A build for an untrusted network leaves it out.
+config APP_CRASH_TEST
+	bool "The crash test command on the control port"
+	default y
+
 source "Kconfig.zephyr"

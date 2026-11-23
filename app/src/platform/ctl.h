@@ -26,8 +26,12 @@
  *                              from 100 ms after the reply (testing: every network service's recovery)
  *   ds                         Explorer's data set: in flash or generated, address, checksum
  *   hometiles <n>              Home: n placeholder tiles after the real ones
- *   crash <1|2|3>              a throwaway thread faults on purpose (1 divide by zero, 2 undefined
- *                              instruction, 3 k_oops): zprof's fault capture ends it, the demo runs on
+ *   crash <1|2|3|4>            a throwaway thread faults on purpose (1 divide by zero, 2 undefined
+ *                              instruction, 3 k_oops): zprof's fault capture ends it, the demo runs on;
+ *                              4: the UI thread faults and the board halts (n6.cmd fault reads it).
+ *                              Only with CONFIG_APP_CRASH_TEST (default y)
+ *   faults [ack]               faults zprof's handler caught since boot; "ack" clears the alarm
+ *                              (status bar, web remote) for those so far
  *   home                       Home: tiles (and those that open a screen), pan position and range
  *   power                      Home Power's feed: online, state, requests, the last figures
  *   power url [http://HOST[:PORT] | none]  the energy monitor's address: show, or set (kept on the card)
@@ -93,6 +97,7 @@ enum ctl_cmd {
 	CTL_PLAY,
 	CTL_HOME_TILES,
 	CTL_INPUT,      /* counts as a touch: ends attract mode */
+	CTL_CRASH,      /* "crash 4": the UI thread faults (a test: the board halts) */
 };
 
 /* UI thread: fetch the next pending UI command, if any. */

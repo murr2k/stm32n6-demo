@@ -31,6 +31,7 @@
 static lv_obj_t *l_now, *b_dhcp, *b_static, *field[3], *field_l[3], *l_result;
 static lv_obj_t *qr, *l_url, *l_host, *l_store, *l_faults;
 static int shown_faults = -1;
+static bool shown_alarm;
 static struct netcfg edit;
 static int sel;                 /* the field the keypad types into */
 static char shown_ip[16] = "-";
@@ -259,7 +260,7 @@ static void tick(uint32_t now_ms)
 	struct prof_fault_info fi[4];
 	int nf = prof_faults(fi, ARRAY_SIZE(fi));
 
-	if (nf != shown_faults) {
+	if (nf != shown_faults || (nf > prof_faults_acked) != shown_alarm) {
 		char list[4 * 52 + 32];
 		int at = 0;
 
@@ -273,7 +274,8 @@ static void tick(uint32_t now_ms)
 			snprintf(&list[at], sizeof(list) - at, "\n%d since boot, the last 4 above", nf);
 		}
 		lv_label_set_text(l_faults, nf ? list : "none since boot");
-		lv_obj_set_style_text_color(l_faults, ui_c(nf ? C_BAD : C_TEXT2), 0);
+		shown_alarm = nf > prof_faults_acked; /* acknowledged: listed, no longer red */
+		lv_obj_set_style_text_color(l_faults, ui_c(shown_alarm ? C_BAD : C_TEXT2), 0);
 	}
 	if (strcmp(shown_ip, ns.have_ip ? ns.ip : "-")) {
 		strncpy(shown_ip, ns.have_ip ? ns.ip : "-", sizeof(shown_ip) - 1);

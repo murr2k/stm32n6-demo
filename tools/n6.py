@@ -23,6 +23,7 @@ import argparse
 import glob
 import os
 import re
+import struct
 import subprocess
 import sys
 import time
@@ -253,6 +254,43 @@ def cmd_go(a: argparse.Namespace) -> None:
     cmd_run(a)
 
 
+FAULT_WORDS = 48  # zprof's fault record (firmware/zprof/src/zprof_internal.h, struct zprof_fault)
+
+
+def cmd_fault(a: argparse.Namespace) -> None:
+    """The fault zprof's handler kept, read over the probe and named from the ELF: for
+    a board that halted (a fault in an interrupt, the UI thread or idle), where the
+    network is gone. Run it before anything power-cycles the board, which wipes it.
+    The read does not stop the core: the halted one spins with interrupts locked,
+    and a running board answered it too (2026-11-23: no frame dropped)."""
+    elf = a.elf or (app_dir(a.build) / "zephyr" / "zephyr.elf")
+    syms = _symbols(elf)
+    if syms is None:
+        sys.exit("[n6] no Zephyr SDK nm: cannot find zprof_fault in the ELF")
+    addr = next((ad for ad, _, name in syms if name == "zprof_fault"), None)
+    if addr is None:
+        sys.exit(f"[n6] {elf} has no zprof_fault: a build without CONFIG_ZPROF_FAULT")
+    out = cli([*CONNECT, "-r32", f"0x{addr:08x}", str(FAULT_WORDS * 4)], check=False)
+    words = []
+    for m in re.finditer(r"^0x([0-9A-Fa-f]{8})\s*:\s*((?:[0-9A-Fa-f]{8}\s*)+)$", out, re.M):
+        words += [int(w, 16) for w in m.group(2).split()]
+    if len(words) < FAULT_WORDS:
+        print(out)
+        sys.exit("[n6] could not read the record (the ST-LINK's access can fail while the core sleeps in "
+                 "WFI: try again; a running board also hands it to zprof_bridge fault)")
+    raw = struct.pack(f"<{FAULT_WORDS}I", *words[:FAULT_WORDS])
+    if a.out:
+        Path(a.out).write_bytes(raw)
+    sys.path.insert(0, str(ROOT / "zprof" / "host" / "bridge"))
+    from zprof_bridge import fault as zf  # zprof's own parser, from the pinned checkout
+    from zprof_bridge.elf import Elf
+
+    f = zf.parse(raw)
+    if f is None:
+        sys.exit(f"[n6] no fault record at 0x{addr:08x}: the board has not faulted since it started")
+    print("\n".join(zf.describe(f, Elf(elf))))
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("-d", "--build", type=Path, default=BUILD, help="build directory (default: build)")
@@ -287,6 +325,10 @@ def main() -> None:
     sp = sub.add_parser("console"); add_console(sp, 10); sp.set_defaults(fn=cmd_console)
     sp = sub.add_parser("go"); add_build(sp); add_flash(sp); add_console(sp, 8)
     sp.add_argument("--no-power-cycle", action="store_true"); sp.set_defaults(fn=cmd_go)
+    sp = sub.add_parser("fault", help="read the fault record of a halted board over the probe")
+    sp.add_argument("--elf", type=Path, help="the ELF of the build on the board (default: the build dir's)")
+    sp.add_argument("-o", "--out", help="also save the record's 192 bytes here")
+    sp.set_defaults(fn=cmd_fault)
 
     a = p.parse_args()
     if getattr(a, "no_zprof", False) and a.build == BUILD:

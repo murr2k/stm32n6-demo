@@ -36,6 +36,7 @@
 #include "net.h"
 #include "nn/npu.h"
 #include "netcfg.h"
+#include "prof.h"
 #include "psram.h"
 #include "screens/screens.h"
 #include "tele.h"
@@ -127,8 +128,15 @@ static void post(enum ctl_cmd cmd, int arg)
 	ctl_post(cmd, arg);
 }
 
+/* ---- faults: the alarm's acknowledgement --------------------------------- */
+
+/* Faults the status bar, the web remote and /status.json no longer raise as an
+ * alarm ("faults ack"); Settings still lists them. prof.h. */
+int prof_faults_acked;
+
 /* ---- crash: a fault on purpose, for zprof's fault capture ----------------- */
 
+#ifdef CONFIG_APP_CRASH_TEST
 #define CRASH_STACK 2048
 
 static struct k_thread crash_thread;
@@ -157,11 +165,18 @@ static void crash_entry(void *p1, void *p2, void *p3)
 
 /* A throwaway thread (stack in PSRAM, priority 10) that faults: zprof's handler
  * keeps the fault and the kernel ends the thread; the demo runs on. Only bus-free
- * faults: a read of a reserved address can hang the bus (CLAUDE.md). */
+ * faults: a read of a reserved address can hang the bus (CLAUDE.md). "crash 4"
+ * faults on the UI thread instead (main.c), which halts the board: the record is
+ * then read over the probe (n6.cmd fault) and only a power cycle brings it back. */
 static int crash_test(int kind, char *out, size_t out_len)
 {
+	if (kind == 4) {
+		post(CTL_CRASH, 0);
+		return snprintf(out, out_len, "crash 4: the UI thread faults; the board halts\n");
+	}
 	if (kind < 1 || kind > 3) {
-		return snprintf(out, out_len, "err crash 1 (divide by zero), 2 (undefined), 3 (k_oops)\n");
+		return snprintf(out, out_len,
+				"err crash 1 (divide by zero), 2 (undefined), 3 (k_oops), 4 (the UI thread: halts)\n");
 	}
 	if (crash_started && k_thread_join(&crash_thread, K_MSEC(100)) != 0) {
 		return snprintf(out, out_len, "err the last crash thread has not ended\n");
@@ -178,6 +193,7 @@ static int crash_test(int kind, char *out, size_t out_len)
 	crash_started = true;
 	return snprintf(out, out_len, "crash %d started\n", kind);
 }
+#endif /* CONFIG_APP_CRASH_TEST */
 
 /* ---- the PC's regression test (ctl.h) ----------------------------------- */
 
@@ -759,8 +775,23 @@ static int handle(char *line, char *out, size_t out_len)
 		return ds_info(out, out_len);
 	} else if (!strcmp(cmd, "hometiles") && n >= 2) {
 		post(CTL_HOME_TILES, a[0]);
+#ifdef CONFIG_APP_CRASH_TEST
 	} else if (!strcmp(cmd, "crash") && n >= 2) {
 		return crash_test(a[0], out, out_len);
+#endif
+	} else if (!strcmp(cmd, "faults")) {
+		/* "faults": the count since boot and how many are acknowledged; "faults ack"
+		 * clears the alarm (status bar, web remote) for the faults so far */
+		struct prof_fault_info fi;
+		int nf = prof_faults(&fi, 1);
+		char sub[8] = "";
+
+		if (sscanf(line, "%*s %7s", sub) == 1 && !strcmp(sub, "ack")) {
+			prof_faults_acked = nf;
+		}
+		return snprintf(out, out_len, "count=%d acknowledged=%d last=%s reason=\"%s\" uptime_s=%u\n", nf,
+				prof_faults_acked, nf ? fi.thread : "-", nf ? prof_fault_reason(fi.reason) : "-",
+				nf ? fi.uptime_ms / 1000u : 0u);
 	} else if (!strcmp(cmd, "home")) {
 		int tiles, real, scroll, max;
 

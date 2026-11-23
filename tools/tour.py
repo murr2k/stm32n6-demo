@@ -815,6 +815,8 @@ def run(a: argparse.Namespace) -> None:
     transition_test(a.host)
     step(a.host, "remote")
     remote_test(a.host)
+    step(a.host, "fault")
+    fault_test(a.host)
     if not a.no_media:
         step(a.host, "media")
         media_tests(a.host)
@@ -828,6 +830,40 @@ def run(a: argparse.Namespace) -> None:
           f"{ds['source']}" + ("" if ds["source"] == "flash" else " (14 MB of PSRAM: tools/dataset.py puts it in the flash)"))
     trace_port(a.host)
     send(a.host, ["screen 0"])
+
+
+def fault_test(host: str) -> None:
+    """zprof's fault capture as the demo uses it: a test thread faults, the board
+    runs on with no frame dropped, the alarm names the thread (the control port and
+    /status.json), and an acknowledgement clears it, so a tour leaves no alarm."""
+    def faults() -> dict[str, str]:
+        line = send(host, ["faults"])[0]
+        return {k: v.strip('"') for k, v in re.findall(r'(\w+)=("[^"]*"|\S+)', line)} if "count=" in line else {}
+
+    def status() -> dict:
+        with urllib.request.urlopen(f"http://{host}/status.json", timeout=5) as r:
+            return json.loads(r.read())["faults"]
+
+    f0 = faults()
+    if not f0:
+        print("fault capture: NOT in this build (no zprof fault handler)")
+        return
+    before = stats(host)
+    r = send(host, ["crash 1"])[0]
+    if not r.startswith("crash 1"):
+        print(f"fault capture: NOT tested ({r.strip()}; CONFIG_APP_CRASH_TEST off?)")
+        return
+    time.sleep(2.0)
+    after = stats(host)
+    f1, js = faults(), status()
+    raised = (int(f1["count"]) == int(f0["count"]) + 1 and f1["last"] == "crash_test"
+              and js["count"] == int(f1["count"]) and js["count"] > js["acknowledged"])
+    send(host, ["faults ack"])
+    js2 = status()
+    cleared = js2["acknowledged"] == js2["count"]
+    print(f"fault capture: a test thread's {f1.get('reason', '?')} caught, the board ran on "
+          f"(dropped {int(after['dropped'] - before['dropped'])}); alarm raised "
+          f"{'yes' if raised else 'NO'}, cleared by faults ack {'yes' if cleared else 'NO'}")
 
 
 def trace_port(host: str) -> None:

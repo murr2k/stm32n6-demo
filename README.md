@@ -309,8 +309,10 @@ an interrupt) is ended and the demo runs on, so part of it may stop while the
 screens move. The status bar then names the thread in red, Settings lists the
 last four, and `/status.json` and the web remote report them;
 `zprof_bridge fault --host <board> --elf ...` shows where it faulted, with the
-call trace. Collect it before restarting the board, which wipes it.
-`ctl.py "crash 1"` makes a test thread fault. With `--pmu-threads` zprof counts
+call trace. Collect it before restarting the board, which wipes it;
+`ctl.py "faults ack"` clears the alarm. A fault in the UI thread or an
+interrupt halts the board as before; `n6.cmd fault` then reads its record
+over the ST-LINK. `ctl.py "crash 1"` makes a test thread fault. With `--pmu-threads` zprof counts
 the M55's PMU per thread (instructions per cycle, cache refills, stalls), and
 with `--proto i2c,disk` it records the I2C messages and card transfers.
 
