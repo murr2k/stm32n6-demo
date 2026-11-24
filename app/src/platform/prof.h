@@ -13,6 +13,10 @@
 #define ZPROF_MARK_STOP(name, value) do { (void)(value); } while (0)
 #define ZPROF_PLOT(name, value)      do { (void)(value); } while (0)
 #define ZPROF_TRIGGER(why)           do { (void)(why); } while (0)
+#define ZPROF_SPAN_BEGIN(name)       do { } while (0)
+#define ZPROF_SPAN_END(name)         do { } while (0)
+#define ZPROF_SPAN_BEGIN_P(p)        do { (void)(p); } while (0)
+#define ZPROF_SPAN_END_P(p)          do { (void)(p); } while (0)
 #endif
 
 /* Threads zprof's fault handler ended (the board ran on): the alarm in the status

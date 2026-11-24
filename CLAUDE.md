@@ -62,6 +62,7 @@ Invoke-WebRequest http://192.168.254.86/agent.md   # the board describes itself 
 .\.venv\Scripts\python.exe tools\ctl.py "crash 1" faults "faults ack"   # a test thread faults (the demo runs on), the fault count, clear the alarm; "crash 4" faults the UI thread: the board halts
 .\n6.cmd fault              # a halted board's fault record over the ST-LINK, named from the ELF (before any power cycle, which wipes it)
 cd zprof\host\bridge; ..\..\.venv\Scripts\python -m zprof_bridge recorder arm --host 192.168.254.86   # zprof's flight recorder: the next missed frame (gfx.c ZPROF_TRIGGER) freezes the last ~0.4 s; "recorder status -o x.zpr --elf ..." collects it (any client gets it first)
+cd zprof\host\bridge; ..\..\.venv\Scripts\python -m zprof_bridge capture --host 192.168.254.86 --secs 30 --sample 4000 --spans 20 -o x.zpr --elf ..\..\..\build\app\zephyr\zephyr.elf   # where frame time goes: PC samples (TIM7, ~0.1 % CPU) and spans (the screen switch, named after the screen entered; LVGL's own profiler points only in a build with -- -Dapp_EXTRA_CONF_FILE=zprof-lvgl.conf); "summary x.zpr --frames-with "Flight Deck"" for that screen's first frames. LVGL's spans lengthen full-screen frames by about a fifth: time frames without them
 .\run.cmd                   # host companion: live data for Host Link and Core Map; finds boards by broadcast (--host to name one)
 .\.venv\Scripts\python.exe host\companion.py --host 192.168.254.86 --cores 128   # TEST ONLY: synthetic load on 128 processors
 ```

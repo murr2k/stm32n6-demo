@@ -621,7 +621,11 @@ ow, which was sampled at the top of the frame.
 static void switch_to(int index)
 {
 	uint32_t t0 = gfx_now_us();
+	/* a zprof span named after the screen entered: it marks that screen's first frame
+	 * (zprof_bridge summary --frames-with "Flight Deck") */
+	const char *span = screens[index]->title;
 
+	ZPROF_SPAN_BEGIN_P(span);
 	if (current >= 0) {
 		if (screens[current]->hide) {
 			screens[current]->hide();
@@ -644,6 +648,7 @@ static void switch_to(int index)
 	}
 	layout_only();
 	gfx_trace_switch(current, gfx_now_us() - t0);
+	ZPROF_SPAN_END_P(span);
 }
 
 /* The next frame draws the whole screen: the layout only, the content in the

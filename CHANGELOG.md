@@ -23,6 +23,15 @@ behind the rules that came out of them.
   transitions and its attract lap and enters Explorer from a playing film at
   each of the six views it can open at (`ctl.py "exview N"`), and Home after
   the film three times; `soak.py`'s summary reports them for the whole run.
+- **Where a frame's time goes**: the build takes zprof v0.7.0 and its PC
+  sampling (TIM7 is its timer) and spans; both are off until a zprof client asks
+  (`zprof_bridge capture --sample 4000 --spans 20`). Sampling costs about
+  0.1 % of the CPU. The screen switch is a span named after the screen
+  entered, so `summary --frames-with "Flight Deck"` shows that screen's first
+  frames. LVGL's own profiler points as spans (layout, refresh, draw tasks,
+  events) come with a development build (`app/zprof-lvgl.conf`): recording,
+  they make a frame that draws a whole screen about a fifth longer, so frame
+  times come from a build or a capture without them.
 
 ### Fixed
 
