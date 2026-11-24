@@ -734,7 +734,14 @@ cd zprof\host\bridge; ..\..\.venv\Scripts\python -m zprof_bridge capture --host 
   the next drop: watch those, not only the drop count. Only about half of
   the first frames after a film have a deadline: under the film's 30 fps
   the slot before the switch presented nothing, the trace marks the frame
-  "u", it cannot drop, and `margins` leaves it out.
+  "u", it cannot drop, and `margins` leaves it out. Likewise the Camera
+  screen's first frame when the panel already shows buffer A (it draws into
+  the buffer on screen: no swap, no deadline) and the frame after it
+  (`margin_skip` in gfx.c). A frame's deadline follows how that frame is
+  presented: at the switch between double and single buffering the other
+  mode's rule was 10 lines (0.33 ms) off (found 2026-11-23 checking every
+  margin against its outcome: on-time frames waited in `present()` their
+  margin less a constant 0.3 to 0.4 ms, 8,564 frames, none negative).
   To see where a transition's time goes:
   `ctl.py swtrace` (each frame of the last one: wake, tail, main loop
   before LVGL, LVGL, time other threads took, margin before the swap

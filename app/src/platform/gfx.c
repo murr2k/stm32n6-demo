@@ -187,18 +187,33 @@ static uint32_t ui_cycles(void)
 	return k_thread_runtime_stats_get(k_current_get(), &st) == 0 ? (uint32_t)st.execution_cycles : 0;
 }
 
+/* Frames left out of the margins although the slot before presented: the
+ * Camera screen's first frame when the panel already shows A (it draws into
+ * the buffer on screen, with no swap and no start at the top of a refresh,
+ * so no deadline applies) and the frame after it (started wherever that one
+ * ended). UI thread only. */
+static uint8_t margin_skip;
+
 /* At the hand-over of a frame: how much of its budget was left, and where
- * the rest went. */
-static void trace_frame(uint32_t now)
+ * the rest went. swap: the frame changes buffers (double-buffered). */
+static void trace_frame(uint32_t now, bool swap)
 {
 	int32_t left = (int32_t)(t_deadline - now);
 	uint32_t ran = (uint32_t)k_cyc_to_us_floor64(ui_cycles() - ui_cyc_present);
 	uint32_t wall = now - t_last_present;
 
-	if (streak && left < stats.margin_min_us) {
+	if (lend_state == ENTERING && !swap) {
+		margin_skip = 2;
+	}
+	bool on_deadline = streak && margin_skip == 0;
+
+	if (margin_skip > 0) {
+		margin_skip--;
+	}
+	if (on_deadline && left < stats.margin_min_us) {
 		stats.margin_min_us = left;
 	}
-	if (streak) {
+	if (on_deadline) {
 		ZPROF_PLOT("frame.margin_us", left);   /* what margin_min_us is the least of */
 		margins.frames++;
 		margins.hist[left < 0 ? 0 : MIN(1 + left / GFX_MARGIN_BIN_US, GFX_MARGIN_BINS - 1)]++;
@@ -235,7 +250,7 @@ static void trace_frame(uint32_t now)
 	f->away_us = MIN(wall > ran ? wall - ran : 0, UINT16_MAX);
 	f->left_us = (int16_t)CLAMP(left, INT16_MIN, INT16_MAX);
 	f->alpha = fade_alpha;
-	f->locked = streak;
+	f->locked = on_deadline;
 	if (trace.n < GFX_TRACE_N) {
 		trace.f[trace.n++] = *f;
 	}
@@ -335,7 +350,7 @@ static void flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *px_map)
 		uint32_t render_us = now - t_frame_start;
 		bool swap = px_map != front;
 
-		trace_frame(now);
+		trace_frame(now, swap);
 		/* zprof's frame job: from the last hand-over (or idle slot) to this one */
 		ZPROF_MARK_STOP("frame", 1);
 		present(px_map);
@@ -361,19 +376,21 @@ static void flush_cb(lv_display_t *d, const lv_area_t *area, uint8_t *px_map)
 
 		uint32_t y = panel_line();
 
-		if (swap) {
+		last_wake_us = swap ? (y > ln_act1 ? lines_us(y - ln_act1 - 1) : 0) : lines_us(MIN(y, ln_total));
+		/* the next frame's deadline, by the way the next frame is presented
+		 * (after the swap that freed B, the next one is single-buffered) */
+		if (lend_state == DOUBLE) {
 			/* shown from the next start of the active area; the frame after
 			 * it has until shortly before the start of the one after that */
 			int32_t to_show = y > ln_act1 ? (int32_t)(ln_total - y + ln_act0) : (int32_t)ln_act0 - (int32_t)y;
 
-			last_wake_us = y > ln_act1 ? lines_us(y - ln_act1 - 1) : 0;
 			t_deadline = now + (uint32_t)((int32_t)lines_us(ln_total - SWAP_GUARD) +
 						      (to_show >= 0 ? (int32_t)lines_us(to_show)
 								    : -(int32_t)lines_us(-to_show)));
 		} else {
-			/* single-buffered: the next frame must start before the next refresh does */
-			last_wake_us = lines_us(MIN(y, ln_total));
-			t_deadline = now - last_wake_us + stats.period_us;
+			/* single-buffered: the next frame must be handed over before the
+			 * next refresh starts (wait_refresh_start), or it waits a refresh more */
+			t_deadline = now - lines_us(MIN(y, ln_total)) + stats.period_us;
 		}
 		ui_cyc_present = ui_cycles();
 		account_frame(render_us, now);
@@ -511,6 +528,10 @@ static void lend_step(void)
 			lv_display_set_buffers(disp, FB_B, FB_A, GFX_FB_BYTES, LV_DISPLAY_RENDER_MODE_DIRECT);
 			full_redraw(scr);
 			lend_state = DOUBLE;
+			/* the deadline the last single-buffered frame set is the start of
+			 * the next refresh; this frame swaps, and a swap is in time until
+			 * SWAP_GUARD lines before that refresh's active area */
+			t_deadline += lines_us(ln_act0 - SWAP_GUARD);
 		}
 		break;
 	}

@@ -43,6 +43,12 @@ behind the rules that came out of them.
   Settings' on its first visit after boot; Deck, Signal Lab and Settings had
   come within 3.3 ms. The same applies when the display redraws everything
   after the Camera screen gives its frame buffer back.
+- **Frame margins around the Camera screen are right**: the first frame
+  double-buffered again after it was given 0.33 ms too little, and the first
+  single-buffered one 0.33 ms too much. The Camera screen's first frame when
+  the panel already showed the buffer it keeps (no swap, no deadline) and the
+  one after it are left out (`u` in `ctl.py swtrace`) instead of showing as
+  misses that were not.
 
 ## 2026-11-22
 

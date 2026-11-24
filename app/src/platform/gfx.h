@@ -103,7 +103,7 @@ struct gfx_trace_frame {
 	uint16_t away_us; /* of tail, pre and lv: time the UI thread was not running */
 	int16_t left_us;  /* the next swap minus the hand-over; negative: missed */
 	uint8_t alpha;    /* the layer's fade when the frame was handed over */
-	bool locked;      /* the previous frame was presented, so the deadline applies */
+	bool locked;      /* on a deadline: the previous frame was presented (gfx.c margin_skip: two frames entering the Camera screen are not) */
 };
 
 struct gfx_trace {
